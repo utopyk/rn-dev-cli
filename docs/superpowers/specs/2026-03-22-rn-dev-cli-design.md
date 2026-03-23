@@ -100,6 +100,7 @@ rn-dev-cli/
 │   │   ├── device.ts          # Device discovery (adb devices, xcrun simctl)
 │   │   ├── preflight.ts       # Environment checks + auto-fix
 │   │   ├── project.ts         # Project root detection + RN version discovery
+│   │   ├── build-parser.ts    # Build error extraction (xcodebuild + gradle)
 │   │   └── watcher.ts         # File watcher + on-save pipeline runner
 │   ├── ui/
 │   │   ├── layout/
@@ -168,7 +169,9 @@ Data created at runtime on the user's machine:
 │   ├── root.json                   # Root repo artifact
 │   └── <worktree-hash>.json        # Worktree-specific artifacts
 ├── logs/
-│   └── metro-<worktree>.log        # Metro log files
+│   ├── metro-<worktree>.log        # Metro log files
+│   ├── build-ios.log               # Last iOS build full output
+│   └── build-android.log           # Last Android build full output
 └── sock                            # Unix socket for TUI↔CLI IPC
 ```
 
@@ -196,9 +199,15 @@ interface Profile {
   metroPort: number;               // assigned or user-chosen
   devices: DeviceSelection;        // device(s) based on platform
   buildVariant: "debug" | "release";
+  preflight: PreflightConfig;      // which checks to run + frequency
   onSave: OnSaveAction[];          // ordered pipeline
   env: Record<string, string>;     // extra env vars passed to metro/builds
   projectRoot: string;             // detected or overridden RN project root
+}
+
+interface PreflightConfig {
+  checks: string[];                // IDs of enabled checks, e.g. ["node-version", "metro-port"]
+  frequency: "once" | "always";    // "once" = first start only, "always" = every profile load
 }
 
 interface DeviceSelection {
@@ -254,9 +263,46 @@ rn-dev start --profile <name>
   └─ load named profile directly
 ```
 
-**Wizard step order:** Worktree → Branch → Platform → Mode → Device
+**Wizard step order:** Worktree → Branch → Platform → Mode → Device → Preflight Config → On-Save Config
 
 **Branch step behavior:** The Branch step detects and displays the current branch of the selected worktree for confirmation. It does NOT perform a `git checkout`. If the user wants a different branch, they should switch branches outside the CLI first, or create a new worktree for it.
+
+**Preflight config step:** Shows a multi-select checkbox list of available checks, filtered by the selected platform (iOS checks hidden if Android-only, etc.):
+
+```
+Which preflight checks do you want to run?
+  ☑ Node version
+  ☑ Xcode CLI tools
+  ☑ CocoaPods installed
+  ☑ Podfile.lock matches
+  ☑ Metro port available
+  ☑ node_modules matches lockfile
+  ☐ Ruby version
+  ☐ Watchman installed
+  ☐ .env file exists
+  ...
+  Select all [a] / Deselect all [n]
+
+When should preflights run?
+  ◉ Only on first start (recommended)
+  ○ Every time this profile is loaded
+```
+
+**"once" frequency:** After passing, results are stored in the artifact. On subsequent starts, preflights are skipped unless: (a) the worktree/branch changed, (b) the user runs `rn-dev preflight` manually, or (c) a dependency change is detected (checksum diff).
+
+**On-save config step:** Detects available tooling in the project and offers only what exists:
+
+```
+On-save automation (detected from your project):
+  ☑ lint (eslint — .eslintrc.js found)
+  ☑ type-check (tsc — tsconfig.json found)
+  ☐ test-related (jest — jest.config.js found)
+  ☐ + Add custom command
+
+  Skip on-save entirely? [s]
+```
+
+If no tooling is detected (no eslint config, no tsconfig, no jest), shows: "No automation detected. You can add custom commands or skip." with an empty pipeline as default.
 
 **Copying:** When switching to a new worktree, offer to clone an existing profile and adjust worktree/branch/port.
 
@@ -378,8 +424,25 @@ Start Metro directly. Skip dependency installation. If port artifact mismatch de
 6. (Android) Uninstall app via `adb uninstall <bundleId>`
 7. (iOS) Uninstall app via `xcrun simctl uninstall <deviceId> <bundleId>`
 8. Reinstall `node_modules`
-9. (iOS) `pod install`
+9. (iOS) `pod install` (with Xcode kill check — see below)
 10. Start Metro with `--reset-cache`
+
+### Xcode Kill Check
+
+Before any `pod install` operation (clean mode, ultra-clean mode, or preflight auto-fix), check if Xcode is running. Xcode holding workspace locks causes pod install failures and workspace corruption.
+
+```
+Pod install triggered →
+  Check: pgrep -x Xcode
+  ├─ not running → proceed
+  └─ running → "Xcode is open. Pod install may fail or cause workspace corruption.
+                 Kill Xcode? [Y/n/skip]"
+                 ├─ Y → killall Xcode, wait for exit, proceed
+                 ├─ n → proceed anyway (show warning)
+                 └─ skip → skip pod install entirely
+```
+
+This check applies to all pod install triggers: clean mode step 2, ultra-clean mode step 9, preflight "Podfile.lock matches" auto-fix, and manual `rn-dev` pod-related commands.
 
 ### Self-Preservation (npx mode)
 
@@ -392,6 +455,79 @@ When running via `npx` (detected by checking if `process.argv[1]` resolves insid
 5. If the temp copy fails (disk space, permissions), abort with a message suggesting global install
 
 Global installs are unaffected — the binary lives outside `node_modules`.
+
+## Build Error Extraction
+
+Build errors from `xcodebuild` and `gradle` are notoriously hard to read in terminal output. The CLI parses raw build output and extracts actionable errors displayed in the Interactive panel.
+
+### Error Schema
+
+```typescript
+interface BuildError {
+  source: "xcodebuild" | "gradle";
+  summary: string;               // extracted human-readable error
+  file?: string;                 // source file if applicable
+  line?: number;
+  reason?: string;               // "Reason:" / "Caused by:" if found in logs
+  rawOutput: string;             // full original output for context
+  suggestion?: string;           // known fix if pattern-matched
+}
+```
+
+### xcodebuild Error Extraction
+
+Parse raw xcodebuild stdout/stderr, scanning for error patterns in priority order:
+
+1. `error:` lines — actual compiler/linker errors
+2. `Reason:` / `reason =` / `caused by` / `underlying error` — root cause context
+3. `fatal error:` lines
+4. `ld:` linker errors (duplicate symbols, missing libraries)
+5. `PhaseScriptExecution` failures — look backwards in log for the script output above it
+6. Code Signing errors
+7. `No such module` / `Module not found`
+
+### Gradle Error Extraction
+
+Parse gradle output, scanning for:
+
+1. `FAILURE:` block — gradle's own error summary
+2. `Caused by:` chains — walk the full exception chain
+3. `error:` lines from javac/kotlinc
+4. Dex merge failures
+5. SDK/build tools version mismatches
+
+### Known Error → Suggestion Mapping
+
+| Error Pattern | Suggestion |
+|---|---|
+| `No such module 'X'` | "Try: pod install, or clean build (press 'c')" |
+| `Signing requires a development team` | "Set DEVELOPMENT_TEAM in Xcode or .xcconfig" |
+| `duplicate symbol` | "Check for conflicting pod versions" |
+| `framework not found` | "Try: pod deintegrate && pod install" |
+| `Sandbox: rsync denied` | "Xcode 15+ issue: disable ENABLE_USER_SCRIPT_SANDBOXING" |
+| `SDK does not contain 'X'` | "Update Xcode or change IPHONEOS_DEPLOYMENT_TARGET" |
+| `Could not resolve dependencies` | "Check gradle repositories and dependency versions" |
+| `Dex merge failed` | "Enable multidex or resolve duplicate dependencies" |
+| `JAVA_HOME is not set` | "Run preflight fix (press 'f')" |
+
+### Display
+
+```
+Build Failed ✖
+──────────────────────────────────────────────
+Error: No such module 'RNReanimated'
+  File: ios/MyApp/AppDelegate.swift:3
+
+Reason: Pod 'RNReanimated' is not installed or
+  workspace is out of sync with Podfile.lock
+
+Suggestion: Run pod install (press 'p')
+──────────────────────────────────────────────
+Full build log: .rn-dev/logs/build-ios.log
+Press 'f' to view full log in Lint/Test module
+```
+
+Full build output is always written to `.rn-dev/logs/build-ios.log` or `.rn-dev/logs/build-android.log` and viewable in the Lint/Test sidebar module. The Interactive panel only shows the extracted, actionable summary.
 
 ## Module / Plugin System
 
