@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
+import Gradient from "ink-gradient";
 import { useScreenSize } from "fullscreen-ink";
 import type { Profile } from "../../core/types.js";
 import { ShortcutBar } from "../components/ShortcutBar.js";
@@ -23,7 +24,7 @@ export interface MainLayoutProps {
 }
 
 /**
- * Convert hex color (#RRGGBB) to ANSI 24-bit escape sequence for background.
+ * Convert hex color (#RRGGBB) to ANSI 24-bit escape for terminal background.
  */
 function hexToBgAnsi(hex: string): string {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -48,11 +49,11 @@ export function MainLayout({
   );
   const [bannerCollapsed, setBannerCollapsed] = useState(false);
 
-  // Set terminal background color on mount, reset on unmount
+  // Set terminal background color
   useEffect(() => {
     process.stdout.write(hexToBgAnsi(theme.bg));
     return () => {
-      process.stdout.write("\x1b[0m"); // reset all attributes
+      process.stdout.write("\x1b[0m");
     };
   }, [theme.bg]);
 
@@ -84,7 +85,7 @@ export function MainLayout({
 
   return (
     <Box flexDirection="column" width={width} height={height}>
-      {/* ── Tab bar (no outer border, individual tab boxes) ── */}
+      {/* ── Tab bar ── */}
       <Box paddingX={1} height={3} gap={1} alignItems="center">
         {modules.map((mod) => {
           const isActive = mod.id === activeModuleId;
@@ -111,9 +112,11 @@ export function MainLayout({
       {/* ── Profile banner ── */}
       {!bannerCollapsed && (
         <Box borderStyle="single" borderColor={theme.border} paddingX={1}>
-          <Text color={theme.accent} bold>⚙ {profile.name}</Text>
+          <Gradient name="passion">
+            {`⚙ ${profile.name}`}
+          </Gradient>
           <Text color={theme.muted}> │ </Text>
-          <Text color={theme.success}>{profile.branch}</Text>
+          <Text color={theme.success} bold>{profile.branch}</Text>
           <Text color={theme.muted}> │ </Text>
           <Text color={theme.fg}>{profile.platform}</Text>
           <Text color={theme.muted}> │ </Text>

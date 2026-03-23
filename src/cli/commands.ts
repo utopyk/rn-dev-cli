@@ -6,6 +6,7 @@ import { createDefaultPreflightEngine } from "../core/preflight.js";
 import { listDevices } from "../core/device.js";
 import { IpcClient } from "../core/ipc.js";
 import path from "path";
+import gradientString from "gradient-string";
 import type { Platform, RunMode } from "../core/types.js";
 
 // ---------------------------------------------------------------------------
@@ -28,9 +29,30 @@ function requireProjectRoot(): string {
 export function createProgram(): Command {
   const program = new Command();
 
+  // Pre-rendered ANSI Shadow figlet — embedded to avoid runtime font file dependency
+  const BANNER = [
+    "██████╗ ███╗   ██╗      ██████╗ ███████╗██╗   ██╗",
+    "██╔══██╗████╗  ██║      ██╔══██╗██╔════╝██║   ██║",
+    "██████╔╝██╔██╗ ██║█████╗██║  ██║█████╗  ██║   ██║",
+    "██╔══██╗██║╚██╗██║╚════╝██║  ██║██╔══╝  ╚██╗ ██╔╝",
+    "██║  ██║██║ ╚████║      ██████╔╝███████╗ ╚████╔╝ ",
+    "╚═╝  ╚═╝╚═╝  ╚═══╝      ╚═════╝ ╚══════╝  ╚═══╝  ",
+  ].join("\n");
+
   program
     .name("rn-dev")
     .description("React Native developer CLI")
+    .configureOutput({
+      writeOut: (str: string) => {
+        if (str.trim() === "0.1.0") {
+          const gradient = gradientString("cyan", "magenta", "yellow");
+          process.stdout.write("\n" + gradient(BANNER) + "\n\n");
+          process.stdout.write("  v0.1.0 — React Native Developer CLI\n\n");
+        } else {
+          process.stdout.write(str);
+        }
+      },
+    })
     .version("0.1.0");
 
   // Start command — the main entry point

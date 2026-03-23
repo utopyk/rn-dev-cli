@@ -231,6 +231,9 @@ async function startServices(
   worktreeKey: string;
   startupLog: string[];
 }> {
+  const logSymbols = await import("log-symbols");
+  const sym = logSymbols.default;
+
   const startupLog: string[] = [];
   const emit = (line: string) => {
     startupLog.push(line);
@@ -246,7 +249,7 @@ async function startServices(
       profile.preflight.frequency === "always" || !artifact?.preflightPassed;
 
     if (needsPreflight) {
-      emit("▶ Running preflight checks...");
+      emit("⏳ Running preflight checks...");
       const { createDefaultPreflightEngine } = await import(
         "../core/preflight.js"
       );
@@ -255,15 +258,15 @@ async function startServices(
 
       let hasErrors = false;
       for (const [id, result] of results) {
-        const icon = result.passed ? "✓" : "✗";
+        const icon = result.passed ? sym.success : sym.error;
         emit(`  ${icon} ${id}: ${result.message}`);
         if (!result.passed) hasErrors = true;
       }
 
       if (hasErrors) {
-        emit("  ⚠ Some preflight checks failed. Continuing anyway...");
+        emit(`  ${sym.warning} Some preflight checks failed. Continuing anyway...`);
       } else {
-        emit("  ✓ All preflight checks passed");
+        emit(`  ${sym.success} All preflight checks passed`);
       }
       emit("");
 
@@ -275,9 +278,10 @@ async function startServices(
   // Run clean if needed
   if (profile.mode !== "dirty") {
     const cleaner = new CleanManager(projectRoot);
-    emit(`▶ Running ${profile.mode} clean...`);
+    emit(`⏳ Running ${profile.mode} clean...`);
     await cleaner.execute(profile.mode, profile.platform, (step, status) => {
-      emit(`  [${status}] ${step}`);
+      const icon = status === "done" ? sym.success : status === "skip" ? sym.info : sym.warning;
+      emit(`  ${icon} ${step}`);
     });
     emit("");
   }
@@ -289,17 +293,16 @@ async function startServices(
 
   const portFree = await metro.isPortFree(port);
   if (!portFree) {
-    emit(`⚠ Port ${port} is in use. Killing stale process...`);
+    emit(`${sym.warning} Port ${port} is in use. Killing stale process...`);
     const killed = await metro.killProcessOnPort(port);
     if (killed) {
-      emit(`  ✓ Killed process on port ${port}`);
-      // Give the OS a moment to release the port
+      emit(`  ${sym.success} Killed process on port ${port}`);
       await new Promise((resolve) => setTimeout(resolve, 1000));
     } else {
-      emit(`  ✗ Could not kill process on port ${port}. Trying anyway...`);
+      emit(`  ${sym.error} Could not kill process on port ${port}. Trying anyway...`);
     }
   }
-  emit(`▶ Starting Metro on port ${port}...`);
+  emit(`⏳ Starting Metro on port ${port}...`);
   metro.start({
     worktreeKey,
     projectRoot: profile.worktree ?? projectRoot,
@@ -312,7 +315,7 @@ async function startServices(
   // Start file watcher if on-save actions configured
   let watcher: FileWatcher | null = null;
   if (profile.onSave.length > 0) {
-    emit("▶ Starting file watcher...");
+    emit("⏳ Starting file watcher...");
     watcher = new FileWatcher({
       projectRoot,
       actions: profile.onSave,
@@ -324,7 +327,7 @@ async function startServices(
   const ipc = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
   await ipc.start();
 
-  emit("✓ All services started");
+  emit(`${sym.success} All services started`);
   emit("");
 
   return { metro, watcher, ipc, worktreeKey, startupLog };

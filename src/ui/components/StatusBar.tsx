@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
+import Spinner from "ink-spinner";
 import { useTheme } from "../theme-provider.js";
 
 export interface StatusBarProps {
@@ -45,12 +46,18 @@ export function StatusBar({
   activeModule,
 }: StatusBarProps): React.JSX.Element {
   const theme = useTheme();
-  const separator = <Text color={theme.muted}> {"\u2502"} </Text>;
+  const separator = <Text color={theme.muted}> │ </Text>;
 
   return (
     <Box>
       <Text color={theme.fg}>Metro: </Text>
-      <Text color={getMetroDotColor(metroStatus, theme)}>{"\u25cf"}</Text>
+      {metroStatus === "starting" ? (
+        <Text color={theme.warning}>
+          <Spinner type="dots" />
+        </Text>
+      ) : (
+        <Text color={getMetroDotColor(metroStatus, theme)}>●</Text>
+      )}
       <Text color={theme.fg}>
         {" "}
         {getMetroLabel(metroStatus)}
