@@ -78,7 +78,20 @@ export class Builder extends EventEmitter {
       for (const line of lines) {
         if (!line.trim()) continue;
 
-        // Detect build phases for progress
+        // Milestone lines — appended permanently
+        const isMilestone =
+          line.includes("BUILD SUCCESSFUL") ||
+          line.includes("Build Succeeded") ||
+          line.includes("BUILD FAILED") ||
+          line.includes("error:") ||
+          line.includes("FAILURE:") ||
+          line.includes("Installing") ||
+          line.includes("Launching") ||
+          line.includes("info ") ||
+          line.includes("success ") ||
+          line.includes("warn ");
+
+        // Detect build phases for progress indicator
         if (line.includes("Compiling") || line.includes("CompileC")) {
           this.emit("progress", { phase: "Compiling" });
         } else if (line.includes("Linking") || line.includes("Ld ")) {
@@ -87,11 +100,15 @@ export class Builder extends EventEmitter {
           this.emit("progress", { phase: "Installing" });
         } else if (line.includes("Launching") || line.includes("launch")) {
           this.emit("progress", { phase: "Launching" });
-        } else if (line.includes("BUILD SUCCESSFUL") || line.includes("Build Succeeded")) {
-          this.emit("progress", { phase: "Build Succeeded" });
         }
 
-        this.emit("line", { text: line, stream });
+        if (isMilestone) {
+          // Milestone: append as a permanent line
+          this.emit("line", { text: line, stream, replace: false });
+        } else {
+          // Verbose output: replace the current progress line
+          this.emit("line", { text: `  ${line.slice(0, 80)}`, stream, replace: true });
+        }
       }
     };
 

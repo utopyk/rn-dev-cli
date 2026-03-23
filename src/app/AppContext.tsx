@@ -98,8 +98,24 @@ export function AppProvider({
   useEffect(() => {
     if (!builder) return;
 
-    const onLine = ({ text }: { text: string }) => {
-      setToolOutputLines((prev) => [...prev, text].slice(-500));
+    const onLine = ({ text, replace }: { text: string; replace?: boolean }) => {
+      if (replace) {
+        // Replace the last line (progress update)
+        setToolOutputLines((prev) => {
+          const copy = prev.slice(0, -1);
+          copy.push(text);
+          return copy.slice(-500);
+        });
+      } else {
+        setToolOutputLines((prev) => [...prev, text].slice(-500));
+      }
+    };
+    const onProgress = ({ phase }: { phase: string }) => {
+      setToolOutputLines((prev) => {
+        const copy = prev.slice(0, -1);
+        copy.push(`  ⏳ ${phase}...`);
+        return copy.slice(-500);
+      });
     };
     const onDone = ({ success, errors }: { success: boolean; errors: Array<{ summary: string; reason?: string; suggestion?: string }> }) => {
       if (success) {
@@ -117,9 +133,11 @@ export function AppProvider({
     };
 
     builder.on("line", onLine);
+    builder.on("progress", onProgress);
     builder.on("done", onDone);
     return () => {
       builder.off("line", onLine);
+      builder.off("progress", onProgress);
       builder.off("done", onDone);
     };
   }, [builder]);
