@@ -3,6 +3,7 @@ import { execSync, spawn } from "child_process";
 import type { Profile } from "../core/types.js";
 import type { MetroManager } from "../core/metro.js";
 import type { FileWatcher } from "../core/watcher.js";
+import type { Builder } from "../core/builder.js";
 
 // ---------------------------------------------------------------------------
 // Context shape
@@ -34,6 +35,7 @@ interface AppProviderProps {
   watcher?: FileWatcher | null;
   worktreeKey?: string;
   startupLog?: string[];
+  builder?: Builder;
   children: React.ReactNode;
 }
 
@@ -43,6 +45,7 @@ export function AppProvider({
   watcher,
   worktreeKey,
   startupLog,
+  builder,
   children,
 }: AppProviderProps): React.JSX.Element {
   const [metroLines, setMetroLines] = useState<string[]>([]);
@@ -90,6 +93,36 @@ export function AppProvider({
       watcher.off("action-complete", onActionComplete);
     };
   }, [watcher]);
+
+  // Subscribe to builder events for live build output
+  useEffect(() => {
+    if (!builder) return;
+
+    const onLine = ({ text }: { text: string }) => {
+      setToolOutputLines((prev) => [...prev, text].slice(-500));
+    };
+    const onDone = ({ success, errors }: { success: boolean; errors: Array<{ summary: string; reason?: string; suggestion?: string }> }) => {
+      if (success) {
+        setToolOutputLines((prev) => [...prev, "✅ Build complete!", ""].slice(-500));
+      } else {
+        const lines = ["❌ Build failed:"];
+        for (const err of errors) {
+          lines.push(`  ${err.summary}`);
+          if (err.reason) lines.push(`    Reason: ${err.reason}`);
+          if (err.suggestion) lines.push(`    Fix: ${err.suggestion}`);
+        }
+        lines.push("");
+        setToolOutputLines((prev) => [...prev, ...lines].slice(-500));
+      }
+    };
+
+    builder.on("line", onLine);
+    builder.on("done", onDone);
+    return () => {
+      builder.off("line", onLine);
+      builder.off("done", onDone);
+    };
+  }, [builder]);
 
   // Shortcut actions
   const appendToolOutput = useCallback((...lines: string[]) => {

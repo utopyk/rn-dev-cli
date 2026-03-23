@@ -26,6 +26,7 @@ interface AppProps {
   watcher?: FileWatcher | null;
   worktreeKey?: string;
   startupLog?: string[];
+  builder?: import("../core/builder.js").Builder;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,7 @@ export function App({
   watcher,
   worktreeKey,
   startupLog,
+  builder,
 }: AppProps): React.JSX.Element {
   const [showWizard, setShowWizard] = useState(wizardMode);
   const [activeProfile, setActiveProfile] = useState<Profile | undefined>(
@@ -148,6 +150,7 @@ export function App({
             watcher={watcher}
             worktreeKey={worktreeKey}
             startupLog={startupLog}
+            builder={builder}
           >
             <KeyboardHandler />
             <MainLayout

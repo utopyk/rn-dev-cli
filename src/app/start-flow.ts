@@ -107,6 +107,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
   let ipc: IpcServer | undefined;
   let worktreeKey: string | undefined;
   let startupLog: string[] = [];
+  let builder: import("../core/builder.js").Builder | undefined;
 
   if (profile && !needsWizard) {
     const result = await startServices(
@@ -119,6 +120,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
     ipc = result.ipc;
     worktreeKey = result.worktreeKey;
     startupLog = result.startupLog;
+    builder = result.builder;
   }
 
   // 8. Render single Ink instance — either wizard or TUI
@@ -133,6 +135,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
       watcher,
       worktreeKey,
       startupLog,
+      builder,
       onWizardComplete: async (wizardProfile: Profile) => {
         // Save the profile
         const fullProfile: Profile = {
@@ -182,8 +185,25 @@ export async function startFlow(options: StartOptions): Promise<void> {
             watcher: result.watcher,
             worktreeKey: result.worktreeKey,
             startupLog: result.startupLog,
+            builder: result.builder,
           })
         );
+
+        // Trigger build after re-render
+        const platformsToBuild: Array<"ios" | "android"> =
+          fullProfile.platform === "both" ? ["ios", "android"] : [fullProfile.platform];
+
+        for (const plat of platformsToBuild) {
+          const devId = plat === "ios" ? fullProfile.devices?.ios : fullProfile.devices?.android;
+          result.builder.build({
+            projectRoot: fullProfile.worktree ?? projectRoot,
+            platform: plat,
+            deviceId: devId ?? undefined,
+            port: fullProfile.metroPort,
+            variant: fullProfile.buildVariant,
+            env: fullProfile.env,
+          });
+        }
       },
       onWizardCancel: () => {
         inkInstance.unmount();
@@ -192,7 +212,25 @@ export async function startFlow(options: StartOptions): Promise<void> {
     })
   );
 
-  // 9. Handle cleanup on exit
+  // 9. Trigger build after TUI is rendered (so output streams live to panel)
+  if (builder && profile && !needsWizard) {
+    const platformsToBuild: Array<"ios" | "android"> =
+      profile.platform === "both" ? ["ios", "android"] : [profile.platform];
+
+    for (const platform of platformsToBuild) {
+      const deviceId = platform === "ios" ? profile.devices?.ios : profile.devices?.android;
+      builder.build({
+        projectRoot: profile.worktree ?? projectRoot,
+        platform,
+        deviceId: deviceId ?? undefined,
+        port: profile.metroPort,
+        variant: profile.buildVariant,
+        env: profile.env,
+      });
+    }
+  }
+
+  // 10. Handle cleanup on exit
   const cleanup = (): void => {
     metro?.stopAll();
     watcher?.stop();
@@ -230,6 +268,7 @@ async function startServices(
   ipc: IpcServer;
   worktreeKey: string;
   startupLog: string[];
+  builder: import("../core/builder.js").Builder;
 }> {
   const logSymbols = await import("log-symbols");
   const sym = logSymbols.default;
@@ -327,8 +366,33 @@ async function startServices(
   const ipc = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
   await ipc.start();
 
+  // Boot device if needed (iOS simulator)
+  if (profile.platform === "ios" || profile.platform === "both") {
+    const deviceId = profile.devices?.ios;
+    if (deviceId) {
+      const { listDevices: listDev, bootDevice } = await import("../core/device.js");
+      const devices = listDev("ios");
+      const device = devices.find((d) => d.id === deviceId);
+      if (device && device.status === "shutdown") {
+        emit(`⏳ Booting simulator ${device.name}...`);
+        const booted = bootDevice(device);
+        if (booted) {
+          emit(`  ${sym.success} Simulator booted`);
+        } else {
+          emit(`  ${sym.warning} Could not boot simulator — may already be booting`);
+        }
+      } else if (device && device.status === "booted") {
+        emit(`  ${sym.success} Simulator ${device.name} already booted`);
+      }
+    }
+  }
+
   emit(`${sym.success} All services started`);
   emit("");
 
-  return { metro, watcher, ipc, worktreeKey, startupLog };
+  // Create builder — caller triggers build after TUI renders so output streams live
+  const { Builder } = await import("../core/builder.js");
+  const builder = new Builder();
+
+  return { metro, watcher, ipc, worktreeKey, startupLog, builder };
 }
