@@ -1,9 +1,5 @@
 #!/usr/bin/env node
-import { render } from "ink";
-import React from "react";
+import { createProgram } from "./cli/index.js";
 
-function App() {
-  return <></>;
-}
-
-render(<App />);
+const program = createProgram();
+program.parse();
