@@ -6,12 +6,23 @@
   "bin": {
     "rn-dev": "./dist/index.js"
   },
+  "files": [
+    "dist/"
+  ],
   "scripts": {
     "dev": "tsx src/index.tsx",
-    "build": "node esbuild.config.ts",
+    "build": "tsx esbuild.config.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
   },
+  "keywords": [
+    "react-native",
+    "cli",
+    "tui",
+    "developer-tools",
+    "metro"
+  ],
   "engines": {
     "node": ">=18.0.0"
   },
