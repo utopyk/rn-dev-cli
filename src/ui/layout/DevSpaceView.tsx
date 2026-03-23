@@ -5,10 +5,11 @@ import { Panel } from "../components/Panel.js";
 import { LogViewer } from "../components/LogViewer.js";
 import { useTheme } from "../theme-provider.js";
 
-// Cybersmall figlet — compact 2-line logo, pre-rendered
+// Hand-crafted double-line box-drawing logo
 const MINI_LOGO = [
-  " ____ __ _    ___  ____ _  _",
-  " |--< | \\| -- |__> |===  \\/ ",
+  "╦═╗╔╗╗  ╦═╗╔═╗╦  ╦",
+  "╠╦╝║║║  ║ ║╠═  ║║",
+  "╩╚═╝╚╝  ╩═╝╚═╝ ╚╝",
 ];
 
 export interface DevSpaceShortcut {
