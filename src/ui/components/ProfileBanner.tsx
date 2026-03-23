@@ -22,7 +22,7 @@ export function ProfileBanner({
     return (
       <Box>
         <Text color={theme.accent} bold>
-          {indicator}\u2699 Profile:{" "}
+          {indicator}{"\u2699"} Profile:{" "}
         </Text>
         <Text color={theme.fg}>{profile.name}</Text>
         <Text color={theme.muted}> (collapsed)</Text>
@@ -30,7 +30,7 @@ export function ProfileBanner({
     );
   }
 
-  const separator = <Text color={theme.muted}> \u2502 </Text>;
+  const separator = <Text color={theme.muted}> {"\u2502"} </Text>;
   const indicator = collapsible ? "\u25bc " : "";
 
   const deviceLabel =
@@ -41,7 +41,7 @@ export function ProfileBanner({
   return (
     <Box>
       <Text color={theme.accent} bold>
-        {indicator}\u2699 Profile:{" "}
+        {indicator}{"\u2699"} Profile:{" "}
       </Text>
       <Text color={theme.fg}>{profile.name}</Text>
       {separator}

@@ -45,7 +45,7 @@ export function StatusBar({
   activeModule,
 }: StatusBarProps): React.JSX.Element {
   const theme = useTheme();
-  const separator = <Text color={theme.muted}> \u2502 </Text>;
+  const separator = <Text color={theme.muted}> {"\u2502"} </Text>;
 
   return (
     <Box>

@@ -31,6 +31,7 @@ const DEFAULT_DEBOUNCE_MS = 300;
 const DEFAULT_IGNORE_PATTERNS = [
   "**/node_modules/**",
   "**/.git/**",
+  "**/.rn-dev/**",
   "**/build/**",
   "**/dist/**",
   "**/Pods/**",
