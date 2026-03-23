@@ -86,15 +86,20 @@ function makeAction(
   };
 }
 
-/** Wait for one macrotask + microtask flush (real timers). */
-function nextTick(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-/** Wait for a few ticks to let async chains resolve. */
-async function flushAsync(ticks = 3): Promise<void> {
-  for (let i = 0; i < ticks; i++) {
-    await nextTick();
+/**
+ * Polls `condition` every 10 ms until it returns true or `timeoutMs` elapses.
+ * Much more robust than trying to flush exact timer counts.
+ */
+async function waitFor(
+  condition: () => boolean,
+  timeoutMs = 2000
+): Promise<void> {
+  const start = Date.now();
+  while (!condition()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error("waitFor timed out");
+    }
+    await new Promise<void>((r) => setTimeout(r, 10));
   }
 }
 
@@ -221,16 +226,16 @@ describe("FileWatcher", () => {
   // -------------------------------------------------------------------------
   // Pipeline: runPipeline() behavior tested via event emissions
   //
-  // Strategy: debounceMs=0, trigger change, await nextTick() to flush the
-  // debounce setTimeout(fn, 0), then simulate process exit + flush microtasks.
+  // Strategy: debounceMs=0, trigger change, then use waitFor() to poll for
+  // the expected condition rather than trying to flush exact timer counts.
   // -------------------------------------------------------------------------
 
   describe("pipeline", () => {
     /**
-     * Triggers the chokidar 'change' handler (simulates a file save),
-     * then waits for the debounce timer (0ms) to fire.
+     * Triggers the chokidar 'change' handler (simulates a file save).
+     * Does NOT wait for any async work — callers use waitFor() for that.
      */
-    async function triggerChange(files: string[]): Promise<void> {
+    function triggerChange(files: string[]): void {
       const calls = mockChokidarWatcher.on.mock.calls as [
         string,
         (...args: unknown[]) => void
@@ -240,8 +245,6 @@ describe("FileWatcher", () => {
       for (const f of files) {
         changeHandler(f);
       }
-      // Wait for debounce (0ms setTimeout) to fire
-      await flushAsync(2);
     }
 
     it("emits pipeline-start with changed files", async () => {
@@ -257,7 +260,8 @@ describe("FileWatcher", () => {
       const pipelineStartEvents: unknown[] = [];
       watcher.on("pipeline-start", (data) => pipelineStartEvents.push(data));
 
-      await triggerChange(["/proj/src/App.tsx"]);
+      triggerChange(["/proj/src/App.tsx"]);
+      await waitFor(() => pipelineStartEvents.length > 0);
 
       expect(pipelineStartEvents.length).toBeGreaterThan(0);
       const event = pipelineStartEvents[0] as { files: string[] };
@@ -289,16 +293,18 @@ describe("FileWatcher", () => {
         ({ name }: { name: string }) => actionCompletes.push(name)
       );
 
-      await triggerChange(["/proj/src/foo.ts"]);
+      triggerChange(["/proj/src/foo.ts"]);
 
-      // action-1 is now awaiting its process to exit
-      expect(actionStarts).toContain("action-1");
+      // Wait for action-1 to start (spawn is called)
+      await waitFor(() => actionStarts.includes("action-1"));
       mockProcesses[0]?.simulateExit(0);
-      await flushAsync();
 
-      expect(actionStarts).toContain("action-2");
+      // Wait for action-2 to start
+      await waitFor(() => actionStarts.includes("action-2"));
       mockProcesses[1]?.simulateExit(0);
-      await flushAsync();
+
+      // Wait for both to complete
+      await waitFor(() => actionCompletes.length >= 2);
 
       expect(actionCompletes).toEqual(["action-1", "action-2"]);
 
@@ -322,13 +328,16 @@ describe("FileWatcher", () => {
       watcher.start();
 
       const actionStarts: string[] = [];
+      const pipelineCompletes: unknown[] = [];
       watcher.on("action-start", ({ name }: { name: string }) =>
         actionStarts.push(name)
       );
+      watcher.on("pipeline-complete", (data) => pipelineCompletes.push(data));
 
-      await triggerChange(["/proj/src/foo.ts"]);
+      triggerChange(["/proj/src/foo.ts"]);
+      await waitFor(() => actionStarts.includes("enabled-action"));
       mockProcesses[0]?.simulateExit(0);
-      await flushAsync();
+      await waitFor(() => pipelineCompletes.length > 0);
 
       expect(actionStarts).toEqual(["enabled-action"]);
       expect(actionStarts).not.toContain("disabled-action");
@@ -353,13 +362,16 @@ describe("FileWatcher", () => {
       watcher.start();
 
       const actionStarts: string[] = [];
+      const pipelineCompletes: unknown[] = [];
       watcher.on("action-start", ({ name }: { name: string }) =>
         actionStarts.push(name)
       );
+      watcher.on("pipeline-complete", (data) => pipelineCompletes.push(data));
 
-      await triggerChange(["/proj/src/index.ts"]);
+      triggerChange(["/proj/src/index.ts"]);
+      await waitFor(() => actionStarts.includes("failing-action"));
       mockProcesses[0]?.simulateExit(1); // fail
-      await flushAsync();
+      await waitFor(() => pipelineCompletes.length > 0);
 
       expect(actionStarts).toContain("failing-action");
       expect(actionStarts).not.toContain("should-not-run");
@@ -384,15 +396,18 @@ describe("FileWatcher", () => {
       watcher.start();
 
       const actionStarts: string[] = [];
+      const pipelineCompletes: unknown[] = [];
       watcher.on("action-start", ({ name }: { name: string }) =>
         actionStarts.push(name)
       );
+      watcher.on("pipeline-complete", (data) => pipelineCompletes.push(data));
 
-      await triggerChange(["/proj/src/index.ts"]);
+      triggerChange(["/proj/src/index.ts"]);
+      await waitFor(() => actionStarts.includes("non-halting-fail"));
       mockProcesses[0]?.simulateExit(1);
-      await flushAsync();
+      await waitFor(() => actionStarts.includes("runs-anyway"));
       mockProcesses[1]?.simulateExit(0);
-      await flushAsync();
+      await waitFor(() => pipelineCompletes.length > 0);
 
       expect(actionStarts).toContain("non-halting-fail");
       expect(actionStarts).toContain("runs-anyway");
@@ -417,7 +432,8 @@ describe("FileWatcher", () => {
 
       watcher.start();
 
-      await triggerChange(["/proj/src/a.ts", "/proj/src/b.ts"]);
+      triggerChange(["/proj/src/a.ts", "/proj/src/b.ts"]);
+      await waitFor(() => spawnMock.mock.calls.length > 0);
 
       expect(spawnMock).toHaveBeenCalled();
       // spawn("sh", ["-c", "<full command>"])
@@ -447,15 +463,14 @@ describe("FileWatcher", () => {
 
       watcher.start();
 
-      const actionStarts: string[] = [];
-      watcher.on("action-start", ({ name }: { name: string }) =>
-        actionStarts.push(name)
-      );
+      const pipelineCompletes: unknown[] = [];
+      watcher.on("pipeline-complete", (data) => pipelineCompletes.push(data));
 
       // Trigger with a .css file — should NOT run ts-only
-      await triggerChange(["/proj/src/styles.css"]);
+      triggerChange(["/proj/src/styles.css"]);
+      // Wait for pipeline-complete (the pipeline runs but skips all actions)
+      await waitFor(() => pipelineCompletes.length > 0);
 
-      expect(actionStarts).not.toContain("ts-only");
       expect(spawnMock).not.toHaveBeenCalled();
 
       watcher.stop();
@@ -482,7 +497,8 @@ describe("FileWatcher", () => {
       );
 
       // Mix of .ts and .css — should trigger because at least one matches
-      await triggerChange(["/proj/src/styles.css", "/proj/src/App.ts"]);
+      triggerChange(["/proj/src/styles.css", "/proj/src/App.ts"]);
+      await waitFor(() => actionStarts.includes("ts-lint"));
 
       expect(actionStarts).toContain("ts-lint");
 
@@ -505,9 +521,10 @@ describe("FileWatcher", () => {
         pipelineCompletes.push(data)
       );
 
-      await triggerChange(["/proj/src/index.ts"]);
+      triggerChange(["/proj/src/index.ts"]);
+      await waitFor(() => mockProcesses.length > 0);
       mockProcesses[0]?.simulateExit(0);
-      await flushAsync();
+      await waitFor(() => pipelineCompletes.length > 0);
 
       expect(pipelineCompletes.length).toBeGreaterThan(0);
       const result = pipelineCompletes[0] as { results: unknown[] };
@@ -532,7 +549,13 @@ describe("FileWatcher", () => {
       watcher.start();
       watcher.toggle(); // disable
 
-      await triggerChange(["/proj/src/index.ts"]);
+      const pipelineStartEvents: unknown[] = [];
+      watcher.on("pipeline-start", (data) => pipelineStartEvents.push(data));
+
+      triggerChange(["/proj/src/index.ts"]);
+
+      // Wait long enough that if the pipeline were going to run, it would have
+      await new Promise<void>((r) => setTimeout(r, 50));
 
       expect(spawnMock).not.toHaveBeenCalled();
 
@@ -553,9 +576,10 @@ describe("FileWatcher", () => {
       const completeEvents: unknown[] = [];
       watcher.on("action-complete", (data) => completeEvents.push(data));
 
-      await triggerChange(["/proj/src/foo.ts"]);
+      triggerChange(["/proj/src/foo.ts"]);
+      await waitFor(() => mockProcesses.length > 0);
       mockProcesses[0]?.simulateExit(0);
-      await flushAsync();
+      await waitFor(() => completeEvents.length > 0);
 
       expect(completeEvents.length).toBeGreaterThan(0);
       const event = completeEvents[0] as {
@@ -581,9 +605,10 @@ describe("FileWatcher", () => {
       const completeEvents: unknown[] = [];
       watcher.on("action-complete", (data) => completeEvents.push(data));
 
-      await triggerChange(["/proj/src/foo.ts"]);
+      triggerChange(["/proj/src/foo.ts"]);
+      await waitFor(() => mockProcesses.length > 0);
       mockProcesses[0]?.simulateExit(2);
-      await flushAsync();
+      await waitFor(() => completeEvents.length > 0);
 
       expect(completeEvents.length).toBeGreaterThan(0);
       const event = completeEvents[0] as {
