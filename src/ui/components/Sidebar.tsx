@@ -19,7 +19,7 @@ export function Sidebar({
   items,
   activeId,
   onSelect,
-  width = 24,
+  width = 8,
 }: SidebarProps): React.JSX.Element {
   const theme = useTheme();
   const [focusIndex, setFocusIndex] = useState(() => {
@@ -52,13 +52,13 @@ export function Sidebar({
         const isFocused = index === focusIndex;
 
         return (
-          <Box key={item.id} paddingX={1}>
+          <Box key={item.id} justifyContent="center">
             <Text
-              color={isActive ? theme.accent : isFocused ? theme.highlight : theme.fg}
+              color={isActive ? theme.accent : isFocused ? theme.highlight : theme.muted}
               bold={isActive}
               inverse={isFocused}
             >
-              {item.icon} {item.label}
+              {item.icon}
             </Text>
           </Box>
         );

@@ -1,31 +1,39 @@
 import React from "react";
-import { Text, Box } from "ink";
+import { Box, Text } from "ink";
 import type { RnDevModule } from "../../core/types.js";
-
-// ---------------------------------------------------------------------------
-// MetroLogsView — placeholder component
-// ---------------------------------------------------------------------------
+import { useAppContext } from "../../app/AppContext.js";
+import { LogViewer } from "../../ui/components/LogViewer.js";
+import { Panel } from "../../ui/components/Panel.js";
+import { useTheme } from "../../ui/theme-provider.js";
 
 function MetroLogsView(): React.JSX.Element {
+  const { metroLines } = useAppContext();
+  const theme = useTheme();
+
   return React.createElement(
     Box,
-    { flexDirection: "column", padding: 1 },
+    { flexDirection: "column", flexGrow: 1 },
+    // Instructions
     React.createElement(
-      Text,
-      { bold: true },
-      "Metro Logs"
+      Box,
+      { paddingX: 1, paddingY: 0 },
+      React.createElement(
+        Text,
+        { color: theme.muted },
+        "[C] Clear Logs  [r] Reload  [d] Dev Menu"
+      )
     ),
+    // Full-screen metro log viewer
     React.createElement(
-      Text,
-      { dimColor: true },
-      "Press f to filter logs, C to clear logs"
+      Box,
+      { flexGrow: 1 },
+      React.createElement(
+        Panel,
+        { title: "Metro Logs", width: "100%", children: React.createElement(LogViewer, { lines: metroLines, follow: true }) }
+      )
     )
   );
 }
-
-// ---------------------------------------------------------------------------
-// Module definition
-// ---------------------------------------------------------------------------
 
 export const metroLogsModule: RnDevModule = {
   id: "metro-logs",

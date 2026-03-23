@@ -158,17 +158,10 @@ export function AppProvider({
           }
           break;
         case "q":
-          appendToolOutput("▶ Shutting down...");
-          if (metro) {
-            metro.stopAll();
-            appendToolOutput("  ✓ Metro stopped");
-          }
-          if (watcher) {
-            watcher.stop();
-            appendToolOutput("  ✓ Watcher stopped");
-          }
-          // Give a moment for cleanup, then exit
-          setTimeout(() => process.exit(0), 500);
+          // Kill everything immediately — no waiting
+          try { if (watcher) watcher.stop(); } catch {}
+          try { if (metro) metro.stopAll(); } catch {}
+          process.exit(0);
           break;
         default:
           break;

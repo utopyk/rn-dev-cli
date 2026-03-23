@@ -1,31 +1,39 @@
 import React from "react";
-import { Text, Box } from "ink";
+import { Box, Text } from "ink";
 import type { RnDevModule } from "../../core/types.js";
-
-// ---------------------------------------------------------------------------
-// LintTestView — placeholder component
-// ---------------------------------------------------------------------------
+import { useAppContext } from "../../app/AppContext.js";
+import { LogViewer } from "../../ui/components/LogViewer.js";
+import { Panel } from "../../ui/components/Panel.js";
+import { useTheme } from "../../ui/theme-provider.js";
 
 function LintTestView(): React.JSX.Element {
+  const { toolOutputLines } = useAppContext();
+  const theme = useTheme();
+
   return React.createElement(
     Box,
-    { flexDirection: "column", padding: 1 },
+    { flexDirection: "column", flexGrow: 1 },
+    // Instructions
     React.createElement(
-      Text,
-      { bold: true },
-      "Lint & Test"
+      Box,
+      { paddingX: 1, paddingY: 0 },
+      React.createElement(
+        Text,
+        { color: theme.muted },
+        "[l] Lint  [t] Type Check  [T] Tests"
+      )
     ),
+    // Output panel
     React.createElement(
-      Text,
-      { dimColor: true },
-      "Press l to run lint, t to run tests, T to run type check"
+      Box,
+      { flexGrow: 1 },
+      React.createElement(
+        Panel,
+        { title: "Output", width: "100%", children: React.createElement(LogViewer, { lines: toolOutputLines, follow: true }) }
+      )
     )
   );
 }
-
-// ---------------------------------------------------------------------------
-// Module definition
-// ---------------------------------------------------------------------------
 
 export const lintTestModule: RnDevModule = {
   id: "lint-test",

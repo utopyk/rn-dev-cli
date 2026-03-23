@@ -18,42 +18,26 @@ export function ProfileBanner({
   const theme = useTheme();
 
   if (collapsed) {
-    const indicator = collapsible ? "\u25b6 " : "";
     return (
       <Box>
-        <Text color={theme.accent} bold>
-          {indicator}{"\u2699"} Profile:{" "}
-        </Text>
-        <Text color={theme.fg}>{profile.name}</Text>
-        <Text color={theme.muted}> (collapsed)</Text>
+        <Text color={theme.muted}>▶ </Text>
+        <Text color={theme.accent} bold>{profile.name}</Text>
       </Box>
     );
   }
 
-  const separator = <Text color={theme.muted}> {"\u2502"} </Text>;
-  const indicator = collapsible ? "\u25bc " : "";
-
-  const deviceLabel =
-    profile.devices.ios && profile.devices.android
-      ? `${profile.devices.ios}, ${profile.devices.android}`
-      : profile.devices.ios ?? profile.devices.android ?? "auto";
-
   return (
     <Box>
-      <Text color={theme.accent} bold>
-        {indicator}{"\u2699"} Profile:{" "}
-      </Text>
-      <Text color={theme.fg}>{profile.name}</Text>
-      {separator}
+      <Text color={theme.muted}>{collapsible ? "▼ " : ""}</Text>
+      <Text color={theme.accent} bold>{profile.name}</Text>
+      <Text color={theme.muted}> │ </Text>
       <Text color={theme.fg}>{profile.branch}</Text>
-      {separator}
+      <Text color={theme.muted}> │ </Text>
       <Text color={theme.fg}>{profile.platform}</Text>
-      {separator}
+      <Text color={theme.muted}> │ </Text>
       <Text color={theme.fg}>{profile.mode}</Text>
-      {separator}
+      <Text color={theme.muted}> │ </Text>
       <Text color={theme.fg}>:{profile.metroPort}</Text>
-      {separator}
-      <Text color={theme.fg}>{deviceLabel}</Text>
     </Box>
   );
 }
