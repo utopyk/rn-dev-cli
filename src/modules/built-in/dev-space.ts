@@ -1,26 +1,29 @@
 import React from "react";
 import type { RnDevModule } from "../../core/types.js";
 import { DevSpaceView } from "../../ui/layout/DevSpaceView.js";
+import { useAppContext } from "../../app/AppContext.js";
 
-const DevSpaceViewWithDefaults: React.FC = () =>
-  React.createElement(DevSpaceView, {
-    metroLines: [],
-    toolOutputLines: [],
-    shortcuts: [],
+const DevSpaceViewConnected: React.FC = () => {
+  const { metroLines, toolOutputLines, shortcuts } = useAppContext();
+  return React.createElement(DevSpaceView, {
+    metroLines,
+    toolOutputLines,
+    shortcuts,
   });
+};
 
 export const devSpaceModule: RnDevModule = {
   id: "dev-space",
   name: "Dev Space",
   icon: "🚀",
   order: 0,
-  component: DevSpaceViewWithDefaults,
+  component: DevSpaceViewConnected,
   shortcuts: [
-    { key: "r", label: "Reload", action: async () => { /* wired in app */ }, showInPanel: true },
-    { key: "d", label: "Dev Menu", action: async () => { /* wired in app */ }, showInPanel: true },
-    { key: "l", label: "Lint", action: async () => { /* wired in app */ }, showInPanel: true },
-    { key: "t", label: "Type Check", action: async () => { /* wired in app */ }, showInPanel: true },
-    { key: "c", label: "Clean", action: async () => { /* wired in app */ }, showInPanel: true },
-    { key: "w", label: "Toggle Watcher", action: async () => { /* wired in app */ }, showInPanel: true },
+    { key: "r", label: "Reload", action: async () => {}, showInPanel: true },
+    { key: "d", label: "Dev Menu", action: async () => {}, showInPanel: true },
+    { key: "l", label: "Lint", action: async () => {}, showInPanel: true },
+    { key: "t", label: "Type Check", action: async () => {}, showInPanel: true },
+    { key: "c", label: "Clean", action: async () => {}, showInPanel: true },
+    { key: "w", label: "Toggle Watcher", action: async () => {}, showInPanel: true },
   ],
 };

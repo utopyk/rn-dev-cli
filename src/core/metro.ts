@@ -288,6 +288,48 @@ export class MetroManager extends EventEmitter {
     return [...this.instances.values()];
   }
 
+  /**
+   * Send a reload signal to the Metro instance's connected device.
+   * Uses the Metro dev server's /reload endpoint.
+   */
+  reload(worktreeKey: string): boolean {
+    const instance = this.instances.get(worktreeKey);
+    if (!instance || instance.status !== "running") return false;
+    try {
+      const http = require("http") as typeof import("http");
+      const req = http.request(
+        { hostname: "localhost", port: instance.port, path: "/reload", method: "POST" },
+        () => {}
+      );
+      req.on("error", () => {});
+      req.end();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Open dev menu on the connected device.
+   * Uses the Metro dev server's /open-debugger endpoint.
+   */
+  devMenu(worktreeKey: string): boolean {
+    const instance = this.instances.get(worktreeKey);
+    if (!instance || instance.status !== "running") return false;
+    try {
+      const http = require("http") as typeof import("http");
+      const req = http.request(
+        { hostname: "localhost", port: instance.port, path: "/open-debugger", method: "POST" },
+        () => {}
+      );
+      req.on("error", () => {});
+      req.end();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Build requirement detection
   // -------------------------------------------------------------------------

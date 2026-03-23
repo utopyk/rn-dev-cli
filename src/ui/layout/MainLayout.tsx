@@ -96,7 +96,7 @@ export function MainLayout({
           items={sidebarItems}
           activeId={activeModuleId}
           onSelect={setActiveModuleId}
-          width={12}
+          width={14}
         />
 
         {/* Active module view */}

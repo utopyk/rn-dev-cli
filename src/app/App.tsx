@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { useInput } from "ink";
 import { FullScreenBox } from "fullscreen-ink";
 import { ThemeProvider } from "../ui/theme-provider.js";
 import { MainLayout } from "../ui/layout/index.js";
 import { WizardContainer } from "../ui/wizard/index.js";
+import { AppProvider, useAppContext } from "./AppContext.js";
 import type { Profile, Theme } from "../core/types.js";
 import type { MetroManager } from "../core/metro.js";
 import type { FileWatcher } from "../core/watcher.js";
@@ -15,16 +17,38 @@ import type { ModuleRegistry } from "../modules/index.js";
 interface AppProps {
   theme: Theme;
   registry: ModuleRegistry;
-  // When in wizard mode, these are provided:
   wizardMode?: boolean;
   projectRoot?: string;
   onWizardComplete?: (profile: Profile) => void;
   onWizardCancel?: () => void;
-  // When in TUI mode, these are provided:
   profile?: Profile;
   metro?: MetroManager;
   watcher?: FileWatcher | null;
   worktreeKey?: string;
+}
+
+// ---------------------------------------------------------------------------
+// KeyboardHandler — captures shortcut keys and dispatches to AppContext
+// ---------------------------------------------------------------------------
+
+function KeyboardHandler(): null {
+  const { runShortcut } = useAppContext();
+
+  useInput(
+    useCallback(
+      (input: string, key: { tab?: boolean }) => {
+        // Don't intercept tab (used for module switching)
+        if (key.tab) return;
+        // Single char shortcuts
+        if (input.length === 1) {
+          runShortcut(input);
+        }
+      },
+      [runShortcut]
+    )
+  );
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +93,6 @@ export function App({
     };
   }, [metro]);
 
-  // Derive the current metro status from the instance
   useEffect(() => {
     if (!metro || !worktreeKey) return;
     const instance = metro.getInstance(worktreeKey);
@@ -82,7 +105,6 @@ export function App({
     (partial: Partial<Profile>) => {
       setShowWizard(false);
       if (onWizardComplete) {
-        // The start-flow will handle saving and transitioning
         onWizardComplete(partial as Profile);
       }
     },
@@ -96,7 +118,6 @@ export function App({
     }
   }, [onWizardCancel]);
 
-  // Build module descriptors for the layout
   const modules = registry.getAll().map((m) => ({
     id: m.id,
     icon: m.icon,
@@ -119,14 +140,22 @@ export function App({
             onCancel={handleWizardCancel}
           />
         ) : activeProfile ? (
-          <MainLayout
+          <AppProvider
             profile={activeProfile}
-            modules={modules}
-            shortcuts={shortcuts}
-            metroStatus={metroStatus}
-            metroPort={activeProfile.metroPort}
-            watcherEnabled={watcherEnabled}
-          />
+            metro={metro}
+            watcher={watcher}
+            worktreeKey={worktreeKey}
+          >
+            <KeyboardHandler />
+            <MainLayout
+              profile={activeProfile}
+              modules={modules}
+              shortcuts={shortcuts}
+              metroStatus={metroStatus}
+              metroPort={activeProfile.metroPort}
+              watcherEnabled={watcherEnabled}
+            />
+          </AppProvider>
         ) : null}
       </FullScreenBox>
     </ThemeProvider>
