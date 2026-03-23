@@ -63,13 +63,37 @@ export function MainLayout({
   const activeModule = modules.find((m) => m.id === activeModuleId);
   const ActiveComponent = activeModule?.component ?? null;
 
-  const hr = "─".repeat(width);
-
   return (
     <Box flexDirection="column" width={width} height={height}>
+      {/* ── Tab bar ── */}
+      <Box borderStyle="single" borderColor={theme.border} paddingX={1} height={3} gap={1}>
+        {modules.map((mod) => {
+          const isActive = mod.id === activeModuleId;
+          return (
+            <Box
+              key={mod.id}
+              borderStyle={isActive ? "bold" : "single"}
+              borderColor={isActive ? theme.accent : theme.border}
+              paddingX={1}
+            >
+              <Text
+                color={isActive ? theme.accent : theme.fg}
+                bold={isActive}
+              >
+                {mod.icon} {mod.name}
+              </Text>
+            </Box>
+          );
+        })}
+        <Box flexGrow={1} />
+        <Box alignSelf="center">
+          <Text color={theme.muted} dimColor>[Tab] switch</Text>
+        </Box>
+      </Box>
+
       {/* ── Profile banner ── */}
       {!bannerCollapsed && (
-        <Box paddingX={1} height={1}>
+        <Box borderStyle="single" borderColor={theme.border} paddingX={1} height={3}>
           <Text color={theme.accent} bold>⚙ {profile.name}</Text>
           <Text color={theme.muted}> │ </Text>
           <Text color={theme.success}>{profile.branch}</Text>
@@ -83,42 +107,22 @@ export function MainLayout({
           <Text color={theme.fg}>:{profile.metroPort}</Text>
           <Text color={theme.muted}> │ </Text>
           <Text color={theme.fg}>{profile.buildVariant}</Text>
+          <Box flexGrow={1} />
+          <Text color={theme.muted} dimColor>[p] hide</Text>
         </Box>
       )}
-
-      {/* ── Tab bar ── */}
-      <Box paddingX={1} height={1} gap={1}>
-        {modules.map((mod) => {
-          const isActive = mod.id === activeModuleId;
-          return (
-            <Text
-              key={mod.id}
-              color={isActive ? theme.accent : theme.muted}
-              bold={isActive}
-              underline={isActive}
-            >
-              {mod.icon} {mod.name}
-            </Text>
-          );
-        })}
-        <Text color={theme.muted} dimColor> [Tab]↹</Text>
-      </Box>
-
-      {/* ── Separator ── */}
-      <Text color={theme.border}>{hr}</Text>
 
       {/* ── Active module content ── */}
       <Box flexGrow={1} flexDirection="column">
         {ActiveComponent != null && <ActiveComponent />}
       </Box>
 
-      {/* ── Separator ── */}
-      <Text color={theme.border}>{hr}</Text>
-
-      {/* ── Shortcut bar + Status ── */}
-      <Box paddingX={1} height={1}>
+      {/* ── Shortcut bar ── */}
+      <Box borderStyle="single" borderColor={theme.border} borderBottom={false} paddingX={1} height={3}>
         <ShortcutBar shortcuts={shortcuts} />
       </Box>
+
+      {/* ── Status bar ── */}
       <Box paddingX={1} height={1}>
         <StatusBar
           metroStatus={metroStatus}
