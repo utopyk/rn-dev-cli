@@ -76,7 +76,7 @@ export function ThemeProvider({
 }: {
   theme: Theme;
   children: React.ReactNode;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <ThemeContext.Provider value={theme.colors}>
       {children}

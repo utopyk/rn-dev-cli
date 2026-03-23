@@ -435,7 +435,7 @@ describe("createDefaultPreflightEngine", () => {
   describe("node-version check", () => {
     it("passes when node version matches .nvmrc", async () => {
       writeFileSync(join(tmpDir, ".nvmrc"), "18.19.0\n");
-      vi.mocked(execSync).mockReturnValue("v18.19.0\n" as unknown as Buffer);
+      vi.mocked(execSync).mockReturnValue(Buffer.from("v18.19.0\n"));
 
       const engine = createDefaultPreflightEngine(tmpDir);
       const checks = engine.getChecksForPlatform("both");
@@ -447,7 +447,7 @@ describe("createDefaultPreflightEngine", () => {
 
     it("fails when node version does not match .nvmrc", async () => {
       writeFileSync(join(tmpDir, ".nvmrc"), "18.19.0\n");
-      vi.mocked(execSync).mockReturnValue("v20.0.0\n" as unknown as Buffer);
+      vi.mocked(execSync).mockReturnValue(Buffer.from("v20.0.0\n"));
 
       const engine = createDefaultPreflightEngine(tmpDir);
       const checks = engine.getChecksForPlatform("both");
@@ -460,7 +460,7 @@ describe("createDefaultPreflightEngine", () => {
 
     it("passes when no version file is present (no constraint)", async () => {
       // No .nvmrc, no .node-version, no engines in package.json
-      vi.mocked(execSync).mockReturnValue("v18.19.0\n" as unknown as Buffer);
+      vi.mocked(execSync).mockReturnValue(Buffer.from("v18.19.0\n"));
 
       const engine = createDefaultPreflightEngine(tmpDir);
       const checks = engine.getChecksForPlatform("both");
@@ -472,7 +472,7 @@ describe("createDefaultPreflightEngine", () => {
 
     it("passes when node version matches .node-version file", async () => {
       writeFileSync(join(tmpDir, ".node-version"), "20.11.0\n");
-      vi.mocked(execSync).mockReturnValue("v20.11.0\n" as unknown as Buffer);
+      vi.mocked(execSync).mockReturnValue(Buffer.from("v20.11.0\n"));
 
       const engine = createDefaultPreflightEngine(tmpDir);
       const checks = engine.getChecksForPlatform("both");

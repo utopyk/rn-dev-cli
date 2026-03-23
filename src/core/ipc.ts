@@ -122,7 +122,7 @@ export class IpcServer extends EventEmitter {
 
       // Destroy all open connections so close() resolves promptly
       // (net.Server.close() only stops accepting new connections by default)
-      this.server.closeAllConnections?.();
+      (this.server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
     });
   }
 
