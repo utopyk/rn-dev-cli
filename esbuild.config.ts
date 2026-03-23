@@ -25,7 +25,13 @@ await build({
   target: "node18",
   format: "esm",
   outfile: "dist/index.js",
-  banner: { js: "#!/usr/bin/env node" },
+  banner: {
+    js: [
+      "#!/usr/bin/env node",
+      'import { createRequire as __createRequire } from "module";',
+      "const require = __createRequire(import.meta.url);",
+    ].join("\n"),
+  },
   external: externalPackages,
   minify: false,        // keep readable for debugging
   sourcemap: true,
