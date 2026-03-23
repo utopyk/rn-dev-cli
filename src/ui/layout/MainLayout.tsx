@@ -22,7 +22,7 @@ export interface MainLayoutProps {
   watcherEnabled: boolean;
 }
 
-const SIDEBAR_WIDTH = 16;
+const SIDEBAR_WIDTH = 18;
 
 export function MainLayout({
   profile,
@@ -65,108 +65,93 @@ export function MainLayout({
   const activeModule = modules.find((m) => m.id === activeModuleId);
   const ActiveComponent = activeModule?.component ?? null;
 
-  // Build horizontal rule
-  const hrChar = "─";
-  const hr = hrChar.repeat(Math.max(0, width - 2));
+  // Content area height: total - profile(3) - shortcut(1) - status(1)
+  const contentHeight = Math.max(5, height - 5);
 
   return (
     <Box flexDirection="column" width={width} height={height}>
       {/* ── Profile banner ── */}
-      <Box borderStyle="round" borderColor={theme.border} paddingX={1}>
+      <Box paddingX={1} height={1}>
         {bannerCollapsed ? (
-          <Box>
+          <>
             <Text color={theme.muted}>▶ </Text>
             <Text color={theme.accent} bold>{profile.name}</Text>
-            <Text color={theme.muted}> [p] expand</Text>
-          </Box>
+            <Text color={theme.muted}> [p]</Text>
+          </>
         ) : (
-          <Box justifyContent="space-between" width="100%">
-            <Box>
-              <Text color={theme.accent} bold>⚙ {profile.name}</Text>
-              <Text color={theme.muted}> │ </Text>
-              <Text color={theme.success}>{profile.branch}</Text>
-              <Text color={theme.muted}> │ </Text>
-              <Text color={theme.fg}>{profile.platform}</Text>
-              <Text color={theme.muted}> │ </Text>
-              <Text color={profile.mode === "ultra-clean" ? theme.warning : theme.fg}>
-                {profile.mode}
-              </Text>
-              <Text color={theme.muted}> │ </Text>
-              <Text color={theme.fg}>:{profile.metroPort}</Text>
-              <Text color={theme.muted}> │ </Text>
-              <Text color={theme.fg}>{profile.buildVariant}</Text>
-              {profile.worktree && (
-                <>
-                  <Text color={theme.muted}> │ </Text>
-                  <Text color={theme.highlight}>wt:{profile.worktree}</Text>
-                </>
-              )}
-            </Box>
-            <Text color={theme.muted}>[p]</Text>
-          </Box>
+          <>
+            <Text color={theme.accent} bold>⚙ {profile.name}</Text>
+            <Text color={theme.muted}> │ </Text>
+            <Text color={theme.success}>{profile.branch}</Text>
+            <Text color={theme.muted}> │ </Text>
+            <Text color={theme.fg}>{profile.platform}</Text>
+            <Text color={theme.muted}> │ </Text>
+            <Text color={profile.mode === "ultra-clean" ? theme.warning : theme.fg}>
+              {profile.mode}
+            </Text>
+            <Text color={theme.muted}> │ </Text>
+            <Text color={theme.fg}>:{profile.metroPort}</Text>
+            <Text color={theme.muted}> │ </Text>
+            <Text color={theme.fg}>{profile.buildVariant}</Text>
+            <Text color={theme.muted}> [p]</Text>
+          </>
         )}
       </Box>
 
+      {/* ── Separator ── */}
+      <Text color={theme.border}>{"─".repeat(width)}</Text>
+
       {/* ── Main area: sidebar + content ── */}
-      <Box flexDirection="row" flexGrow={1}>
-        {/* Sidebar */}
-        <Box
-          flexDirection="column"
-          width={SIDEBAR_WIDTH}
-          borderStyle="single"
-          borderColor={theme.border}
-          borderRight={true}
-          borderLeft={false}
-          borderTop={false}
-          borderBottom={false}
-        >
-          {modules.map((mod, index) => {
+      <Box flexDirection="row" height={contentHeight}>
+        {/* Sidebar — manually draw right border as │ per line */}
+        <Box flexDirection="column" width={SIDEBAR_WIDTH}>
+          {modules.map((mod) => {
             const isActive = mod.id === activeModuleId;
+            const maxLabel = SIDEBAR_WIDTH - 6; // icon(2) + indicator(2) + border(1) + pad
+            const label = mod.name.length > maxLabel
+              ? mod.name.slice(0, maxLabel)
+              : mod.name.padEnd(maxLabel);
+
             return (
-              <React.Fragment key={mod.id}>
-                <Box paddingX={1} height={1}>
-                  <Text
-                    color={isActive ? theme.accent : theme.fg}
-                    bold={isActive}
-                    backgroundColor={isActive ? theme.selection : undefined}
-                    wrap="truncate"
-                  >
-                    {isActive ? "▸ " : "  "}
-                    {mod.icon} {mod.name}
-                  </Text>
-                </Box>
-                {index < modules.length - 1 && (
-                  <Box paddingX={0} height={1}>
-                    <Text color={theme.border} dimColor>
-                      {hrChar.repeat(SIDEBAR_WIDTH - 1)}
-                    </Text>
-                  </Box>
-                )}
-              </React.Fragment>
+              <Box key={mod.id} height={1}>
+                <Text
+                  color={isActive ? theme.accent : theme.fg}
+                  bold={isActive}
+                  backgroundColor={isActive ? theme.selection : undefined}
+                >
+                  {isActive ? " ▸ " : "   "}
+                  {mod.icon} {label}
+                </Text>
+                <Text color={theme.border}>│</Text>
+              </Box>
             );
           })}
-          <Box flexGrow={1} />
-          <Box paddingX={1} height={1}>
-            <Text color={theme.muted} dimColor>[Tab] switch</Text>
+          {/* Fill remaining sidebar height with empty + border */}
+          <Box flexDirection="column" flexGrow={1}>
+            <Box flexGrow={1} />
+            <Box height={1}>
+              <Text color={theme.muted}>{"".padEnd(SIDEBAR_WIDTH - 1)}</Text>
+              <Text color={theme.border}>│</Text>
+            </Box>
           </Box>
         </Box>
 
         {/* Active module content */}
-        <Box flexGrow={1} flexDirection="column" paddingLeft={1}>
+        <Box flexGrow={1} flexDirection="column">
           {ActiveComponent != null && <ActiveComponent />}
         </Box>
       </Box>
 
       {/* ── Separator ── */}
-      <Text color={theme.border}>{hr}</Text>
+      <Text color={theme.border}>{"─".repeat(width)}</Text>
 
       {/* ── Shortcut bar ── */}
-      <Box paddingX={1}>
+      <Box paddingX={1} height={1}>
         <ShortcutBar shortcuts={shortcuts} />
       </Box>
 
       {/* ── Status bar ── */}
-      <Box paddingX={1}>
+      <Box paddingX={1} height={1}>
         <StatusBar
           metroStatus={metroStatus}
           metroPort={metroPort}

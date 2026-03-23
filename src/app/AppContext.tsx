@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import type { Profile } from "../core/types.js";
 import type { MetroManager } from "../core/metro.js";
 import type { FileWatcher } from "../core/watcher.js";
@@ -106,7 +106,7 @@ export function AppProvider({
           timeout: 60000,
           stdio: ["pipe", "pipe", "pipe"],
         });
-        const lines = output.split("\n").filter((l) => l.length > 0);
+        const lines = output.split("\n").filter((l: string) => l.length > 0);
         appendToolOutput(...lines, `✓ ${label} complete`, "");
       } catch (err: unknown) {
         const error = err as { stdout?: string; stderr?: string; message?: string };
@@ -157,24 +157,17 @@ export function AppProvider({
             appendToolOutput("✗ No watcher configured", "");
           }
           break;
-        case "q": {
-          // Force exit immediately — kill Metro via port since process
-          // group kill may fail on detached/unref'd children
-          try { watcher?.stop(); } catch {}
+        case "q":
+          // Kill Metro in background via spawn (non-blocking), then exit
           try {
-            if (metro) {
-              // Use lsof to find and kill the actual Metro process
-              const port = profile.metroPort;
-              try {
-                execSync(`lsof -ti :${port} | xargs kill -9 2>/dev/null`, { stdio: "ignore" });
-              } catch {}
-              metro.stopAll();
-            }
+            const port = profile.metroPort;
+            spawn("sh", ["-c", `lsof -ti :${port} | xargs kill -9 2>/dev/null`], {
+              detached: true,
+              stdio: "ignore",
+            }).unref();
           } catch {}
-          // Force exit — don't let anything delay it
           process.exit(0);
           break;
-        }
         default:
           break;
       }
