@@ -158,7 +158,8 @@ export function AppProvider({
           }
           break;
         case "q":
-          // Kill Metro in background via spawn (non-blocking), then exit
+          // Reset terminal background, kill Metro in background, exit
+          process.stdout.write("\x1b[0m\x1b[2J\x1b[H"); // reset + clear + home
           try {
             const port = profile.metroPort;
             spawn("sh", ["-c", `lsof -ti :${port} | xargs kill -9 2>/dev/null`], {
