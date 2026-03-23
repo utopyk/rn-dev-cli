@@ -5,11 +5,12 @@ import { Panel } from "../components/Panel.js";
 import { LogViewer } from "../components/LogViewer.js";
 import { useTheme } from "../theme-provider.js";
 
-// Mini logo — compact version of the ANSI Shadow banner
+// Mini logo — Small Slant figlet, pre-rendered for bundling
 const MINI_LOGO = [
-  "┳━┓┏┓┓  ┳━┓┏━┓┓ ┓",
-  "┣┳┛┃┃┃  ┃ ┃┣━  ┃┃",
-  "┻┛ ┛┗┛  ┻━┛┗━┛ ┗┛",
+  "                   __        ",
+  "  _______  _______/ /__ _  __",
+  " / __/ _ \\/___/ _  / -_) |/ /",
+  "/_/ /_//_/    \\_,_/\\__/|___/ ",
 ];
 
 export interface DevSpaceShortcut {
