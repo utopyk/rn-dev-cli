@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { statSync } from "node:fs";
 import { spawn } from "child_process";
 import { watch } from "chokidar";
 import type { FSWatcher } from "chokidar";
@@ -75,10 +76,36 @@ export class FileWatcher extends EventEmitter {
     const ignorePatterns =
       this.config.ignorePatterns ?? DEFAULT_IGNORE_PATTERNS;
 
+    // Use a function-based ignore to reliably filter out special files
+    // (sockets, pipes) that chokidar can't watch, plus the glob patterns.
+    const globMatcher = picomatch(ignorePatterns);
+    const ignoreFn = (filePath: string): boolean => {
+      // Always ignore .rn-dev directory (contains Unix sockets, artifacts)
+      if (filePath.includes("/.rn-dev/") || filePath.endsWith("/.rn-dev")) {
+        return true;
+      }
+      // Ignore non-regular files (sockets, pipes, etc.)
+      try {
+        const stat = statSync(filePath);
+        if (!stat.isFile() && !stat.isDirectory()) {
+          return true;
+        }
+      } catch {
+        // If we can't stat it, ignore it
+        return true;
+      }
+      return globMatcher(filePath);
+    };
+
     this.chokidarWatcher = watch(this.config.projectRoot, {
-      ignored: ignorePatterns,
+      ignored: ignoreFn,
       persistent: true,
       ignoreInitial: true,
+    });
+
+    // Handle watcher errors gracefully instead of crashing
+    this.chokidarWatcher.on("error", (error: unknown) => {
+      this.emit("error", error);
     });
 
     this.chokidarWatcher.on("change", (filePath: string) => {
