@@ -1,8 +1,16 @@
 import React from "react";
 import { Box, Text } from "ink";
+import Gradient from "ink-gradient";
 import { Panel } from "../components/Panel.js";
 import { LogViewer } from "../components/LogViewer.js";
 import { useTheme } from "../theme-provider.js";
+
+// Mini logo — compact version of the ANSI Shadow banner
+const MINI_LOGO = [
+  "┳━┓┏┓┓  ┳━┓┏━┓┓ ┓",
+  "┣┳┛┃┃┃  ┃ ┃┣━  ┃┃",
+  "┻┛ ┛┗┛  ┻━┛┗━┛ ┗┛",
+];
 
 export interface DevSpaceShortcut {
   key: string;
@@ -27,14 +35,24 @@ export function DevSpaceView({
     <Box flexDirection="column" flexGrow={1}>
       {/* Top half: shortcuts + tool output side by side */}
       <Box flexDirection="row" flexGrow={1}>
-        {/* Left panel: shortcuts list */}
+        {/* Left panel: shortcuts list with mini logo */}
         <Box width="40%">
           <Panel title="Shortcuts" width="100%">
             <Box flexDirection="column">
+              {/* Mini gradient logo */}
+              <Box flexDirection="column" marginBottom={1}>
+                {MINI_LOGO.map((line, i) => (
+                  <Gradient key={i} name="passion">
+                    {line}
+                  </Gradient>
+                ))}
+              </Box>
+
+              {/* Shortcuts */}
               {shortcuts.map((s) => (
                 <Box key={s.key}>
                   <Text color={theme.accent} bold>
-                    [{s.key}]
+                    {`[${s.key}]`}
                   </Text>
                   <Text color={theme.fg}> {s.label}</Text>
                 </Box>
