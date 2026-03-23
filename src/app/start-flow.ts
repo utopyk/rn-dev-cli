@@ -11,7 +11,7 @@ import { CleanManager } from "../core/clean.js";
 import { FileWatcher } from "../core/watcher.js";
 import { IpcServer } from "../core/ipc.js";
 import { loadTheme, ThemeProvider } from "../ui/theme-provider.js";
-import { ModuleRegistry, devSpaceModule, settingsModule } from "../modules/index.js";
+import { ModuleRegistry, devSpaceModule, settingsModule, lintTestModule, metroLogsModule } from "../modules/index.js";
 import { WizardContainer } from "../ui/wizard/index.js";
 import { firstRunSetup } from "./first-run.js";
 import { App } from "./App.js";
@@ -208,6 +208,8 @@ export async function startFlow(options: StartOptions): Promise<void> {
   // 11. Register modules
   const registry = new ModuleRegistry();
   registry.register(devSpaceModule);
+  registry.register(lintTestModule);
+  registry.register(metroLogsModule);
   registry.register(settingsModule);
 
   // 12. Render TUI

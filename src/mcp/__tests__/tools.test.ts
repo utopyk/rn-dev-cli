@@ -1,14 +1,55 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createToolDefinitions } from "../tools.js";
+import type { McpContext } from "../tools.js";
+
+// ---------------------------------------------------------------------------
+// Mock context factory
+// ---------------------------------------------------------------------------
+
+function makeMockContext(): McpContext {
+  return {
+    projectRoot: "/tmp/mock-project",
+    profileStore: {
+      list: vi.fn(() => []),
+      load: vi.fn(() => null),
+      save: vi.fn(),
+      findDefault: vi.fn(() => null),
+      findForWorktreeBranch: vi.fn(() => []),
+      setDefault: vi.fn(),
+      delete: vi.fn(() => false),
+    } as unknown as McpContext["profileStore"],
+    artifactStore: {
+      load: vi.fn(() => null),
+      save: vi.fn(),
+      worktreeHash: vi.fn(() => "root"),
+      list: vi.fn(() => []),
+      remove: vi.fn(),
+      hasChecksumChanged: vi.fn(() => true),
+    } as unknown as McpContext["artifactStore"],
+    metro: null,
+    preflightEngine: {
+      register: vi.fn(),
+      getChecksForPlatform: vi.fn(() => []),
+      filterByConfig: vi.fn(() => []),
+      runAll: vi.fn(async () => new Map()),
+      fix: vi.fn(async () => false),
+    } as unknown as McpContext["preflightEngine"],
+    ipcClient: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 describe("createToolDefinitions()", () => {
   it("returns 23 tool definitions", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     expect(tools).toHaveLength(23);
   });
 
   it("each tool has name, description, inputSchema, and handler", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     for (const tool of tools) {
       expect(typeof tool.name).toBe("string");
       expect(tool.name.length).toBeGreaterThan(0);
@@ -21,29 +62,21 @@ describe("createToolDefinitions()", () => {
   });
 
   it("all tool names follow the 'rn-dev/' prefix convention", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     for (const tool of tools) {
       expect(tool.name).toMatch(/^rn-dev\//);
     }
   });
 
-  it("all handlers resolve successfully with a not-implemented status", async () => {
-    const tools = createToolDefinitions();
-    for (const tool of tools) {
-      const result = await tool.handler({});
-      expect(result).toEqual({ status: "not-implemented" });
-    }
-  });
-
   it("all tool names are unique", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     const names = tools.map((t) => t.name);
     const unique = new Set(names);
     expect(unique.size).toBe(names.length);
   });
 
   it("rn-dev/clean requires 'mode' in inputSchema", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     const clean = tools.find((t) => t.name === "rn-dev/clean");
     expect(clean).toBeDefined();
     const required = (clean!.inputSchema as { required?: string[] }).required;
@@ -51,7 +84,7 @@ describe("createToolDefinitions()", () => {
   });
 
   it("rn-dev/build requires 'platform' in inputSchema", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     const build = tools.find((t) => t.name === "rn-dev/build");
     expect(build).toBeDefined();
     const required = (build!.inputSchema as { required?: string[] }).required;
@@ -59,7 +92,7 @@ describe("createToolDefinitions()", () => {
   });
 
   it("rn-dev/select-device requires 'deviceId' in inputSchema", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     const selectDevice = tools.find((t) => t.name === "rn-dev/select-device");
     expect(selectDevice).toBeDefined();
     const required = (
@@ -69,7 +102,7 @@ describe("createToolDefinitions()", () => {
   });
 
   it("rn-dev/fix-preflight requires 'check' in inputSchema", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     const fixPreflight = tools.find((t) => t.name === "rn-dev/fix-preflight");
     expect(fixPreflight).toBeDefined();
     const required = (
@@ -79,7 +112,7 @@ describe("createToolDefinitions()", () => {
   });
 
   it("rn-dev/save-profile requires 'name' in inputSchema", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     const saveProfile = tools.find((t) => t.name === "rn-dev/save-profile");
     expect(saveProfile).toBeDefined();
     const required = (
@@ -89,7 +122,7 @@ describe("createToolDefinitions()", () => {
   });
 
   it("all inputSchemas are of type 'object'", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     for (const tool of tools) {
       const schema = tool.inputSchema as { type?: string };
       expect(schema.type).toBe("object");
@@ -97,7 +130,7 @@ describe("createToolDefinitions()", () => {
   });
 
   it("contains the expected set of tool names", () => {
-    const tools = createToolDefinitions();
+    const tools = createToolDefinitions(makeMockContext());
     const names = new Set(tools.map((t) => t.name));
     const expected = [
       "rn-dev/start-session",
@@ -127,5 +160,55 @@ describe("createToolDefinitions()", () => {
     for (const name of expected) {
       expect(names.has(name), `missing tool: ${name}`).toBe(true);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Handler integration tests (with mock context)
+  // -------------------------------------------------------------------------
+
+  it("rn-dev/list-profiles handler calls profileStore.list()", async () => {
+    const ctx = makeMockContext();
+    const tools = createToolDefinitions(ctx);
+    const tool = tools.find((t) => t.name === "rn-dev/list-profiles")!;
+
+    await tool.handler({});
+    expect(ctx.profileStore.list).toHaveBeenCalledOnce();
+  });
+
+  it("rn-dev/get-profile handler calls profileStore.findDefault()", async () => {
+    const ctx = makeMockContext();
+    const tools = createToolDefinitions(ctx);
+    const tool = tools.find((t) => t.name === "rn-dev/get-profile")!;
+
+    await tool.handler({});
+    expect(ctx.profileStore.findDefault).toHaveBeenCalled();
+  });
+
+  it("rn-dev/preflight handler calls preflightEngine.runAll()", async () => {
+    const ctx = makeMockContext();
+    const tools = createToolDefinitions(ctx);
+    const tool = tools.find((t) => t.name === "rn-dev/preflight")!;
+
+    await tool.handler({ platform: "ios" });
+    expect(ctx.preflightEngine.getChecksForPlatform).toHaveBeenCalledWith("ios");
+    expect(ctx.preflightEngine.runAll).toHaveBeenCalled();
+  });
+
+  it("rn-dev/fix-preflight handler calls preflightEngine.fix()", async () => {
+    const ctx = makeMockContext();
+    const tools = createToolDefinitions(ctx);
+    const tool = tools.find((t) => t.name === "rn-dev/fix-preflight")!;
+
+    await tool.handler({ check: "node-version" });
+    expect(ctx.preflightEngine.fix).toHaveBeenCalledWith("node-version");
+  });
+
+  it("rn-dev/metro-status returns not-running when no metro or ipc", async () => {
+    const ctx = makeMockContext();
+    const tools = createToolDefinitions(ctx);
+    const tool = tools.find((t) => t.name === "rn-dev/metro-status")!;
+
+    const result = await tool.handler({});
+    expect(result).toEqual({ status: "not-running" });
   });
 });

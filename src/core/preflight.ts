@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import * as net from "net";
+import semver from "semver";
 import type { Platform, PreflightConfig, PreflightCheck, PreflightResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -134,27 +135,15 @@ function normalizeVersion(version: string): string {
 }
 
 /**
- * Checks whether `actual` satisfies a (possibly partial) version constraint.
- * Handles semver range operators (^, ~, >=, >, <=, <, =).
- * For simple "MAJOR.MINOR.PATCH" constraints, performs a direct string comparison
- * after normalizing both sides.
+ * Checks whether `actual` satisfies a (possibly partial) version constraint
+ * using proper semver range evaluation.
  */
 function versionSatisfies(actual: string, required: string): boolean {
-  const norm = normalizeVersion(required);
-
-  // Strip common range prefixes for simple comparison
-  const stripped = norm.replace(/^[~^>=<]+/, "").trim();
-
-  // Only compare the parts that are specified in the constraint
-  const actualParts = normalizeVersion(actual).split(".");
-  const requiredParts = stripped.split(".");
-
-  for (let i = 0; i < requiredParts.length; i++) {
-    if (actualParts[i] !== requiredParts[i]) {
-      return false;
-    }
-  }
-  return true;
+  const cleaned = semver.coerce(actual);
+  if (!cleaned) return false;
+  // If required is a plain version, check exact match or compatible
+  // If required has range operators (^, ~, >=, etc.), use satisfies
+  return semver.satisfies(cleaned, required);
 }
 
 /**
