@@ -1,0 +1,187 @@
+import { execSync } from "child_process";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface Device {
+  id: string;
+  name: string;
+  type: "ios" | "android";
+  status: "available" | "booted" | "shutdown" | "unauthorized";
+  runtime?: string; // iOS only, e.g. "iOS-17-2"
+}
+
+// ---------------------------------------------------------------------------
+// parseAdbDevices
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the text output of `adb devices`.
+ *
+ * Expected format:
+ *   List of devices attached
+ *   <serial>\tdevice
+ *   <serial>\tunauthorized
+ */
+export function parseAdbDevices(output: string): Device[] {
+  const devices: Device[] = [];
+
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+
+    // Skip the header line and empty lines
+    if (!trimmed || trimmed.startsWith("List of devices")) {
+      continue;
+    }
+
+    // Each device line is:  <serial>\t<state>
+    const tabIndex = trimmed.lastIndexOf("\t");
+    if (tabIndex === -1) {
+      continue;
+    }
+
+    const serial = trimmed.slice(0, tabIndex).trim();
+    const state = trimmed.slice(tabIndex + 1).trim();
+
+    if (state === "device") {
+      devices.push({
+        id: serial,
+        name: serial,
+        type: "android",
+        status: "available",
+      });
+    } else if (state === "unauthorized") {
+      devices.push({
+        id: serial,
+        name: serial,
+        type: "android",
+        status: "unauthorized",
+      });
+    }
+    // Ignore offline, no permissions, etc.
+  }
+
+  return devices;
+}
+
+// ---------------------------------------------------------------------------
+// parseSimctlDevices
+// ---------------------------------------------------------------------------
+
+const SIMRUNTIME_PREFIX = "com.apple.CoreSimulator.SimRuntime.";
+const IOS_RUNTIME_RE = /^iOS-/i;
+
+interface SimctlDevice {
+  udid: string;
+  name: string;
+  state: string;
+  isAvailable: boolean;
+}
+
+interface SimctlOutput {
+  devices: Record<string, SimctlDevice[]>;
+}
+
+/**
+ * Parse the JSON output of `xcrun simctl list devices --json`.
+ *
+ * - Skips devices where `isAvailable` is false.
+ * - Only includes iOS simulators (runtime key starts with "iOS-" after
+ *   stripping the CoreSimulator prefix).
+ * - Maps state "Booted" → status "booted"; everything else → "shutdown".
+ * - Attaches the short runtime name (e.g. "iOS-17-2") to each device.
+ */
+export function parseSimctlDevices(jsonOutput: string): Device[] {
+  const parsed = JSON.parse(jsonOutput) as SimctlOutput;
+  const devices: Device[] = [];
+
+  for (const [runtimeKey, simulators] of Object.entries(parsed.devices)) {
+    // Strip the CoreSimulator prefix to get e.g. "iOS-17-2" or "watchOS-10-0"
+    const runtime = runtimeKey.startsWith(SIMRUNTIME_PREFIX)
+      ? runtimeKey.slice(SIMRUNTIME_PREFIX.length)
+      : runtimeKey;
+
+    // Only include iOS simulators
+    if (!IOS_RUNTIME_RE.test(runtime)) {
+      continue;
+    }
+
+    for (const sim of simulators) {
+      if (!sim.isAvailable) {
+        continue;
+      }
+
+      devices.push({
+        id: sim.udid,
+        name: sim.name,
+        type: "ios",
+        status: sim.state === "Booted" ? "booted" : "shutdown",
+        runtime,
+      });
+    }
+  }
+
+  return devices;
+}
+
+// ---------------------------------------------------------------------------
+// listDevices
+// ---------------------------------------------------------------------------
+
+/**
+ * Discover connected/available devices by calling the real platform tools.
+ * Catches errors gracefully if `adb` or `xcrun` are not installed.
+ */
+export function listDevices(platform: "ios" | "android" | "both"): Device[] {
+  const devices: Device[] = [];
+
+  if (platform === "android" || platform === "both") {
+    try {
+      const output = execSync("adb devices", {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      devices.push(...parseAdbDevices(output));
+    } catch {
+      // adb not available or failed — return no Android devices
+    }
+  }
+
+  if (platform === "ios" || platform === "both") {
+    try {
+      const output = execSync("xcrun simctl list devices --json", {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      devices.push(...parseSimctlDevices(output));
+    } catch {
+      // xcrun not available or failed — return no iOS devices
+    }
+  }
+
+  return devices;
+}
+
+// ---------------------------------------------------------------------------
+// bootDevice
+// ---------------------------------------------------------------------------
+
+/**
+ * Boot an iOS simulator. Returns true on success, false on failure.
+ * Currently only iOS simulators are supported.
+ */
+export function bootDevice(device: Device): boolean {
+  if (device.type !== "ios") {
+    return false;
+  }
+
+  try {
+    execSync(`xcrun simctl boot ${device.id}`, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
