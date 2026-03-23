@@ -33,6 +33,7 @@ interface AppProviderProps {
   metro?: MetroManager;
   watcher?: FileWatcher | null;
   worktreeKey?: string;
+  startupLog?: string[];
   children: React.ReactNode;
 }
 
@@ -41,10 +42,13 @@ export function AppProvider({
   metro,
   watcher,
   worktreeKey,
+  startupLog,
   children,
 }: AppProviderProps): React.JSX.Element {
   const [metroLines, setMetroLines] = useState<string[]>([]);
-  const [toolOutputLines, setToolOutputLines] = useState<string[]>([]);
+  const [toolOutputLines, setToolOutputLines] = useState<string[]>(
+    startupLog ?? []
+  );
 
   // Subscribe to metro output
   useEffect(() => {
@@ -153,6 +157,19 @@ export function AppProvider({
             appendToolOutput("✗ No watcher configured", "");
           }
           break;
+        case "q":
+          appendToolOutput("▶ Shutting down...");
+          if (metro) {
+            metro.stopAll();
+            appendToolOutput("  ✓ Metro stopped");
+          }
+          if (watcher) {
+            watcher.stop();
+            appendToolOutput("  ✓ Watcher stopped");
+          }
+          // Give a moment for cleanup, then exit
+          setTimeout(() => process.exit(0), 500);
+          break;
         default:
           break;
       }
@@ -167,6 +184,7 @@ export function AppProvider({
     { key: "t", label: "Type Check", action: () => runShortcut("t") },
     { key: "c", label: "Clean", action: () => runShortcut("c") },
     { key: "w", label: "Toggle Watcher", action: () => runShortcut("w") },
+    { key: "q", label: "Quit", action: () => runShortcut("q") },
   ];
 
   const value: AppContextValue = {

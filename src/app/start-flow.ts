@@ -106,6 +106,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
   let watcher: FileWatcher | null = null;
   let ipc: IpcServer | undefined;
   let worktreeKey: string | undefined;
+  let startupLog: string[] = [];
 
   if (profile && !needsWizard) {
     const result = await startServices(
@@ -117,6 +118,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
     watcher = result.watcher;
     ipc = result.ipc;
     worktreeKey = result.worktreeKey;
+    startupLog = result.startupLog;
   }
 
   // 8. Render single Ink instance — either wizard or TUI
@@ -130,6 +132,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
       metro,
       watcher,
       worktreeKey,
+      startupLog,
       onWizardComplete: async (wizardProfile: Profile) => {
         // Save the profile
         const fullProfile: Profile = {
@@ -178,6 +181,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
             metro: result.metro,
             watcher: result.watcher,
             worktreeKey: result.worktreeKey,
+            startupLog: result.startupLog,
           })
         );
       },
@@ -218,13 +222,21 @@ export async function startFlow(options: StartOptions): Promise<void> {
 async function startServices(
   profile: Profile,
   projectRoot: string,
-  artifactStore: ArtifactStore
+  artifactStore: ArtifactStore,
+  log?: (line: string) => void
 ): Promise<{
   metro: MetroManager;
   watcher: FileWatcher | null;
   ipc: IpcServer;
   worktreeKey: string;
+  startupLog: string[];
 }> {
+  const startupLog: string[] = [];
+  const emit = (line: string) => {
+    startupLog.push(line);
+    if (log) log(line);
+  };
+
   // Run preflights if configured
   if (profile.preflight.checks.length > 0) {
     const artifact = artifactStore.load(
@@ -234,6 +246,7 @@ async function startServices(
       profile.preflight.frequency === "always" || !artifact?.preflightPassed;
 
     if (needsPreflight) {
+      emit("▶ Running preflight checks...");
       const { createDefaultPreflightEngine } = await import(
         "../core/preflight.js"
       );
@@ -242,16 +255,17 @@ async function startServices(
 
       let hasErrors = false;
       for (const [id, result] of results) {
-        const icon = result.passed ? "pass" : "FAIL";
-        console.log(`  [${icon}] ${id}: ${result.message}`);
+        const icon = result.passed ? "✓" : "✗";
+        emit(`  ${icon} ${id}: ${result.message}`);
         if (!result.passed) hasErrors = true;
       }
 
       if (hasErrors) {
-        console.log(
-          "\n  Some preflight checks failed. Continuing anyway...\n"
-        );
+        emit("  ⚠ Some preflight checks failed. Continuing anyway...");
+      } else {
+        emit("  ✓ All preflight checks passed");
       }
+      emit("");
 
       const worktreeKey = artifactStore.worktreeHash(profile.worktree);
       artifactStore.save(worktreeKey, { preflightPassed: !hasErrors });
@@ -261,15 +275,31 @@ async function startServices(
   // Run clean if needed
   if (profile.mode !== "dirty") {
     const cleaner = new CleanManager(projectRoot);
-    console.log(`  Running ${profile.mode} clean...`);
+    emit(`▶ Running ${profile.mode} clean...`);
     await cleaner.execute(profile.mode, profile.platform, (step, status) => {
-      console.log(`  [${status}] ${step}`);
+      emit(`  [${status}] ${step}`);
     });
+    emit("");
   }
 
-  // Start Metro
+  // Start Metro — kill stale process first if port is occupied
   const metro = new MetroManager(artifactStore);
   const worktreeKey = artifactStore.worktreeHash(profile.worktree);
+  const port = profile.metroPort;
+
+  const portFree = await metro.isPortFree(port);
+  if (!portFree) {
+    emit(`⚠ Port ${port} is in use. Killing stale process...`);
+    const killed = await metro.killProcessOnPort(port);
+    if (killed) {
+      emit(`  ✓ Killed process on port ${port}`);
+      // Give the OS a moment to release the port
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    } else {
+      emit(`  ✗ Could not kill process on port ${port}. Trying anyway...`);
+    }
+  }
+  emit(`▶ Starting Metro on port ${port}...`);
   metro.start({
     worktreeKey,
     projectRoot: profile.worktree ?? projectRoot,
@@ -282,6 +312,7 @@ async function startServices(
   // Start file watcher if on-save actions configured
   let watcher: FileWatcher | null = null;
   if (profile.onSave.length > 0) {
+    emit("▶ Starting file watcher...");
     watcher = new FileWatcher({
       projectRoot,
       actions: profile.onSave,
@@ -293,5 +324,8 @@ async function startServices(
   const ipc = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
   await ipc.start();
 
-  return { metro, watcher, ipc, worktreeKey };
+  emit("✓ All services started");
+  emit("");
+
+  return { metro, watcher, ipc, worktreeKey, startupLog };
 }

@@ -25,6 +25,7 @@ interface AppProps {
   metro?: MetroManager;
   watcher?: FileWatcher | null;
   worktreeKey?: string;
+  startupLog?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,7 @@ export function App({
   metro,
   watcher,
   worktreeKey,
+  startupLog,
 }: AppProps): React.JSX.Element {
   const [showWizard, setShowWizard] = useState(wizardMode);
   const [activeProfile, setActiveProfile] = useState<Profile | undefined>(
@@ -145,6 +147,7 @@ export function App({
             metro={metro}
             watcher={watcher}
             worktreeKey={worktreeKey}
+            startupLog={startupLog}
           >
             <KeyboardHandler />
             <MainLayout
