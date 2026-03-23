@@ -157,12 +157,24 @@ export function AppProvider({
             appendToolOutput("✗ No watcher configured", "");
           }
           break;
-        case "q":
-          // Kill everything immediately — no waiting
-          try { if (watcher) watcher.stop(); } catch {}
-          try { if (metro) metro.stopAll(); } catch {}
+        case "q": {
+          // Force exit immediately — kill Metro via port since process
+          // group kill may fail on detached/unref'd children
+          try { watcher?.stop(); } catch {}
+          try {
+            if (metro) {
+              // Use lsof to find and kill the actual Metro process
+              const port = profile.metroPort;
+              try {
+                execSync(`lsof -ti :${port} | xargs kill -9 2>/dev/null`, { stdio: "ignore" });
+              } catch {}
+              metro.stopAll();
+            }
+          } catch {}
+          // Force exit — don't let anything delay it
           process.exit(0);
           break;
+        }
         default:
           break;
       }
