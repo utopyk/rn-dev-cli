@@ -92,10 +92,11 @@ export class PreflightEngine {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function runCmd(cmd: string): string {
+function runCmd(cmd: string, options?: { cwd?: string }): string {
   return execSync(cmd, {
     stdio: ["pipe", "pipe", "pipe"],
     encoding: "utf-8",
+    cwd: options?.cwd,
   }).toString().trim();
 }
 
@@ -263,7 +264,7 @@ function makeRubyVersionCheck(projectRoot: string): PreflightCheck {
     id: "ruby-version",
     name: "Ruby version",
     severity: "warning",
-    platform: "all",
+    platform: "ios",
     async check(): Promise<PreflightResult> {
       let actualVersion: string;
       try {
@@ -570,7 +571,7 @@ function makePodfileLockSyncCheck(projectRoot: string): PreflightCheck {
     async fix(): Promise<boolean> {
       try {
         const iosDir = join(projectRoot, "ios");
-        runCmd(`cd ${iosDir} && pod install`);
+        runCmd("pod install", { cwd: iosDir });
         return true;
       } catch {
         return false;
@@ -690,7 +691,7 @@ function makeNodeModulesSyncCheck(projectRoot: string): PreflightCheck {
     },
     async fix(): Promise<boolean> {
       try {
-        runCmd(`cd ${projectRoot} && npm install`);
+        runCmd("npm install", { cwd: projectRoot });
         return true;
       } catch {
         return false;
@@ -795,7 +796,7 @@ function makePatchPackageCheck(projectRoot: string): PreflightCheck {
 
       // Check if patches are applied by running patch-package in check mode
       try {
-        runCmd(`cd ${projectRoot} && npx patch-package --error-on-fail`);
+        runCmd("npx patch-package --error-on-fail", { cwd: projectRoot });
         return {
           passed: true,
           message: `${patchFiles.length} patch(es) are applied`,
@@ -810,7 +811,7 @@ function makePatchPackageCheck(projectRoot: string): PreflightCheck {
     },
     async fix(): Promise<boolean> {
       try {
-        runCmd(`cd ${projectRoot} && npx patch-package`);
+        runCmd("npx patch-package", { cwd: projectRoot });
         return true;
       } catch {
         return false;

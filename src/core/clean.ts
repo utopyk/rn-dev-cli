@@ -175,16 +175,19 @@ export function isXcodeRunning(): boolean {
   }
 }
 
-export function killXcode(): boolean {
+export async function killXcode(): Promise<boolean> {
   try {
     execSync("killall Xcode", {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    // Give it up to 5 seconds to exit
+    // Poll up to 5 seconds for Xcode to exit
     const deadline = Date.now() + 5000;
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
     while (Date.now() < deadline) {
       if (!isXcodeRunning()) return true;
+      await sleep(100);
     }
     return !isXcodeRunning();
   } catch {
@@ -309,7 +312,7 @@ export class CleanManager {
 
     const removeDerivedData: CleanStep = {
       name: "remove-derived-data",
-      description: "Remove DerivedData (ios/build and Xcode global)",
+      description: "Remove DerivedData (ios/build and project-specific Xcode entries)",
       platform: "ios",
       mode: ["ultra-clean"],
       action: async () => {
@@ -321,9 +324,34 @@ export class CleanManager {
           "Xcode",
           "DerivedData"
         );
-        const r2 = removeDir(globalDerivedData);
-        const success = r1.success && r2.success;
-        return { success, output: [r1.output, r2.output].join("\n") };
+        const outputs: string[] = [r1.output];
+        let overallSuccess = r1.success;
+
+        if (existsSync(globalDerivedData)) {
+          // Only remove entries that match the project name
+          const projectName = root.split("/").filter(Boolean).pop() ?? "";
+          try {
+            const entries = readdirSync(globalDerivedData);
+            for (const entry of entries) {
+              if (entry.startsWith(projectName)) {
+                const r = removeDir(join(globalDerivedData, entry));
+                if (!r.success) overallSuccess = false;
+                outputs.push(r.output);
+              }
+            }
+            if (outputs.length === 1) {
+              outputs.push(`No DerivedData entries matching "${projectName}" found`);
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            overallSuccess = false;
+            outputs.push(msg);
+          }
+        } else {
+          outputs.push(`${globalDerivedData} not found, skipping`);
+        }
+
+        return { success: overallSuccess, output: outputs.join("\n") };
       },
     };
 

@@ -1,4 +1,5 @@
-import { appendFileSync } from "fs";
+import { appendFileSync, mkdirSync } from "fs";
+import path from "path";
 
 export class Logger {
   private readonly logFile: string;
@@ -7,6 +8,7 @@ export class Logger {
   constructor(logFile: string, verbose = true) {
     this.logFile = logFile;
     this.verbose = verbose;
+    mkdirSync(path.dirname(this.logFile), { recursive: true });
   }
 
   info(message: string): void {

@@ -407,7 +407,7 @@ describe("killXcode", () => {
     const { execSync } = await import("child_process");
     (execSync as ReturnType<typeof vi.fn>).mockReturnValue("");
 
-    expect(killXcode()).toBe(true);
+    expect(await killXcode()).toBe(true);
   });
 
   it("returns false when killall Xcode throws", async () => {
@@ -416,6 +416,6 @@ describe("killXcode", () => {
       throw new Error("no process found");
     });
 
-    expect(killXcode()).toBe(false);
+    expect(await killXcode()).toBe(false);
   });
 });

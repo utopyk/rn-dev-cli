@@ -27,8 +27,9 @@ export class ProfileStore {
 
   /** Write the profile to `<name>.json`. Overwrites any existing file. */
   save(profile: Profile): void {
+    const safeName = this.sanitizeName(profile.name);
     writeFileSync(
-      this.filePath(profile.name),
+      this.filePath(safeName),
       JSON.stringify(profile, null, 2),
       "utf-8"
     );
@@ -40,7 +41,7 @@ export class ProfileStore {
 
   /** Read and return the profile by name, or null if not found. */
   load(name: string): Profile | null {
-    const fp = this.filePath(name);
+    const fp = this.filePath(this.sanitizeName(name));
     if (!existsSync(fp)) {
       return null;
     }
@@ -154,6 +155,11 @@ export class ProfileStore {
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  private sanitizeName(name: string): string {
+    // Strip path separators and ".." sequences to prevent path traversal
+    return name.replace(/[/\\]/g, "").replace(/\.\./g, "");
+  }
 
   private filePath(name: string): string {
     return join(this.dir, `${name}.json`);

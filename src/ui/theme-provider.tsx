@@ -1,7 +1,6 @@
 import React from "react";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import type { Theme, ThemeColors } from "../core/types.js";
 
 import midnightData from "../themes/midnight.json" assert { type: "json" };

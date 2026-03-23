@@ -56,8 +56,6 @@ export function Panel({
           <Text
             color={theme.accent}
             bold
-            // eslint-disable-next-line react/jsx-no-bind
-            {...(collapsible ? {} : {})}
           >
             {titleDisplay}
           </Text>
