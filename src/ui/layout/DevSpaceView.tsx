@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Box, Text } from "ink";
-import Gradient from "ink-gradient";
+import gradientString from "gradient-string";
 import { Panel } from "../components/Panel.js";
 import { LogViewer } from "../components/LogViewer.js";
 import { useTheme } from "../theme-provider.js";
@@ -42,13 +42,9 @@ export function DevSpaceView({
         <Box width="40%">
           <Panel title="Shortcuts" width="100%">
             <Box flexDirection="column">
-              {/* Mini gradient logo */}
+              {/* Gradient logo — rendered as a single multiline string */}
               <Box flexDirection="column" marginBottom={1}>
-                {MINI_LOGO.map((line, i) => (
-                  <Gradient key={i} name="passion">
-                    {line}
-                  </Gradient>
-                ))}
+                <Text>{gradientString("cyan", "magenta", "yellow").multiline(MINI_LOGO.join("\n"))}</Text>
               </Box>
 
               {/* Shortcuts */}
