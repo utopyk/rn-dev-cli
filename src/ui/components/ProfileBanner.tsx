@@ -19,25 +19,33 @@ export function ProfileBanner({
 
   if (collapsed) {
     return (
-      <Box>
+      <Box borderStyle="single" borderColor={theme.border} paddingX={1}>
         <Text color={theme.muted}>▶ </Text>
         <Text color={theme.accent} bold>{profile.name}</Text>
+        <Text color={theme.muted}> (p to expand)</Text>
       </Box>
     );
   }
 
   return (
-    <Box>
-      <Text color={theme.muted}>{collapsible ? "▼ " : ""}</Text>
-      <Text color={theme.accent} bold>{profile.name}</Text>
-      <Text color={theme.muted}> │ </Text>
-      <Text color={theme.fg}>{profile.branch}</Text>
-      <Text color={theme.muted}> │ </Text>
-      <Text color={theme.fg}>{profile.platform}</Text>
-      <Text color={theme.muted}> │ </Text>
-      <Text color={theme.fg}>{profile.mode}</Text>
-      <Text color={theme.muted}> │ </Text>
-      <Text color={theme.fg}>:{profile.metroPort}</Text>
+    <Box borderStyle="single" borderColor={theme.border} paddingX={1} justifyContent="space-between">
+      <Box>
+        <Text color={theme.muted}>{collapsible ? "▼ " : ""}</Text>
+        <Text color={theme.accent} bold>⚙ {profile.name}</Text>
+        <Text color={theme.muted}> │ </Text>
+        <Text color={theme.success}>{profile.branch}</Text>
+        <Text color={theme.muted}> │ </Text>
+        <Text color={theme.fg}>{profile.platform}</Text>
+        <Text color={theme.muted}> │ </Text>
+        <Text color={profile.mode === "ultra-clean" ? theme.warning : theme.fg}>{profile.mode}</Text>
+        <Text color={theme.muted}> │ </Text>
+        <Text color={theme.fg}>:{profile.metroPort}</Text>
+        <Text color={theme.muted}> │ </Text>
+        <Text color={theme.fg}>{profile.buildVariant}</Text>
+      </Box>
+      {collapsible && (
+        <Text color={theme.muted}>[p] toggle</Text>
+      )}
     </Box>
   );
 }

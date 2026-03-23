@@ -19,7 +19,7 @@ export function Sidebar({
   items,
   activeId,
   onSelect,
-  width = 8,
+  width = 12,
 }: SidebarProps): React.JSX.Element {
   const theme = useTheme();
   const [focusIndex, setFocusIndex] = useState(() => {
@@ -45,20 +45,27 @@ export function Sidebar({
     )
   );
 
+  // Truncate label to fit width (icon + space + label)
+  const maxLabelLen = width - 4;
+
   return (
-    <Box flexDirection="column" width={width}>
+    <Box flexDirection="column" width={width} borderStyle="single" borderColor={theme.border} borderRight={true} borderLeft={false} borderTop={false} borderBottom={false}>
       {items.map((item, index) => {
         const isActive = item.id === activeId;
         const isFocused = index === focusIndex;
+        const label = item.label.length > maxLabelLen
+          ? item.label.slice(0, maxLabelLen)
+          : item.label;
 
         return (
-          <Box key={item.id} justifyContent="center">
+          <Box key={item.id} paddingLeft={1}>
             <Text
-              color={isActive ? theme.accent : isFocused ? theme.highlight : theme.muted}
+              color={isActive ? theme.accent : isFocused ? theme.highlight : theme.fg}
               bold={isActive}
-              inverse={isFocused}
+              backgroundColor={isActive ? theme.selection : undefined}
+              inverse={isFocused && !isActive}
             >
-              {item.icon}
+              {item.icon} {label}
             </Text>
           </Box>
         );

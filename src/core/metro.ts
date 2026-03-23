@@ -258,9 +258,16 @@ export class MetroManager extends EventEmitter {
     }
 
     try {
-      process.kill(instance.pid, "SIGTERM");
+      // Kill the entire process group (negative PID) since Metro is
+      // spawned detached via npx which creates a process tree
+      process.kill(-instance.pid, "SIGKILL");
     } catch {
-      // Process may have already exited — that's fine
+      // Fallback: kill the direct PID
+      try {
+        process.kill(instance.pid, "SIGKILL");
+      } catch {
+        // Process may have already exited — that's fine
+      }
     }
 
     instance.status = "stopped";
