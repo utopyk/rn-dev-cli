@@ -1,0 +1,118 @@
+export interface Profile {
+  name: string;
+  isDefault: boolean;
+  worktree: string | null;
+  branch: string;
+  platform: "ios" | "android" | "both";
+  mode: "dirty" | "clean" | "ultra-clean";
+  metroPort: number;
+  devices: DeviceSelection;
+  buildVariant: "debug" | "release";
+  preflight: PreflightConfig;
+  onSave: OnSaveAction[];
+  env: Record<string, string>;
+  projectRoot: string;
+}
+
+export interface PreflightConfig {
+  checks: string[];
+  frequency: "once" | "always";
+}
+
+export interface DeviceSelection {
+  ios?: string | null;
+  android?: string | null;
+}
+
+export interface OnSaveAction {
+  name: string;
+  enabled: boolean;
+  haltOnFailure: boolean;
+  command?: string;
+  glob?: string;
+  showOutput: "tool-panel" | "notification" | "silent";
+}
+
+export interface MetroInstance {
+  worktree: string;
+  port: number;
+  pid: number;
+  status: "starting" | "running" | "error" | "stopped";
+  startedAt: Date;
+  projectRoot: string;
+}
+
+export interface BuildError {
+  source: "xcodebuild" | "gradle";
+  summary: string;
+  file?: string;
+  line?: number;
+  reason?: string;
+  rawOutput: string;
+  suggestion?: string;
+}
+
+export interface Artifact {
+  worktree: string;
+  worktreeHash: string;
+  metroPort: number | null;
+  checksums: {
+    packageJson?: string;
+    lockfile?: string;
+    podfileLock?: string;
+  };
+  preflightPassed?: boolean;
+  lastBuildPort?: number;
+}
+
+export interface Theme {
+  name: string;
+  colors: ThemeColors;
+}
+
+export interface ThemeColors {
+  bg: string;
+  fg: string;
+  border: string;
+  accent: string;
+  success: string;
+  warning: string;
+  error: string;
+  muted: string;
+  highlight: string;
+  selection: string;
+}
+
+export type Platform = "ios" | "android" | "both";
+export type RunMode = "dirty" | "clean" | "ultra-clean";
+
+export interface PreflightCheck {
+  id: string;
+  name: string;
+  severity: "error" | "warning";
+  platform: "ios" | "android" | "all";
+  check: () => Promise<PreflightResult>;
+  fix?: () => Promise<boolean>;
+}
+
+export interface PreflightResult {
+  passed: boolean;
+  message: string;
+  details?: string;
+}
+
+export interface RnDevModule {
+  id: string;
+  name: string;
+  icon: string;
+  order: number;
+  component: React.FC;
+  shortcuts?: Shortcut[];
+}
+
+export interface Shortcut {
+  key: string;
+  label: string;
+  action: () => Promise<void>;
+  showInPanel: boolean;
+}
