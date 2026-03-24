@@ -11,6 +11,7 @@ export interface PanelProps {
   collapsible?: boolean;
   collapsed?: boolean;
   onToggle?: () => void;
+  focused?: boolean;
 }
 
 export function Panel({
@@ -22,6 +23,7 @@ export function Panel({
   collapsible = false,
   collapsed: controlledCollapsed,
   onToggle,
+  focused = false,
 }: PanelProps): React.JSX.Element {
   const theme = useTheme();
   const [internalCollapsed, setInternalCollapsed] = useState(false);
@@ -36,7 +38,10 @@ export function Panel({
     }
   };
 
-  const resolvedBorderColor = borderColor ?? theme.border;
+  const resolvedBorderColor = focused
+    ? theme.accent
+    : borderColor ?? theme.border;
+
   const indicator = collapsible ? (isCollapsed ? "\u25b6 " : "\u25bc ") : "";
 
   const titleDisplay = title
@@ -46,7 +51,7 @@ export function Panel({
   return (
     <Box
       flexDirection="column"
-      borderStyle="round"
+      borderStyle={focused ? "bold" : "round"}
       borderColor={resolvedBorderColor}
       width={width as number | undefined}
       height={isCollapsed ? undefined : (height as number | undefined)}
@@ -54,8 +59,9 @@ export function Panel({
       {titleDisplay && (
         <Box marginTop={-1} marginLeft={1}>
           <Text
-            color={theme.accent}
-            bold
+            color={focused ? theme.accent : theme.fg}
+            bold={focused}
+            backgroundColor={focused ? theme.selection : undefined}
           >
             {titleDisplay}
           </Text>

@@ -40,12 +40,11 @@ export function DevSpaceView({
   const { height: screenHeight } = useScreenSize();
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>("tool");
 
-  // Toggle focus between panels with F key
+  // Toggle focus between panels with f key
   useInput(
     useCallback(
       (input: string) => {
-        if (input === "F" || input === "f" && false) {
-          // Only uppercase F toggles focus (lowercase f is Filter Logs shortcut)
+        if (input === "f") {
           setFocusedPanel((prev) => (prev === "tool" ? "metro" : "tool"));
         }
       },
@@ -93,7 +92,7 @@ export function DevSpaceView({
                 </Box>
               ))}
               <Box marginTop={1}>
-                <Text color={theme.muted} dimColor>[F] switch scroll focus</Text>
+                <Text color={theme.muted} dimColor>[f] focus panel  [↑↓] scroll</Text>
               </Box>
             </Box>
           </Panel>
@@ -105,7 +104,7 @@ export function DevSpaceView({
             title={toolTitle}
             width="100%"
             height={topHalfHeight}
-            borderColor={focusedPanel === "tool" ? theme.accent : theme.border}
+            focused={focusedPanel === "tool"}
           >
             {wizardContent ? (
               <Box flexDirection="column" paddingX={1}>
@@ -130,7 +129,7 @@ export function DevSpaceView({
           title={metroTitle}
           width="100%"
           height={bottomHalfHeight}
-          borderColor={focusedPanel === "metro" ? theme.accent : theme.border}
+          focused={focusedPanel === "metro"}
         >
           <LogViewer
             lines={metroLines}
