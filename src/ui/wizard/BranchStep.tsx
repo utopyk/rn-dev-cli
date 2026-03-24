@@ -1,6 +1,6 @@
-import React, { useMemo } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useMemo, useCallback } from "react";
 import { execSync } from "child_process";
+import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 import { SearchableList } from "../components/index.js";
 import { getCurrentBranch } from "../../core/project.js";
@@ -91,23 +91,28 @@ export function BranchStep({
     onNext(item.value);
   }
 
-  useInput((_input, key) => {
-    if (key.escape) {
-      onBack();
-    }
-  });
+  useKeyboard(
+    useCallback(
+      (event: { name: string }) => {
+        if (event.name === "escape") {
+          onBack();
+        }
+      },
+      [onBack]
+    )
+  );
 
   return (
-    <Box flexDirection="column">
-      <Text color={theme.fg} bold>
+    <box flexDirection="column">
+      <text color={theme.fg} bold>
         Select a branch:
-      </Text>
+      </text>
       {worktree && (
-        <Box marginTop={1}>
-          <Text color={theme.muted}>Worktree: {worktree}</Text>
-        </Box>
+        <box marginTop={1}>
+          <text color={theme.muted}>Worktree: {worktree}</text>
+        </box>
       )}
-      <Box marginTop={1}>
+      <box marginTop={1}>
         {items.length > 0 ? (
           <SearchableList<BranchItem>
             items={items}
@@ -117,12 +122,12 @@ export function BranchStep({
             placeholder="Search branches..."
           />
         ) : (
-          <Text color={theme.muted}>No branches found</Text>
+          <text color={theme.muted}>No branches found</text>
         )}
-      </Box>
-      <Box marginTop={1}>
-        <Text color={theme.muted}>Press Esc to go back</Text>
-      </Box>
-    </Box>
+      </box>
+      <box marginTop={1}>
+        <text color={theme.muted}>Press Esc to go back</text>
+      </box>
+    </box>
   );
 }

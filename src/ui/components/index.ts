@@ -1,5 +1,4 @@
 export { Panel } from "./Panel.js";
-export { Sidebar } from "./Sidebar.js";
 export { ProfileBanner } from "./ProfileBanner.js";
 export { ShortcutBar } from "./ShortcutBar.js";
 export { LogViewer } from "./LogViewer.js";
@@ -9,7 +8,6 @@ export { StatusBar } from "./StatusBar.js";
 export { Modal } from "./Modal.js";
 
 export type { PanelProps } from "./Panel.js";
-export type { SidebarItem, SidebarProps } from "./Sidebar.js";
 export type { ProfileBannerProps } from "./ProfileBanner.js";
 export type { ShortcutBarProps } from "./ShortcutBar.js";
 export type { LogViewerProps } from "./LogViewer.js";

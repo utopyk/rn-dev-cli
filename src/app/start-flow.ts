@@ -1,7 +1,8 @@
 import path from "path";
 import { execSync } from "child_process";
 import React from "react";
-import { render } from "ink";
+import { createCliRenderer, VignetteEffect, applyScanlines } from "@opentui/core";
+import { createRoot } from "@opentui/react";
 
 import { detectProjectRoot, getCurrentBranch } from "../core/project.js";
 import { ProfileStore } from "../core/profile.js";
@@ -10,7 +11,7 @@ import { MetroManager } from "../core/metro.js";
 import { CleanManager } from "../core/clean.js";
 import { FileWatcher } from "../core/watcher.js";
 import { IpcServer } from "../core/ipc.js";
-import { loadTheme } from "../ui/theme-provider.js";
+import { loadTheme, getThemeEffects } from "../ui/theme-provider.js";
 import {
   ModuleRegistry,
   devSpaceModule,
@@ -60,7 +61,9 @@ export async function startFlow(options: StartOptions): Promise<void> {
   );
 
   // 4. Load theme
-  const theme = loadTheme(options.theme ?? "midnight");
+  const themeName = options.theme ?? "midnight";
+  const theme = loadTheme(themeName);
+  const effects = getThemeEffects(themeName);
 
   // 5. Register modules
   const registry = new ModuleRegistry();
@@ -124,96 +127,112 @@ export async function startFlow(options: StartOptions): Promise<void> {
     builder = result.builder;
   }
 
-  // 8. Render single Ink instance — either wizard or TUI
-  const inkInstance = render(
-    React.createElement(App, {
-      theme,
-      registry,
-      wizardMode: needsWizard,
-      projectRoot,
-      profile,
-      metro,
-      watcher,
-      worktreeKey,
-      startupLog,
-      builder,
-      onWizardComplete: async (wizardProfile: Profile) => {
-        // Save the profile
-        const fullProfile: Profile = {
-          name: wizardProfile.name ?? `profile-${Date.now()}`,
-          isDefault: wizardProfile.isDefault ?? true,
-          worktree: wizardProfile.worktree ?? null,
-          branch:
-            wizardProfile.branch ??
-            (getCurrentBranch(projectRoot) ?? "main"),
-          platform: wizardProfile.platform ?? "both",
-          mode: wizardProfile.mode ?? "clean",
-          metroPort: wizardProfile.metroPort ?? 8081,
-          devices: wizardProfile.devices ?? {},
-          buildVariant: wizardProfile.buildVariant ?? "debug",
-          preflight: wizardProfile.preflight ?? {
-            checks: [],
-            frequency: "once",
-          },
-          onSave: wizardProfile.onSave ?? [],
-          env: wizardProfile.env ?? {},
-          projectRoot,
-        };
+  // 8. Create OpenTUI renderer with post-processing effects
+  const vignetteEffect = new VignetteEffect(effects.vignetteStrength);
 
-        // Apply CLI overrides
-        if (options.platform)
-          fullProfile.platform = options.platform as Platform;
-        if (options.mode) fullProfile.mode = options.mode as RunMode;
-        if (options.port) fullProfile.metroPort = options.port;
+  const renderer = await createCliRenderer({
+    backgroundColor: theme.colors.bg,
+    useMouse: true,
+    exitOnCtrlC: true,
+    targetFps: 60,
+    postProcessFns: [
+      (buffer: any) => vignetteEffect.apply(buffer),
+      (buffer: any) => applyScanlines(buffer, effects.scanlineOpacity, effects.scanlineSpacing),
+    ],
+  });
 
-        profileStore.save(fullProfile);
+  const root = createRoot(renderer);
 
-        // Start services with the new profile
-        const result = await startServices(
-          fullProfile,
-          projectRoot,
-          artifactStore
-        );
+  // Helper to render the app with given props
+  function renderApp(appProps: Record<string, unknown>): void {
+    root.render(React.createElement(App, appProps));
+  }
 
-        // Re-render with profile and services
-        inkInstance.rerender(
-          React.createElement(App, {
-            theme,
-            registry,
-            wizardMode: false,
-            profile: fullProfile,
-            metro: result.metro,
-            watcher: result.watcher,
-            worktreeKey: result.worktreeKey,
-            startupLog: result.startupLog,
-            builder: result.builder,
-          })
-        );
+  // 9. Render single OpenTUI instance — either wizard or TUI
+  renderApp({
+    theme,
+    registry,
+    wizardMode: needsWizard,
+    projectRoot,
+    profile,
+    metro,
+    watcher,
+    worktreeKey,
+    startupLog,
+    builder,
+    onWizardComplete: async (wizardProfile: Profile) => {
+      // Save the profile
+      const fullProfile: Profile = {
+        name: wizardProfile.name ?? `profile-${Date.now()}`,
+        isDefault: wizardProfile.isDefault ?? true,
+        worktree: wizardProfile.worktree ?? null,
+        branch:
+          wizardProfile.branch ??
+          (getCurrentBranch(projectRoot) ?? "main"),
+        platform: wizardProfile.platform ?? "both",
+        mode: wizardProfile.mode ?? "clean",
+        metroPort: wizardProfile.metroPort ?? 8081,
+        devices: wizardProfile.devices ?? {},
+        buildVariant: wizardProfile.buildVariant ?? "debug",
+        preflight: wizardProfile.preflight ?? {
+          checks: [],
+          frequency: "once",
+        },
+        onSave: wizardProfile.onSave ?? [],
+        env: wizardProfile.env ?? {},
+        projectRoot,
+      };
 
-        // Trigger build after re-render
-        const platformsToBuild: Array<"ios" | "android"> =
-          fullProfile.platform === "both" ? ["ios", "android"] : [fullProfile.platform];
+      // Apply CLI overrides
+      if (options.platform)
+        fullProfile.platform = options.platform as Platform;
+      if (options.mode) fullProfile.mode = options.mode as RunMode;
+      if (options.port) fullProfile.metroPort = options.port;
 
-        for (const plat of platformsToBuild) {
-          const devId = plat === "ios" ? fullProfile.devices?.ios : fullProfile.devices?.android;
-          result.builder.build({
-            projectRoot: fullProfile.worktree ?? projectRoot,
-            platform: plat,
-            deviceId: devId ?? undefined,
-            port: fullProfile.metroPort,
-            variant: fullProfile.buildVariant,
-            env: fullProfile.env,
-          });
-        }
-      },
-      onWizardCancel: () => {
-        inkInstance.unmount();
-        process.exit(0);
-      },
-    })
-  );
+      profileStore.save(fullProfile);
 
-  // 9. Trigger build after TUI is rendered (so output streams live to panel)
+      // Start services with the new profile
+      const result = await startServices(
+        fullProfile,
+        projectRoot,
+        artifactStore
+      );
+
+      // Re-render with profile and services
+      renderApp({
+        theme,
+        registry,
+        wizardMode: false,
+        profile: fullProfile,
+        metro: result.metro,
+        watcher: result.watcher,
+        worktreeKey: result.worktreeKey,
+        startupLog: result.startupLog,
+        builder: result.builder,
+      });
+
+      // Trigger build after re-render
+      const platformsToBuild: Array<"ios" | "android"> =
+        fullProfile.platform === "both" ? ["ios", "android"] : [fullProfile.platform];
+
+      for (const plat of platformsToBuild) {
+        const devId = plat === "ios" ? fullProfile.devices?.ios : fullProfile.devices?.android;
+        result.builder.build({
+          projectRoot: fullProfile.worktree ?? projectRoot,
+          platform: plat,
+          deviceId: devId ?? undefined,
+          port: fullProfile.metroPort,
+          variant: fullProfile.buildVariant,
+          env: fullProfile.env,
+        });
+      }
+    },
+    onWizardCancel: () => {
+      process.exit(0);
+    },
+  });
+
+  // 10. Trigger build after TUI is rendered (so output streams live to panel)
   if (builder && profile && !needsWizard) {
     const platformsToBuild: Array<"ios" | "android"> =
       profile.platform === "both" ? ["ios", "android"] : [profile.platform];
@@ -231,12 +250,11 @@ export async function startFlow(options: StartOptions): Promise<void> {
     }
   }
 
-  // 10. Handle cleanup on exit
+  // 11. Handle cleanup on exit
   const cleanup = (): void => {
     metro?.stopAll();
     watcher?.stop();
     ipc?.stop();
-    inkInstance.unmount();
   };
 
   process.on("SIGINT", () => {
@@ -248,10 +266,6 @@ export async function startFlow(options: StartOptions): Promise<void> {
     cleanup();
     process.exit(0);
   });
-
-  // Wait for Ink to finish (keeps the process alive)
-  await inkInstance.waitUntilExit();
-  cleanup();
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +303,7 @@ async function startServices(
       profile.preflight.frequency === "always" || !artifact?.preflightPassed;
 
     if (needsPreflight) {
-      emit("⏳ Running preflight checks...");
+      emit("\u23f3 Running preflight checks...");
       const { createDefaultPreflightEngine } = await import(
         "../core/preflight.js"
       );
@@ -318,7 +332,7 @@ async function startServices(
   // Run clean if needed
   if (profile.mode !== "dirty") {
     const cleaner = new CleanManager(projectRoot);
-    emit(`⏳ Running ${profile.mode} clean...`);
+    emit(`\u23f3 Running ${profile.mode} clean...`);
     await cleaner.execute(profile.mode, profile.platform, (step, status) => {
       const icon = status === "done" ? sym.success : status === "skip" ? sym.info : sym.warning;
       emit(`  ${icon} ${step}`);
@@ -354,7 +368,7 @@ async function startServices(
     // Watchman may not be installed or no watch exists — that's fine
   }
 
-  emit(`⏳ Starting Metro on port ${port}...`);
+  emit(`\u23f3 Starting Metro on port ${port}...`);
   metro.start({
     worktreeKey,
     projectRoot: profile.worktree ?? projectRoot,
@@ -367,7 +381,7 @@ async function startServices(
   // Start file watcher if on-save actions configured
   let watcher: FileWatcher | null = null;
   if (profile.onSave.length > 0) {
-    emit("⏳ Starting file watcher...");
+    emit("\u23f3 Starting file watcher...");
     watcher = new FileWatcher({
       projectRoot,
       actions: profile.onSave,
@@ -387,12 +401,12 @@ async function startServices(
       const devices = listDev("ios");
       const device = devices.find((d) => d.id === deviceId);
       if (device && device.status === "shutdown") {
-        emit(`⏳ Booting simulator ${device.name}...`);
+        emit(`\u23f3 Booting simulator ${device.name}...`);
         const booted = bootDevice(device);
         if (booted) {
           emit(`  ${sym.success} Simulator booted`);
         } else {
-          emit(`  ${sym.warning} Could not boot simulator — may already be booting`);
+          emit(`  ${sym.warning} Could not boot simulator \u2014 may already be booting`);
         }
       } else if (device && device.status === "booted") {
         emit(`  ${sym.success} Simulator ${device.name} already booted`);

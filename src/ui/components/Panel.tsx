@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { Box, Text } from "ink";
 import { useTheme } from "../theme-provider.js";
 
 export interface PanelProps {
@@ -41,30 +40,30 @@ export function Panel({
     : undefined;
 
   return (
-    <Box
+    <box
       flexDirection="column"
-      borderStyle={focused ? "bold" : "round"}
+      borderStyle="single"
       borderColor={resolvedBorderColor}
-     
       width={width as number | undefined}
       height={isCollapsed ? undefined : (height as number | undefined)}
+      backgroundColor={focused ? theme.selection : undefined}
     >
       {titleDisplay && (
-        <Box marginTop={-1} marginLeft={1}>
-          <Text
+        <box marginTop={-1} marginLeft={1}>
+          <text
             color={focused ? theme.accent : theme.fg}
             bold={focused}
             backgroundColor={focused ? theme.selection : undefined}
           >
             {titleDisplay}
-          </Text>
-        </Box>
+          </text>
+        </box>
       )}
       {!isCollapsed && (
-        <Box flexDirection="column" paddingX={1}>
+        <box flexDirection="column" paddingLeft={1} paddingRight={1}>
           {children}
-        </Box>
+        </box>
       )}
-    </Box>
+    </box>
   );
 }

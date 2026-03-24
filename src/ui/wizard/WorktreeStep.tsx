@@ -1,7 +1,6 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { basename } from "path";
-import { Box, Text, useInput } from "ink";
-import TextInput from "ink-text-input";
+import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 import { SearchableList } from "../components/index.js";
 import { getWorktrees } from "../../core/project.js";
@@ -40,7 +39,7 @@ export function WorktreeStep({
   const items: WorktreeItem[] = useMemo(() => {
     const list: WorktreeItem[] = [
       {
-        label: "📁 Default (root repository)",
+        label: "\ud83d\udcc1 Default (root repository)",
         value: null,
       },
     ];
@@ -50,7 +49,7 @@ export function WorktreeStep({
         const folderName = basename(wt.path);
         const branchName = wt.branch.replace(/^refs\/heads\//, "");
         list.push({
-          label: `📂 ${folderName} → ${branchName}`,
+          label: `\ud83d\udcc2 ${folderName} \u2192 ${branchName}`,
           value: wt.path,
         });
       }
@@ -73,52 +72,55 @@ export function WorktreeStep({
     onNext(item.value);
   }
 
-  useInput((input, key) => {
-    if (key.escape && onBack) {
-      if (creatingNew) {
-        setCreatingNew(false);
-      } else {
-        onBack();
-      }
-    }
-  });
+  useKeyboard(
+    useCallback(
+      (event: { name: string }) => {
+        if (event.name === "escape" && onBack) {
+          if (creatingNew) {
+            setCreatingNew(false);
+          } else {
+            onBack();
+          }
+        }
+      },
+      [onBack, creatingNew]
+    )
+  );
 
   if (creatingNew) {
     function handleSubmit(value: string): void {
       if (value.trim()) {
-        // For now, pass the branch name as worktree path hint
-        // The actual worktree creation would happen outside the wizard
         onNext(value.trim());
       }
     }
 
     return (
-      <Box flexDirection="column">
-        <Text color={theme.fg} bold>
+      <box flexDirection="column">
+        <text color={theme.fg} bold>
           New worktree branch name:
-        </Text>
-        <Box marginTop={1}>
-          <Text color={theme.accent}>{"\u276f"} </Text>
-          <TextInput
-            value={newBranch}
-            onChange={setNewBranch}
+        </text>
+        <box marginTop={1}>
+          <text color={theme.accent}>{"\u276f"} </text>
+          <input
+            focused={true}
+            onInput={(val: string) => setNewBranch(val)}
             onSubmit={handleSubmit}
             placeholder="feature/my-branch"
           />
-        </Box>
-        <Box marginTop={1}>
-          <Text color={theme.muted}>Press Esc to go back</Text>
-        </Box>
-      </Box>
+        </box>
+        <box marginTop={1}>
+          <text color={theme.muted}>Press Esc to go back</text>
+        </box>
+      </box>
     );
   }
 
   return (
-    <Box flexDirection="column">
-      <Text color={theme.fg} bold>
+    <box flexDirection="column">
+      <text color={theme.fg} bold>
         Select a worktree:
-      </Text>
-      <Box marginTop={1}>
+      </text>
+      <box marginTop={1}>
         <SearchableList<WorktreeItem>
           items={items}
           labelKey="label"
@@ -126,12 +128,12 @@ export function WorktreeStep({
           onSelect={handleSelect}
           placeholder="Search worktrees..."
         />
-      </Box>
+      </box>
       {onBack && (
-        <Box marginTop={1}>
-          <Text color={theme.muted}>Press Esc to cancel</Text>
-        </Box>
+        <box marginTop={1}>
+          <text color={theme.muted}>Press Esc to cancel</text>
+        </box>
       )}
-    </Box>
+    </box>
   );
 }

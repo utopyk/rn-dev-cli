@@ -1,6 +1,5 @@
-import React, { useState, useMemo } from "react";
-import { Box, Text, useInput } from "ink";
-import SelectInput from "ink-select-input";
+import React, { useState, useMemo, useCallback } from "react";
+import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 import { createDefaultPreflightEngine } from "../../core/preflight.js";
 import type { Platform, PreflightConfig } from "../../core/types.js";
@@ -51,6 +50,15 @@ export function PreflightStep({
   const checksList = availableChecks;
   const totalItems = checksList.length + 2; // +2 for "select all" and "deselect all"
 
+  const FREQUENCY_ITEMS = [
+    { label: "Only on first start (recommended)", value: "once" as const },
+    { label: "Every time this profile is loaded", value: "always" as const },
+  ];
+
+  const [freqIndex, setFreqIndex] = useState(
+    initialPreflight?.frequency === "always" ? 1 : 0
+  );
+
   function toggleCheck(id: string): void {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -71,69 +79,72 @@ export function PreflightStep({
     setSelectedIds(new Set());
   }
 
-  const FREQUENCY_ITEMS = [
-    { label: "Only on first start (recommended)", value: "once" as const },
-    { label: "Every time this profile is loaded", value: "always" as const },
-  ];
-
-  function handleFrequencySelect(item: {
-    label: string;
-    value: "once" | "always";
-  }): void {
-    onNext({
-      checks: Array.from(selectedIds),
-      frequency: item.value,
-    });
-  }
-
-  useInput((_input, key) => {
-    if (key.escape) {
-      if (phase === "frequency") {
-        setPhase("checks");
-      } else {
-        onBack();
-      }
-      return;
-    }
-
-    if (phase === "checks") {
-      if (key.upArrow) {
-        setHighlightedIndex((prev) =>
-          prev > 0 ? prev - 1 : totalItems - 1
-        );
-      } else if (key.downArrow) {
-        setHighlightedIndex((prev) =>
-          prev < totalItems - 1 ? prev + 1 : 0
-        );
-      } else if (key.return || _input === " ") {
-        // Select/deselect item or action
-        if (highlightedIndex < checksList.length) {
-          const check = checksList[highlightedIndex];
-          if (check) {
-            toggleCheck(check.id);
+  useKeyboard(
+    useCallback(
+      (event: { name: string }) => {
+        if (event.name === "escape") {
+          if (phase === "frequency") {
+            setPhase("checks");
+          } else {
+            onBack();
           }
-        } else if (highlightedIndex === checksList.length) {
-          // "Select all" row
-          selectAll();
-        } else {
-          // "Deselect all" row
-          deselectAll();
+          return;
         }
-      } else if (_input === "a") {
-        selectAll();
-      } else if (_input === "n") {
-        deselectAll();
-      } else if (_input === "c" || (key.return && highlightedIndex >= checksList.length - 1)) {
-        // Advance to frequency phase
-        if (selectedIds.size > 0) {
-          setPhase("frequency");
-        } else {
-          // Skip frequency step if no checks selected
-          onNext({ checks: [], frequency: "once" });
+
+        if (phase === "checks") {
+          if (event.name === "up") {
+            setHighlightedIndex((prev) =>
+              prev > 0 ? prev - 1 : totalItems - 1
+            );
+          } else if (event.name === "down") {
+            setHighlightedIndex((prev) =>
+              prev < totalItems - 1 ? prev + 1 : 0
+            );
+          } else if (event.name === "return" || event.name === " ") {
+            if (highlightedIndex < checksList.length) {
+              const check = checksList[highlightedIndex];
+              if (check) {
+                toggleCheck(check.id);
+              }
+            } else if (highlightedIndex === checksList.length) {
+              selectAll();
+            } else {
+              deselectAll();
+            }
+          } else if (event.name === "a") {
+            selectAll();
+          } else if (event.name === "n") {
+            deselectAll();
+          } else if (event.name === "c") {
+            if (selectedIds.size > 0) {
+              setPhase("frequency");
+            } else {
+              onNext({ checks: [], frequency: "once" });
+            }
+          }
+        } else if (phase === "frequency") {
+          if (event.name === "up") {
+            setFreqIndex((prev) =>
+              prev > 0 ? prev - 1 : FREQUENCY_ITEMS.length - 1
+            );
+          } else if (event.name === "down") {
+            setFreqIndex((prev) =>
+              prev < FREQUENCY_ITEMS.length - 1 ? prev + 1 : 0
+            );
+          } else if (event.name === "return") {
+            const item = FREQUENCY_ITEMS[freqIndex];
+            if (item) {
+              onNext({
+                checks: Array.from(selectedIds),
+                frequency: item.value,
+              });
+            }
+          }
         }
-      }
-    }
-  });
+      },
+      [phase, highlightedIndex, totalItems, checksList, selectedIds, onBack, onNext, freqIndex]
+    )
+  );
 
   // -------------------------------------------------------------------------
   // Phase: checks
@@ -141,64 +152,64 @@ export function PreflightStep({
 
   if (phase === "checks") {
     return (
-      <Box flexDirection="column">
-        <Text color={theme.fg} bold>
+      <box flexDirection="column">
+        <text color={theme.fg} bold>
           Which preflight checks do you want to run?
-        </Text>
-        <Box marginTop={1} flexDirection="column">
+        </text>
+        <box marginTop={1} flexDirection="column">
           {checksList.map((check, index) => {
             const isHighlighted = index === highlightedIndex;
             const isSelected = selectedIds.has(check.id);
 
             return (
-              <Box key={check.id} paddingX={1}>
-                <Text
+              <box key={check.id} paddingLeft={1} paddingRight={1}>
+                <text
                   color={isHighlighted ? theme.accent : theme.fg}
                   bold={isHighlighted}
                   inverse={isHighlighted}
                 >
-                  {isSelected ? "☑ " : "☐ "}
+                  {isSelected ? "\u2611 " : "\u2610 "}
                   {check.name}
-                  <Text color={theme.muted}>
+                  <span color={theme.muted}>
                     {" "}
                     ({check.platform === "all" ? "all platforms" : check.platform})
-                  </Text>
-                </Text>
-              </Box>
+                  </span>
+                </text>
+              </box>
             );
           })}
 
           {/* Action rows */}
-          <Box marginTop={1} paddingX={1}>
-            <Text
+          <box marginTop={1} paddingLeft={1} paddingRight={1}>
+            <text
               color={highlightedIndex === checksList.length ? theme.accent : theme.muted}
               bold={highlightedIndex === checksList.length}
               inverse={highlightedIndex === checksList.length}
             >
               Select all [a]
-            </Text>
-            <Text color={theme.muted}> / </Text>
-            <Text
+            </text>
+            <text color={theme.muted}> / </text>
+            <text
               color={highlightedIndex === checksList.length + 1 ? theme.accent : theme.muted}
               bold={highlightedIndex === checksList.length + 1}
               inverse={highlightedIndex === checksList.length + 1}
             >
               Deselect all [n]
-            </Text>
-          </Box>
-        </Box>
+            </text>
+          </box>
+        </box>
 
-        <Box marginTop={1}>
-          <Text color={theme.muted}>
-            ↑↓ navigate · Space/Enter toggle · [c] continue · Esc go back
-          </Text>
-        </Box>
-        <Box>
-          <Text color={theme.muted}>
+        <box marginTop={1}>
+          <text color={theme.muted}>
+            {"\u2191\u2193"} navigate {"\u00b7"} Space/Enter toggle {"\u00b7"} [c] continue {"\u00b7"} Esc go back
+          </text>
+        </box>
+        <box>
+          <text color={theme.muted}>
             {selectedIds.size}/{checksList.length} checks selected
-          </Text>
-        </Box>
-      </Box>
+          </text>
+        </box>
+      </box>
     );
   }
 
@@ -207,22 +218,29 @@ export function PreflightStep({
   // -------------------------------------------------------------------------
 
   return (
-    <Box flexDirection="column">
-      <Text color={theme.fg} bold>
+    <box flexDirection="column">
+      <text color={theme.fg} bold>
         When should preflights run?
-      </Text>
-      <Box marginTop={1}>
-        <SelectInput
-          items={FREQUENCY_ITEMS}
-          initialIndex={
-            initialPreflight?.frequency === "always" ? 1 : 0
-          }
-          onSelect={handleFrequencySelect}
-        />
-      </Box>
-      <Box marginTop={1}>
-        <Text color={theme.muted}>Press Esc to go back to check selection</Text>
-      </Box>
-    </Box>
+      </text>
+      <box marginTop={1} flexDirection="column">
+        {FREQUENCY_ITEMS.map((item, index) => {
+          const isSelected = index === freqIndex;
+          return (
+            <box key={item.value} paddingLeft={1} paddingRight={1}>
+              <text
+                color={isSelected ? theme.accent : theme.fg}
+                bold={isSelected}
+                inverse={isSelected}
+              >
+                {isSelected ? "\u276f " : "  "}{item.label}
+              </text>
+            </box>
+          );
+        })}
+      </box>
+      <box marginTop={1}>
+        <text color={theme.muted}>Press Esc to go back to check selection</text>
+      </box>
+    </box>
   );
 }

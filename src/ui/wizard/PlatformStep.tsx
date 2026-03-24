@@ -1,6 +1,5 @@
-import React from "react";
-import { Box, Text, useInput } from "ink";
-import SelectInput from "ink-select-input";
+import React, { useState, useCallback } from "react";
+import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 import type { Platform } from "../../core/types.js";
 
@@ -19,9 +18,9 @@ export interface PlatformStepProps {
 // ---------------------------------------------------------------------------
 
 const PLATFORM_ITEMS: Array<{ label: string; value: Platform }> = [
-  { label: "🍎 iOS", value: "ios" },
-  { label: "🤖 Android", value: "android" },
-  { label: "📱 Both", value: "both" },
+  { label: "\ud83c\udf4e iOS", value: "ios" },
+  { label: "\ud83e\udd16 Android", value: "android" },
+  { label: "\ud83d\udcf1 Both", value: "both" },
 ];
 
 export function PlatformStep({
@@ -35,31 +34,58 @@ export function PlatformStep({
     (item) => item.value === initialValue
   );
 
-  function handleSelect(item: { label: string; value: Platform }): void {
-    onNext(item.value);
-  }
+  const [selectedIndex, setSelectedIndex] = useState(
+    initialIndex >= 0 ? initialIndex : 0
+  );
 
-  useInput((_input, key) => {
-    if (key.escape) {
-      onBack();
-    }
-  });
+  useKeyboard(
+    useCallback(
+      (event: { name: string }) => {
+        if (event.name === "escape") {
+          onBack();
+        } else if (event.name === "up") {
+          setSelectedIndex((prev) =>
+            prev > 0 ? prev - 1 : PLATFORM_ITEMS.length - 1
+          );
+        } else if (event.name === "down") {
+          setSelectedIndex((prev) =>
+            prev < PLATFORM_ITEMS.length - 1 ? prev + 1 : 0
+          );
+        } else if (event.name === "return") {
+          const item = PLATFORM_ITEMS[selectedIndex];
+          if (item) {
+            onNext(item.value);
+          }
+        }
+      },
+      [onBack, onNext, selectedIndex]
+    )
+  );
 
   return (
-    <Box flexDirection="column">
-      <Text color={theme.fg} bold>
+    <box flexDirection="column">
+      <text color={theme.fg} bold>
         Select target platform:
-      </Text>
-      <Box marginTop={1}>
-        <SelectInput
-          items={PLATFORM_ITEMS}
-          initialIndex={initialIndex >= 0 ? initialIndex : 0}
-          onSelect={handleSelect}
-        />
-      </Box>
-      <Box marginTop={1}>
-        <Text color={theme.muted}>Press Esc to go back</Text>
-      </Box>
-    </Box>
+      </text>
+      <box marginTop={1} flexDirection="column">
+        {PLATFORM_ITEMS.map((item, index) => {
+          const isSelected = index === selectedIndex;
+          return (
+            <box key={item.value} paddingLeft={1} paddingRight={1}>
+              <text
+                color={isSelected ? theme.accent : theme.fg}
+                bold={isSelected}
+                inverse={isSelected}
+              >
+                {isSelected ? "\u276f " : "  "}{item.label}
+              </text>
+            </box>
+          );
+        })}
+      </box>
+      <box marginTop={1}>
+        <text color={theme.muted}>Press Esc to go back</text>
+      </box>
+    </box>
   );
 }

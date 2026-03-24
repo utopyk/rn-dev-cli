@@ -1,6 +1,5 @@
-import React from "react";
-import { Box, Text, useInput } from "ink";
-import SelectInput from "ink-select-input";
+import React, { useState, useCallback } from "react";
+import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 
 // ---------------------------------------------------------------------------
@@ -21,15 +20,15 @@ export interface ModeStepProps {
 
 const MODE_ITEMS: Array<{ label: string; value: RunMode }> = [
   {
-    label: "🟢 Dirty — Start Metro immediately (fastest)",
+    label: "\ud83d\udfe2 Dirty \u2014 Start Metro immediately (fastest)",
     value: "dirty",
   },
   {
-    label: "🟡 Clean — Reinstall modules + pods, then start",
+    label: "\ud83d\udfe1 Clean \u2014 Reinstall modules + pods, then start",
     value: "clean",
   },
   {
-    label: "🔴 Ultra Clean — Full nuclear clean + reinstall",
+    label: "\ud83d\udd34 Ultra Clean \u2014 Full nuclear clean + reinstall",
     value: "ultra-clean",
   },
 ];
@@ -45,31 +44,58 @@ export function ModeStep({
     (item) => item.value === initialValue
   );
 
-  function handleSelect(item: { label: string; value: RunMode }): void {
-    onNext(item.value);
-  }
+  const [selectedIndex, setSelectedIndex] = useState(
+    initialIndex >= 0 ? initialIndex : 0
+  );
 
-  useInput((_input, key) => {
-    if (key.escape) {
-      onBack();
-    }
-  });
+  useKeyboard(
+    useCallback(
+      (event: { name: string }) => {
+        if (event.name === "escape") {
+          onBack();
+        } else if (event.name === "up") {
+          setSelectedIndex((prev) =>
+            prev > 0 ? prev - 1 : MODE_ITEMS.length - 1
+          );
+        } else if (event.name === "down") {
+          setSelectedIndex((prev) =>
+            prev < MODE_ITEMS.length - 1 ? prev + 1 : 0
+          );
+        } else if (event.name === "return") {
+          const item = MODE_ITEMS[selectedIndex];
+          if (item) {
+            onNext(item.value);
+          }
+        }
+      },
+      [onBack, onNext, selectedIndex]
+    )
+  );
 
   return (
-    <Box flexDirection="column">
-      <Text color={theme.fg} bold>
+    <box flexDirection="column">
+      <text color={theme.fg} bold>
         Select run mode:
-      </Text>
-      <Box marginTop={1}>
-        <SelectInput
-          items={MODE_ITEMS}
-          initialIndex={initialIndex >= 0 ? initialIndex : 0}
-          onSelect={handleSelect}
-        />
-      </Box>
-      <Box marginTop={1}>
-        <Text color={theme.muted}>Press Esc to go back</Text>
-      </Box>
-    </Box>
+      </text>
+      <box marginTop={1} flexDirection="column">
+        {MODE_ITEMS.map((item, index) => {
+          const isSelected = index === selectedIndex;
+          return (
+            <box key={item.value} paddingLeft={1} paddingRight={1}>
+              <text
+                color={isSelected ? theme.accent : theme.fg}
+                bold={isSelected}
+                inverse={isSelected}
+              >
+                {isSelected ? "\u276f " : "  "}{item.label}
+              </text>
+            </box>
+          );
+        })}
+      </box>
+      <box marginTop={1}>
+        <text color={theme.muted}>Press Esc to go back</text>
+      </box>
+    </box>
   );
 }

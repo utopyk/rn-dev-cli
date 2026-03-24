@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback } from "react";
-import { Box, Text, useInput } from "ink";
-import TextInput from "ink-text-input";
+import { useKeyboard } from "@opentui/react";
 import Fuse from "fuse.js";
 import { useTheme } from "../theme-provider.js";
 
@@ -52,18 +51,18 @@ export function SearchableList<T extends Record<string, unknown>>({
     setSelectedIndex(0);
   }, []);
 
-  useInput(
+  useKeyboard(
     useCallback(
-      (_input: string, key: { upArrow?: boolean; downArrow?: boolean; return?: boolean }) => {
-        if (key.upArrow) {
+      (event: { name: string }) => {
+        if (event.name === "up") {
           setSelectedIndex((prev) =>
             prev > 0 ? prev - 1 : visibleItems.length - 1
           );
-        } else if (key.downArrow) {
+        } else if (event.name === "down") {
           setSelectedIndex((prev) =>
             prev < visibleItems.length - 1 ? prev + 1 : 0
           );
-        } else if (key.return) {
+        } else if (event.name === "return") {
           const item = visibleItems[selectedIndex];
           if (item) {
             onSelect(item);
@@ -75,46 +74,46 @@ export function SearchableList<T extends Record<string, unknown>>({
   );
 
   return (
-    <Box flexDirection="column">
-      <Box>
-        <Text color={theme.accent}>{"\u276f"} </Text>
-        <TextInput
-          value={query}
-          onChange={handleQueryChange}
+    <box flexDirection="column">
+      <box flexDirection="row">
+        <text color={theme.accent}>{"\u276f"} </text>
+        <input
+          focused={true}
+          onInput={handleQueryChange}
           placeholder={placeholder}
         />
-      </Box>
-      <Box flexDirection="column" marginTop={1}>
+      </box>
+      <box flexDirection="column" marginTop={1}>
         {visibleItems.map((item, index) => {
           const label = String(item[labelKey] ?? "");
           const isSelected = index === selectedIndex;
 
           return (
-            <Box key={label + index} paddingX={1}>
-              <Text
+            <box key={label + index} paddingLeft={1} paddingRight={1}>
+              <text
                 color={isSelected ? theme.accent : theme.fg}
                 bold={isSelected}
                 inverse={isSelected}
               >
                 {isSelected ? "\u276f " : "  "}
                 {label}
-              </Text>
-            </Box>
+              </text>
+            </box>
           );
         })}
         {visibleItems.length === 0 && (
-          <Box paddingX={1}>
-            <Text color={theme.muted}>No results</Text>
-          </Box>
+          <box paddingLeft={1} paddingRight={1}>
+            <text color={theme.muted}>No results</text>
+          </box>
         )}
-      </Box>
+      </box>
       {filteredItems.length > maxVisible && (
-        <Box paddingX={1}>
-          <Text color={theme.muted}>
+        <box paddingLeft={1} paddingRight={1}>
+          <text color={theme.muted}>
             {filteredItems.length - maxVisible} more items...
-          </Text>
-        </Box>
+          </text>
+        </box>
       )}
-    </Box>
+    </box>
   );
 }

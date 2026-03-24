@@ -8,6 +8,37 @@ import emberData from "../themes/ember.json" assert { type: "json" };
 import arcticData from "../themes/arctic.json" assert { type: "json" };
 import neonDriveData from "../themes/neon-drive.json" assert { type: "json" };
 
+// ---------------------------------------------------------------------------
+// Effect settings per theme (used by the OpenTUI renderer post-process fns)
+// ---------------------------------------------------------------------------
+
+export interface ThemeEffects {
+  vignetteStrength: number;
+  scanlineOpacity: number;
+  scanlineSpacing: number;
+}
+
+const DEFAULT_EFFECTS: ThemeEffects = {
+  vignetteStrength: 0.3,
+  scanlineOpacity: 0.93,
+  scanlineSpacing: 2,
+};
+
+const THEME_EFFECTS: Record<string, ThemeEffects> = {
+  midnight: { vignetteStrength: 0.3, scanlineOpacity: 0.93, scanlineSpacing: 2 },
+  ember: { vignetteStrength: 0.35, scanlineOpacity: 0.90, scanlineSpacing: 2 },
+  arctic: { vignetteStrength: 0.25, scanlineOpacity: 0.95, scanlineSpacing: 2 },
+  "neon-drive": { vignetteStrength: 0.4, scanlineOpacity: 0.88, scanlineSpacing: 2 },
+};
+
+export function getThemeEffects(themeName: string): ThemeEffects {
+  return THEME_EFFECTS[themeName.toLowerCase()] ?? DEFAULT_EFFECTS;
+}
+
+// ---------------------------------------------------------------------------
+// Built-in themes
+// ---------------------------------------------------------------------------
+
 const BUILT_IN_THEMES: Record<string, Theme> = {
   midnight: midnightData as Theme,
   ember: emberData as Theme,

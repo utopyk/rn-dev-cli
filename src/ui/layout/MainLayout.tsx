@@ -1,13 +1,11 @@
-import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { Box, Text, useInput } from "ink";
-import Gradient from "ink-gradient";
-import { useScreenSize } from "fullscreen-ink";
+import React, { useState, useCallback } from "react";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import type { Profile } from "../../core/types.js";
 import { ShortcutBar } from "../components/ShortcutBar.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { Modal } from "../components/Modal.js";
+import { ProfileBanner } from "../components/ProfileBanner.js";
 import { useTheme } from "../theme-provider.js";
-import { useMouse } from "../hooks/useMouse.js";
 import { useAppContext } from "../../app/AppContext.js";
 
 export interface MainLayoutModule {
@@ -36,47 +34,12 @@ export function MainLayout({
   watcherEnabled,
 }: MainLayoutProps): React.JSX.Element {
   const theme = useTheme();
-  const { height, width } = useScreenSize();
+  const [width, height] = useTerminalDimensions();
 
   const [activeModuleId, setActiveModuleId] = useState<string>(
     modules[0]?.id ?? ""
   );
   const [bannerCollapsed, setBannerCollapsed] = useState(false);
-
-
-  // Calculate tab X boundaries for mouse click detection
-  // Each tab: border(1) + paddingX(1) + "icon name" + paddingX(1) + border(1) = content + 4
-  // Plus gap(1) between tabs, plus paddingX(1) on the container
-  const tabBoundaries = useMemo(() => {
-    let x = 2; // paddingX(1) on container + first border
-    return modules.map((mod) => {
-      const labelLen = mod.icon.length + 1 + mod.name.length; // "🚀 Dev Space"
-      const tabWidth = labelLen + 4; // borders + padding
-      const start = x;
-      const end = x + tabWidth;
-      x = end + 1; // gap
-      return { id: mod.id, start, end };
-    });
-  }, [modules]);
-
-  // Mouse click on tab bar (Y = 1-2) to select tab
-  const { mouseActive, toggleMouse } = useMouse(
-    useCallback(
-      (event) => {
-        if (event.type !== "press" || event.button !== "left") return;
-        // Tab bar is rows 1-3
-        if (event.y <= 3) {
-          for (const tab of tabBoundaries) {
-            if (event.x >= tab.start && event.x <= tab.end) {
-              setActiveModuleId(tab.id);
-              break;
-            }
-          }
-        }
-      },
-      [tabBoundaries]
-    )
-  );
 
   const cycleModule = useCallback(() => {
     const currentIndex = modules.findIndex((m) => m.id === activeModuleId);
@@ -87,18 +50,16 @@ export function MainLayout({
     }
   }, [modules, activeModuleId]);
 
-  useInput(
+  useKeyboard(
     useCallback(
-      (input: string, key: { tab?: boolean }) => {
-        if (key.tab) {
+      (event: { name: string }) => {
+        if (event.name === "tab") {
           cycleModule();
-        } else if (input === "p" || input === "P") {
+        } else if (event.name === "p") {
           setBannerCollapsed((prev) => !prev);
-        } else if (input === "m") {
-          toggleMouse();
         }
       },
-      [cycleModule, toggleMouse]
+      [cycleModule]
     )
   );
 
@@ -106,63 +67,44 @@ export function MainLayout({
 
   const activeModule = modules.find((m) => m.id === activeModuleId);
   const ActiveComponent = activeModule?.component ?? null;
-  const hr = "─".repeat(width);
 
   return (
-    <Box flexDirection="column" width={width} height={height}>
-      {/* ── Tab bar ── */}
-      <Box paddingX={1} height={3} gap={1} alignItems="center">
+    <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg}>
+      {/* -- Tab bar -- */}
+      <box flexDirection="row" gap={1} height={3} paddingLeft={1} backgroundColor={theme.bg}>
         {modules.map((mod) => {
           const isActive = mod.id === activeModuleId;
           return (
-            <Box
+            <box
               key={mod.id}
-              borderStyle={isActive ? "bold" : "single"}
+              borderStyle="single"
               borderColor={isActive ? theme.accent : theme.border}
-             
-              paddingX={1}
+              paddingLeft={1}
+              paddingRight={1}
+              backgroundColor={isActive ? theme.selection : theme.bg}
+              onMouseDown={() => setActiveModuleId(mod.id)}
             >
-              <Text
+              <text
                 color={isActive ? theme.accent : theme.fg}
                 bold={isActive}
               >
                 {mod.icon} {mod.name}
-              </Text>
-            </Box>
+              </text>
+            </box>
           );
         })}
-        <Box flexGrow={1} />
-        <Text color={theme.muted} dimColor>[Tab]↹</Text>
-      </Box>
+      </box>
 
-      {/* ── Profile banner ── */}
-      {!bannerCollapsed && (
-        <Box borderStyle="single" borderColor={theme.border} paddingX={1}>
-          <Gradient name="passion">
-            {`⚙ ${profile.name}`}
-          </Gradient>
-          <Text color={theme.muted}> │ </Text>
-          <Text color={theme.success} bold>{profile.branch}</Text>
-          <Text color={theme.muted}> │ </Text>
-          <Text color={theme.fg}>{profile.platform}</Text>
-          <Text color={theme.muted}> │ </Text>
-          <Text color={profile.mode === "ultra-clean" ? theme.warning : theme.fg}>
-            {profile.mode}
-          </Text>
-          <Text color={theme.muted}> │ </Text>
-          <Text color={theme.fg}>:{profile.metroPort}</Text>
-          <Text color={theme.muted}> │ </Text>
-          <Text color={theme.fg}>{profile.buildVariant}</Text>
-          <Box flexGrow={1} />
-          <Text color={theme.muted} dimColor>[p] hide</Text>
-        </Box>
-      )}
+      {/* -- Profile banner -- */}
+      <ProfileBanner
+        profile={profile}
+        collapsible={true}
+        collapsed={bannerCollapsed}
+        onToggle={() => setBannerCollapsed((p) => !p)}
+      />
 
-      {/* ── Separator ── */}
-      <Text color={theme.border}>{hr}</Text>
-
-      {/* ── Active module content (or modal overlay) ── */}
-      <Box flexGrow={1} flexDirection="column" overflow="hidden">
+      {/* -- Active module content (or modal overlay) -- */}
+      <box flexGrow={1} flexDirection="column" backgroundColor={theme.bg}>
         {modal ? (
           <Modal
             title={modal.title}
@@ -174,25 +116,18 @@ export function MainLayout({
         ) : (
           ActiveComponent != null && <ActiveComponent />
         )}
-      </Box>
+      </box>
 
-      {/* ── Separator ── */}
-      <Text color={theme.border}>{hr}</Text>
+      {/* -- Shortcut bar -- */}
+      <ShortcutBar shortcuts={shortcuts} />
 
-      {/* ── Shortcut bar ── */}
-      <Box paddingX={1} height={1}>
-        <ShortcutBar shortcuts={shortcuts} />
-      </Box>
-
-      {/* ── Status bar ── */}
-      <Box paddingX={1} height={1}>
-        <StatusBar
-          metroStatus={metroStatus}
-          metroPort={metroPort}
-          watcherEnabled={watcherEnabled}
-          activeModule={activeModule?.name ?? ""}
-        />
-      </Box>
-    </Box>
+      {/* -- Status bar -- */}
+      <StatusBar
+        metroStatus={metroStatus}
+        metroPort={metroPort}
+        watcherEnabled={watcherEnabled}
+        activeModule={activeModule?.name ?? ""}
+      />
+    </box>
   );
 }

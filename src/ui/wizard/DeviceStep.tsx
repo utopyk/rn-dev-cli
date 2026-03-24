@@ -1,5 +1,5 @@
-import React, { useMemo } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useMemo, useCallback } from "react";
+import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 import { SearchableList } from "../components/index.js";
 import { listDevices } from "../../core/device.js";
@@ -28,13 +28,13 @@ interface DeviceItem extends Record<string, unknown> {
 function statusIcon(status: string): string {
   switch (status) {
     case "booted":
-      return "🟢";
+      return "\ud83d\udfe2";
     case "available":
-      return "🟡";
+      return "\ud83d\udfe1";
     case "unauthorized":
-      return "🔒";
+      return "\ud83d\udd12";
     default:
-      return "⚪";
+      return "\u26aa";
   }
 }
 
@@ -78,7 +78,7 @@ export function DeviceStep({
       value: d.id,
       type: "ios",
     }));
-    items.push({ label: "⏭  Skip — no iOS device", value: null, type: "skip" });
+    items.push({ label: "\u23ed  Skip \u2014 no iOS device", value: null, type: "skip" });
     return items;
   }
 
@@ -88,7 +88,7 @@ export function DeviceStep({
       value: d.id,
       type: "android",
     }));
-    items.push({ label: "⏭  Skip — no Android device", value: null, type: "skip" });
+    items.push({ label: "\u23ed  Skip \u2014 no Android device", value: null, type: "skip" });
     return items;
   }
 
@@ -110,32 +110,37 @@ export function DeviceStep({
     }
   }
 
-  useInput((_input, key) => {
-    if (key.escape) {
-      if (selectingAndroid && needsIos) {
-        // Go back to iOS selection
-        setIosDeviceId(undefined);
-      } else {
-        onBack();
-      }
-    }
-  });
+  useKeyboard(
+    useCallback(
+      (event: { name: string }) => {
+        if (event.name === "escape") {
+          if (selectingAndroid && needsIos) {
+            // Go back to iOS selection
+            setIosDeviceId(undefined);
+          } else {
+            onBack();
+          }
+        }
+      },
+      [selectingAndroid, needsIos, onBack]
+    )
+  );
 
   if (selectingIos) {
     const items = buildIosItems();
     return (
-      <Box flexDirection="column">
-        <Text color={theme.fg} bold>
+      <box flexDirection="column">
+        <text color={theme.fg} bold>
           Select iOS device / simulator:
-        </Text>
+        </text>
         {items.length === 1 ? (
-          <Box marginTop={1}>
-            <Text color={theme.warning}>
+          <box marginTop={1}>
+            <text color={theme.warning}>
               No iOS simulators found. Make sure Xcode is installed.
-            </Text>
-          </Box>
+            </text>
+          </box>
         ) : (
-          <Box marginTop={1}>
+          <box marginTop={1}>
             <SearchableList<DeviceItem>
               items={items}
               labelKey="label"
@@ -143,35 +148,35 @@ export function DeviceStep({
               onSelect={handleIosSelect}
               placeholder="Search devices..."
             />
-          </Box>
+          </box>
         )}
-        <Box marginTop={1}>
-          <Text color={theme.muted}>Press Esc to go back</Text>
-        </Box>
-      </Box>
+        <box marginTop={1}>
+          <text color={theme.muted}>Press Esc to go back</text>
+        </box>
+      </box>
     );
   }
 
   if (selectingAndroid) {
     const items = buildAndroidItems();
     return (
-      <Box flexDirection="column">
-        <Text color={theme.fg} bold>
+      <box flexDirection="column">
+        <text color={theme.fg} bold>
           Select Android device / emulator:
-        </Text>
+        </text>
         {needsIos && iosDeviceId !== null && (
-          <Box marginTop={1}>
-            <Text color={theme.muted}>iOS: {iosDeviceId}</Text>
-          </Box>
+          <box marginTop={1}>
+            <text color={theme.muted}>iOS: {iosDeviceId}</text>
+          </box>
         )}
         {items.length === 1 ? (
-          <Box marginTop={1}>
-            <Text color={theme.warning}>
+          <box marginTop={1}>
+            <text color={theme.warning}>
               No Android devices found. Make sure adb is in PATH.
-            </Text>
-          </Box>
+            </text>
+          </box>
         ) : (
-          <Box marginTop={1}>
+          <box marginTop={1}>
             <SearchableList<DeviceItem>
               items={items}
               labelKey="label"
@@ -179,17 +184,17 @@ export function DeviceStep({
               onSelect={handleAndroidSelect}
               placeholder="Search devices..."
             />
-          </Box>
+          </box>
         )}
-        <Box marginTop={1}>
-          <Text color={theme.muted}>
+        <box marginTop={1}>
+          <text color={theme.muted}>
             {needsIos ? "Press Esc to go back to iOS selection" : "Press Esc to go back"}
-          </Text>
-        </Box>
-      </Box>
+          </text>
+        </box>
+      </box>
     );
   }
 
   // Fallback (should never render)
-  return <Text color={theme.error}>Unexpected state in DeviceStep</Text>;
+  return <text color={theme.error}>Unexpected state in DeviceStep</text>;
 }

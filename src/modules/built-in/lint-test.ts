@@ -1,9 +1,7 @@
 import React from "react";
-import { Box, Text } from "ink";
 import type { RnDevModule } from "../../core/types.js";
 import { useAppContext } from "../../app/AppContext.js";
 import { LogViewer } from "../../ui/components/LogViewer.js";
-import { Panel } from "../../ui/components/Panel.js";
 import { useTheme } from "../../ui/theme-provider.js";
 
 function LintTestView(): React.JSX.Element {
@@ -11,26 +9,23 @@ function LintTestView(): React.JSX.Element {
   const theme = useTheme();
 
   return React.createElement(
-    Box,
-    { flexDirection: "column", flexGrow: 1 },
+    "box",
+    { flexDirection: "column", flexGrow: 1, backgroundColor: theme.bg },
     // Instructions
     React.createElement(
-      Box,
-      { paddingX: 1, paddingY: 0 },
+      "box",
+      { paddingLeft: 1, paddingRight: 1 },
       React.createElement(
-        Text,
+        "text",
         { color: theme.muted },
         "[l] Lint  [t] Type Check  [T] Tests"
       )
     ),
     // Output panel
     React.createElement(
-      Box,
+      "box",
       { flexGrow: 1 },
-      React.createElement(
-        Panel,
-        { title: "Output", width: "100%", children: React.createElement(LogViewer, { lines: toolOutputLines, follow: true }) }
-      )
+      React.createElement(LogViewer, { lines: toolOutputLines, follow: true, title: "Output", focused: true })
     )
   );
 }
@@ -38,7 +33,7 @@ function LintTestView(): React.JSX.Element {
 export const lintTestModule: RnDevModule = {
   id: "lint-test",
   name: "Lint & Test",
-  icon: "🧪",
+  icon: "\ud83e\uddea",
   order: 10,
   component: LintTestView,
   shortcuts: [],

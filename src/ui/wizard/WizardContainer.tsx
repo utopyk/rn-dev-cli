@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { Box, Text } from "ink";
 import { useTheme } from "../theme-provider.js";
 import type { Profile, OnSaveAction, Platform, DeviceSelection, PreflightConfig } from "../../core/types.js";
 import { WorktreeStep } from "./WorktreeStep.js";
@@ -154,16 +153,16 @@ export function WizardContainer({
   const stepName = STEP_NAMES[state.currentStep] ?? "Unknown";
 
   return (
-    <Box flexDirection="column">
+    <box flexDirection="column">
       {/* Step indicator */}
-      <Box marginBottom={1}>
-        <Text color={theme.muted}>
-          Step {state.currentStep + 1}/{TOTAL_STEPS} ·{" "}
-        </Text>
-        <Text color={theme.accent} bold>
+      <box marginBottom={1}>
+        <text color={theme.muted}>
+          Step {state.currentStep + 1}/{TOTAL_STEPS} {"\u00b7"}{" "}
+        </text>
+        <text color={theme.accent} bold>
           {stepName}
-        </Text>
-      </Box>
+        </text>
+      </box>
 
       {/* Current step */}
       {state.currentStep === 0 && (
@@ -225,6 +224,6 @@ export function WizardContainer({
           onBack={goBack}
         />
       )}
-    </Box>
+    </box>
   );
 }

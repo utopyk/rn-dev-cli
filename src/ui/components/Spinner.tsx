@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import { Text } from "ink";
 import { useTheme } from "../theme-provider.js";
 
 export interface SpinnerProps {
@@ -31,9 +30,9 @@ export function Spinner({
   }, [frames.length]);
 
   return (
-    <Text>
-      <Text color={theme.accent}>{frames[frameIndex]}</Text>
-      {message && <Text color={theme.fg}> {message}</Text>}
-    </Text>
+    <text>
+      <span color={theme.accent}>{frames[frameIndex]}</span>
+      {message && <span color={theme.fg}> {message}</span>}
+    </text>
   );
 }

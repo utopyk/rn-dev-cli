@@ -1,6 +1,5 @@
 import React, { useCallback } from "react";
-import { Box, Text, useInput } from "ink";
-import { useScreenSize } from "fullscreen-ink";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 
 export interface ModalAction {
@@ -29,20 +28,19 @@ export function Modal({
   message,
   actions,
   onAction,
-  icon = "⚠",
+  icon = "\u26a0",
   width: explicitWidth,
 }: ModalProps): React.JSX.Element {
   const theme = useTheme();
-  const { width: screenWidth, height: screenHeight } = useScreenSize();
+  const [screenWidth, screenHeight] = useTerminalDimensions();
 
   const modalWidth = explicitWidth ?? Math.min(60, screenWidth - 10);
-  const modalHeight = Math.min(12, screenHeight - 6);
 
   // Capture action keys
-  useInput(
+  useKeyboard(
     useCallback(
-      (input: string) => {
-        const action = actions.find((a) => a.key.toLowerCase() === input.toLowerCase());
+      (event: { name: string }) => {
+        const action = actions.find((a) => a.key.toLowerCase() === event.name.toLowerCase());
         if (action) {
           onAction(action.key);
         }
@@ -73,53 +71,55 @@ export function Modal({
   }
 
   return (
-    <Box
+    <box
       width={screenWidth}
-      height={screenHeight - 8} // content area height approx
+      height={screenHeight - 8}
       justifyContent="center"
       alignItems="center"
     >
-      <Box
+      <box
         flexDirection="column"
         width={modalWidth}
-        borderStyle="bold"
+        borderStyle="single"
         borderColor={theme.accent}
-        paddingX={2}
-        paddingY={1}
+        paddingLeft={2}
+        paddingRight={2}
+        paddingTop={1}
+        paddingBottom={1}
       >
         {/* Title bar */}
-        <Box justifyContent="center" marginBottom={1}>
-          <Text color={theme.accent} bold>
+        <box justifyContent="center" marginBottom={1}>
+          <text color={theme.accent} bold>
             {icon} {title}
-          </Text>
-        </Box>
+          </text>
+        </box>
 
         {/* Message */}
-        <Box flexDirection="column" marginBottom={1}>
+        <box flexDirection="column" marginBottom={1}>
           {wrappedLines.map((line, i) => (
-            <Text key={i} color={theme.fg}>
+            <text key={i} color={theme.fg}>
               {line}
-            </Text>
+            </text>
           ))}
-        </Box>
+        </box>
 
         {/* Separator */}
-        <Text color={theme.border}>{"─".repeat(modalWidth - 6)}</Text>
+        <text color={theme.border}>{"\u2500".repeat(modalWidth - 6)}</text>
 
         {/* Actions */}
-        <Box marginTop={1} gap={2} justifyContent="center">
+        <box marginTop={1} gap={2} justifyContent="center">
           {actions.map((action) => (
-            <Box key={action.key}>
-              <Text
+            <box key={action.key}>
+              <text
                 color={action.danger ? theme.error : action.accent ? theme.accent : theme.fg}
                 bold={action.accent}
               >
                 [{action.key}] {action.label}
-              </Text>
-            </Box>
+              </text>
+            </box>
           ))}
-        </Box>
-      </Box>
-    </Box>
+        </box>
+      </box>
+    </box>
   );
 }

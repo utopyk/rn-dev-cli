@@ -1,12 +1,10 @@
-import React, { useMemo, useState, useCallback } from "react";
-import { Box, Text, useInput } from "ink";
-import Spinner from "ink-spinner";
+import React, { useMemo } from "react";
 import { useTheme } from "../theme-provider.js";
+import { Spinner } from "./Spinner.js";
 
 export interface LogViewerProps {
   lines: string[];
   maxLines?: number;
-  maxVisibleLines?: number;
   follow?: boolean;
   height?: number | string;
   title?: string;
@@ -18,16 +16,16 @@ export interface LogViewerProps {
 
 function getLineColor(line: string, theme: { fg: string; error: string; warning: string; success: string; accent: string }): string {
   const trimmed = line.trimStart();
-  if (trimmed.startsWith("error ") || trimmed.startsWith("❌") || trimmed.startsWith("✖") || trimmed.startsWith("✗")) {
+  if (trimmed.startsWith("error ") || trimmed.startsWith("\u274c") || trimmed.startsWith("\u2716") || trimmed.startsWith("\u2717")) {
     return theme.error;
   }
-  if (trimmed.startsWith("warn ") || trimmed.startsWith("⚠")) {
+  if (trimmed.startsWith("warn ") || trimmed.startsWith("\u26a0")) {
     return theme.warning;
   }
-  if (trimmed.startsWith("✔") || trimmed.startsWith("✅") || trimmed.startsWith("success ")) {
+  if (trimmed.startsWith("\u2714") || trimmed.startsWith("\u2705") || trimmed.startsWith("success ")) {
     return theme.success;
   }
-  if (trimmed.startsWith("⏳") || trimmed.startsWith("▶") || trimmed.startsWith("Building")) {
+  if (trimmed.startsWith("\u23f3") || trimmed.startsWith("\u25b6") || trimmed.startsWith("Building")) {
     return theme.accent;
   }
   return theme.fg;
@@ -36,7 +34,6 @@ function getLineColor(line: string, theme: { fg: string; error: string; warning:
 export function LogViewer({
   lines,
   maxLines = 500,
-  maxVisibleLines,
   follow = true,
   height,
   title,
@@ -46,10 +43,6 @@ export function LogViewer({
   panelWidth,
 }: LogViewerProps): React.JSX.Element {
   const theme = useTheme();
-  const [scrollOffset, setScrollOffset] = useState(0);
-  const [isManualScroll, setIsManualScroll] = useState(false);
-
-  const limit = maxVisibleLines ?? (typeof height === "number" ? Math.max(1, height - 2) : undefined);
 
   // Trim to buffer limit
   const bufferedLines = useMemo(() => {
@@ -57,119 +50,69 @@ export function LogViewer({
     return lines.slice(lines.length - maxLines);
   }, [lines, maxLines]);
 
-  // When new lines come in and we're in follow mode, reset manual scroll
-  React.useEffect(() => {
-    if (follow && !isManualScroll) {
-      setScrollOffset(0);
-    }
-  }, [bufferedLines.length, follow, isManualScroll]);
-
-  // Handle scroll input
-  useInput(
-    useCallback(
-      (_input: string, key: { upArrow?: boolean; downArrow?: boolean; pageUp?: boolean; pageDown?: boolean }) => {
-        if (!scrollable || !limit) return;
-
-        const maxOffset = Math.max(0, bufferedLines.length - limit);
-
-        if (key.upArrow) {
-          setIsManualScroll(true);
-          setScrollOffset((prev) => Math.min(prev + 1, maxOffset));
-        } else if (key.downArrow) {
-          setScrollOffset((prev) => {
-            const next = Math.max(prev - 1, 0);
-            if (next === 0) setIsManualScroll(false);
-            return next;
-          });
-        } else if (key.pageUp) {
-          setIsManualScroll(true);
-          setScrollOffset((prev) => Math.min(prev + (limit - 1), maxOffset));
-        } else if (key.pageDown) {
-          setScrollOffset((prev) => {
-            const next = Math.max(prev - (limit - 1), 0);
-            if (next === 0) setIsManualScroll(false);
-            return next;
-          });
-        }
-      },
-      [scrollable, limit, bufferedLines.length]
-    )
-  );
-
-  // Calculate visible window
-  const displayLines = useMemo(() => {
-    if (!limit) return bufferedLines;
-
-    if (isManualScroll && scrollOffset > 0) {
-      // Manual scroll: show lines from offset position
-      const endIdx = bufferedLines.length - scrollOffset;
-      const startIdx = Math.max(0, endIdx - limit);
-      return bufferedLines.slice(startIdx, endIdx);
-    }
-
-    // Auto-scroll: show last N lines
-    if (bufferedLines.length <= limit) return bufferedLines;
-    return bufferedLines.slice(bufferedLines.length - limit);
-  }, [bufferedLines, limit, scrollOffset, isManualScroll]);
-
   const focusBg = focused ? theme.selection : undefined;
+  const borderColor = focused ? theme.accent : theme.border;
 
   const renderLines = (linesToRender: string[]) => (
-    <Box flexDirection="column" flexGrow={1} backgroundColor={focusBg}>
+    <box flexDirection="column" paddingLeft={1} backgroundColor={focusBg}>
       {linesToRender.map((line, index) => {
         const isLastLine = index === linesToRender.length - 1;
-        const showSpinner = isLastLine && buildPhase && !isManualScroll;
+        const showSpinner = isLastLine && buildPhase;
 
         if (showSpinner) {
           return (
-            <Box key={index}>
-              <Text color={theme.warning}>
-                <Spinner type="dots" />
-              </Text>
-              <Text color={getLineColor(line, theme)} wrap="truncate">
+            <box key={index} flexDirection="row">
+              <Spinner />
+              <text color={getLineColor(line, theme)}>
                 {" "}{line}
-              </Text>
-            </Box>
+              </text>
+            </box>
           );
         }
 
         return (
-          <Text key={index} color={getLineColor(line, theme)} wrap="truncate">
+          <text key={index} color={getLineColor(line, theme)}>
             {line}
-          </Text>
+          </text>
         );
       })}
-      {isManualScroll && scrollOffset > 0 && (
-        <Text color={theme.muted} dimColor>
-          ↑↓ scroll │ {scrollOffset} lines below ▼
-        </Text>
-      )}
-    </Box>
+    </box>
   );
 
   if (title) {
     return (
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor={theme.border}
-        height={height as number | undefined}
-      >
-        <Box marginTop={-1} marginLeft={1}>
-          <Text color={theme.accent} bold>
-            {"\u2500"} {title} {"\u2500"}
-          </Text>
-        </Box>
-        <Box flexDirection="column" paddingX={1}>
-          {renderLines(displayLines)}
-        </Box>
-      </Box>
+      <box flexDirection="column" flexGrow={1} backgroundColor={focusBg}>
+        <box paddingLeft={1} backgroundColor={focusBg}>
+          <text color={borderColor} bold={focused}>
+            {"\u2500"} {title} {focused ? "\u25c0" : ""} {"\u2500"}
+          </text>
+        </box>
+        <scrollbox
+          borderStyle="single"
+          borderColor={borderColor}
+          flexGrow={1}
+          stickyScroll={true}
+          stickyStart="bottom"
+          scrollY={true}
+          focused={focused}
+          backgroundColor={focusBg}
+        >
+          {renderLines(bufferedLines)}
+        </scrollbox>
+      </box>
     );
   }
 
   return (
-    <Box flexDirection="column" height={height as number | undefined}>
-      {renderLines(displayLines)}
-    </Box>
+    <scrollbox
+      flexGrow={1}
+      stickyScroll={follow}
+      stickyStart="bottom"
+      scrollY={true}
+      focused={focused}
+      backgroundColor={focusBg}
+    >
+      {renderLines(bufferedLines)}
+    </scrollbox>
   );
 }

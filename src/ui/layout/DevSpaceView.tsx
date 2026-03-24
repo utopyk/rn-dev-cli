@@ -1,17 +1,13 @@
 import React, { useState, useCallback } from "react";
-import { Box, Text, useInput } from "ink";
-import { useScreenSize } from "fullscreen-ink";
-import gradientString from "gradient-string";
-import { Panel } from "../components/Panel.js";
+import { useKeyboard } from "@opentui/react";
 import { LogViewer } from "../components/LogViewer.js";
 import { useTheme } from "../theme-provider.js";
-import { useMouse } from "../hooks/useMouse.js";
 
 // Hand-crafted double-line box-drawing logo
 const MINI_LOGO = [
-  "╦═╗╔╗╗  ╦═╗╔═╗╦  ╦",
-  "╠╦╝║║║  ║ ║╠═  ║║",
-  "╩╚═╝╚╝  ╩═╝╚═╝ ╚╝",
+  "\u2566\u2550\u2557\u2554\u2557\u2557  \u2566\u2550\u2557\u2554\u2550\u2557\u2566  \u2566",
+  "\u2560\u2566\u255d\u2551\u2551\u2551  \u2551 \u2551\u2560\u2550  \u2551\u2551",
+  "\u2569\u255a\u2550\u255d\u255a\u255d  \u2569\u2550\u255d\u255a\u2550\u255d \u255a\u255d",
 ];
 
 type FocusedPanel = "tool" | "metro";
@@ -38,20 +34,13 @@ export function DevSpaceView({
   buildPhase,
 }: DevSpaceViewProps): React.JSX.Element {
   const theme = useTheme();
-  const { height: screenHeight, width: screenWidth } = useScreenSize();
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>("tool");
 
-  // Calculate available height for the content area
-  // MainLayout uses: tab bar (3) + profile banner (3) + separator (1) + shortcut bar (1) + status bar (1) = ~9
-  const contentHeight = Math.max(10, screenHeight - 9);
-  const topHalfHeight = Math.floor(contentHeight * 0.5);
-  const bottomHalfHeight = contentHeight - topHalfHeight;
-
   // Toggle focus between panels with f key
-  useInput(
+  useKeyboard(
     useCallback(
-      (input: string) => {
-        if (input === "f") {
+      (event: { name: string }) => {
+        if (event.name === "f") {
           setFocusedPanel((prev) => (prev === "tool" ? "metro" : "tool"));
         }
       },
@@ -59,115 +48,88 @@ export function DevSpaceView({
     )
   );
 
-  // Mouse click to focus panels — click on top half = tool, bottom half = metro
-  // MainLayout overhead: tab bar (3) + profile (3) + separator (1) = 7 lines before content
-  const contentStartY = 7;
-  useMouse(
-    useCallback(
-      (event) => {
-        if (event.type !== "press" || event.button !== "left") return;
-        const relativeY = event.y - contentStartY;
-        if (relativeY < 0) return;
-        if (relativeY < topHalfHeight) {
-          setFocusedPanel("tool");
-        } else {
-          setFocusedPanel("metro");
-        }
-      },
-      [topHalfHeight]
-    )
-  );
-
-  // Inside panels: border top (1) + title (0, overlayed) + border bottom (1) + padding = ~2
-  const panelContentHeight = Math.max(3, topHalfHeight - 2);
-  const metroPanelContentHeight = Math.max(3, bottomHalfHeight - 2);
-
-  // Panel widths for background padding
-  const shortcutPanelWidth = Math.floor(screenWidth * 0.35);
-  const toolPanelWidth = screenWidth - shortcutPanelWidth;
-  const metroPanelWidth = screenWidth;
-
   const toolTitle = wizardContent
     ? "Setup Wizard"
     : focusedPanel === "tool"
-    ? "Tool Output ◀"
+    ? "Tool Output \u25c0"
     : "Tool Output";
 
   const metroTitle = focusedPanel === "metro"
-    ? "Metro Output ◀"
+    ? "Metro Output \u25c0"
     : "Metro Output";
 
   return (
-    <Box flexDirection="column" height={contentHeight}>
-      {/* Top half: shortcuts + tool output side by side */}
-      <Box flexDirection="row" height={topHalfHeight}>
-        {/* Left panel: shortcuts list with mini logo */}
-        <Box width="35%">
-          <Panel title="Shortcuts" width="100%" height={topHalfHeight}>
-            <Box flexDirection="column">
-              {/* Gradient logo */}
-              <Box flexDirection="column" marginBottom={1}>
-                <Text>{gradientString("cyan", "magenta", "yellow").multiline(MINI_LOGO.join("\n"))}</Text>
-              </Box>
-              {/* Shortcuts */}
-              {shortcuts.map((s) => (
-                <Box key={s.key}>
-                  <Text color={theme.accent} bold>{`[${s.key}]`}</Text>
-                  <Text color={theme.fg}> {s.label}</Text>
-                </Box>
-              ))}
-              <Box marginTop={1}>
-                <Text color={theme.muted} dimColor>[f]/click focus [↑↓] scroll [m] mouse off (Shift+click=select)</Text>
-              </Box>
-            </Box>
-          </Panel>
-        </Box>
+    <box flexDirection="row" flexGrow={1} backgroundColor={theme.bg}>
+      {/* Left panel: shortcuts list with mini logo */}
+      <box
+        flexDirection="column"
+        width="28%"
+        borderStyle="single"
+        borderColor={theme.border}
+        paddingLeft={1}
+        paddingTop={1}
+        backgroundColor={theme.bg}
+      >
+        {/* Gradient logo */}
+        <text color={theme.error} bold>{MINI_LOGO[0]}</text>
+        <text color={theme.highlight} bold>{MINI_LOGO[1]}</text>
+        <text color={theme.accent} bold>{MINI_LOGO[2]}</text>
+        <text> </text>
 
-        {/* Right panel: tool output or wizard */}
-        <Box flexGrow={1}>
-          <Panel
-            title={toolTitle}
-            width="100%"
-            height={topHalfHeight}
-            focused={focusedPanel === "tool"}
-          >
-            {wizardContent ? (
-              <Box flexDirection="column" paddingX={1}>
+        {/* Shortcuts */}
+        {shortcuts.map((s) => (
+          <text key={s.key}>
+            <span color={theme.accent} bold>[{s.key}]</span>
+            <span color={theme.fg}> {s.label}</span>
+          </text>
+        ))}
+        <text> </text>
+        <text color={theme.muted}>[f] focus [{\u2191}{\u2193}] scroll</text>
+        <text color={theme.muted}>[Tab] switch tab [p] profile</text>
+      </box>
+
+      {/* Right side: tool output + metro output stacked */}
+      <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg}>
+        {/* Tool output or wizard */}
+        <box flexGrow={1} flexDirection="column" onMouseDown={() => setFocusedPanel("tool")}>
+          {wizardContent ? (
+            <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg}>
+              <box paddingLeft={1} backgroundColor={theme.bg}>
+                <text color={theme.accent} bold>{"\u2500"} {toolTitle} {"\u2500"}</text>
+              </box>
+              <box
+                borderStyle="single"
+                borderColor={theme.accent}
+                flexGrow={1}
+                paddingLeft={1}
+                backgroundColor={theme.bg}
+              >
                 {wizardContent}
-              </Box>
-            ) : (
-              <LogViewer
-                lines={toolOutputLines}
-                follow={true}
-                maxVisibleLines={panelContentHeight}
-                buildPhase={buildPhase}
-                scrollable={focusedPanel === "tool"}
-                focused={focusedPanel === "tool"}
-                panelWidth={toolPanelWidth}
-              />
-            )}
-          </Panel>
-        </Box>
-      </Box>
+              </box>
+            </box>
+          ) : (
+            <LogViewer
+              lines={toolOutputLines}
+              follow={true}
+              title={toolTitle}
+              buildPhase={buildPhase}
+              scrollable={focusedPanel === "tool"}
+              focused={focusedPanel === "tool"}
+            />
+          )}
+        </box>
 
-      {/* Bottom half: Metro output */}
-      <Box height={bottomHalfHeight}>
-        <Panel
-          title={metroTitle}
-          width="100%"
-          height={bottomHalfHeight}
-          focused={focusedPanel === "metro"}
-        >
+        {/* Metro output */}
+        <box flexGrow={1} flexDirection="column" onMouseDown={() => setFocusedPanel("metro")}>
           <LogViewer
             lines={metroLines}
             follow={true}
-            maxVisibleLines={metroPanelContentHeight}
+            title={metroTitle}
             scrollable={focusedPanel === "metro"}
             focused={focusedPanel === "metro"}
-            panelWidth={metroPanelWidth}
           />
-        </Panel>
-      </Box>
-    </Box>
+        </box>
+      </box>
+    </box>
   );
 }

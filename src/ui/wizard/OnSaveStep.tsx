@@ -1,6 +1,5 @@
-import React, { useState, useMemo } from "react";
-import { Box, Text, useInput } from "ink";
-import TextInput from "ink-text-input";
+import React, { useState, useMemo, useCallback } from "react";
+import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 import { detectTooling, toolToOnSaveAction } from "../../core/tooling-detector.js";
 import type { OnSaveAction } from "../../core/types.js";
@@ -82,47 +81,52 @@ export function OnSaveStep({
     onNext(buildOnSaveActions());
   }
 
-  useInput((_input, key) => {
-    if (phase === "tools") {
-      if (key.escape) {
-        onBack();
-        return;
-      }
-
-      if (_input === "s") {
-        // Skip
-        onNext([]);
-        return;
-      }
-
-      if (key.upArrow) {
-        setHighlightedIndex((prev) =>
-          prev > 0 ? prev - 1 : totalToolRows - 1
-        );
-      } else if (key.downArrow) {
-        setHighlightedIndex((prev) =>
-          prev < totalToolRows - 1 ? prev + 1 : 0
-        );
-      } else if (key.return || _input === " ") {
-        if (highlightedIndex < detectedTools.length) {
-          const tool = detectedTools[highlightedIndex];
-          if (tool) {
-            toggleTool(tool.name);
+  useKeyboard(
+    useCallback(
+      (event: { name: string }) => {
+        if (phase === "tools") {
+          if (event.name === "escape") {
+            onBack();
+            return;
           }
-        } else {
-          // "Add custom command" row
-          setPhase("custom");
+
+          if (event.name === "s") {
+            // Skip
+            onNext([]);
+            return;
+          }
+
+          if (event.name === "up") {
+            setHighlightedIndex((prev) =>
+              prev > 0 ? prev - 1 : totalToolRows - 1
+            );
+          } else if (event.name === "down") {
+            setHighlightedIndex((prev) =>
+              prev < totalToolRows - 1 ? prev + 1 : 0
+            );
+          } else if (event.name === "return" || event.name === " ") {
+            if (highlightedIndex < detectedTools.length) {
+              const tool = detectedTools[highlightedIndex];
+              if (tool) {
+                toggleTool(tool.name);
+              }
+            } else {
+              // "Add custom command" row
+              setPhase("custom");
+            }
+          } else if (event.name === "c") {
+            // Confirm
+            handleSubmit();
+          }
+        } else if (phase === "custom") {
+          if (event.name === "escape") {
+            setPhase("tools");
+          }
         }
-      } else if (_input === "c") {
-        // Confirm
-        handleSubmit();
-      }
-    } else if (phase === "custom") {
-      if (key.escape) {
-        setPhase("tools");
-      }
-    }
-  });
+      },
+      [phase, highlightedIndex, totalToolRows, detectedTools, onBack, onNext]
+    )
+  );
 
   // -------------------------------------------------------------------------
   // Phase: custom command entry
@@ -146,23 +150,23 @@ export function OnSaveStep({
     }
 
     return (
-      <Box flexDirection="column">
-        <Text color={theme.fg} bold>
+      <box flexDirection="column">
+        <text color={theme.fg} bold>
           Enter custom on-save command:
-        </Text>
-        <Box marginTop={1}>
-          <Text color={theme.accent}>{"\u276f"} </Text>
-          <TextInput
-            value={customCommand}
-            onChange={setCustomCommand}
+        </text>
+        <box marginTop={1}>
+          <text color={theme.accent}>{"\u276f"} </text>
+          <input
+            focused={true}
+            onInput={(val: string) => setCustomCommand(val)}
             onSubmit={handleCustomSubmit}
             placeholder="e.g. npx prettier --write {files}"
           />
-        </Box>
-        <Box marginTop={1}>
-          <Text color={theme.muted}>Press Esc to cancel</Text>
-        </Box>
-      </Box>
+        </box>
+        <box marginTop={1}>
+          <text color={theme.muted}>Press Esc to cancel</text>
+        </box>
+      </box>
     );
   }
 
@@ -171,54 +175,54 @@ export function OnSaveStep({
   // -------------------------------------------------------------------------
 
   return (
-    <Box flexDirection="column">
-      <Text color={theme.fg} bold>
+    <box flexDirection="column">
+      <text color={theme.fg} bold>
         Configure on-save actions:
-      </Text>
+      </text>
 
       {detectedTools.length === 0 ? (
-        <Box marginTop={1}>
-          <Text color={theme.muted}>
+        <box marginTop={1}>
+          <text color={theme.muted}>
             No tools detected in this project.
-          </Text>
-        </Box>
+          </text>
+        </box>
       ) : (
-        <Box marginTop={1} flexDirection="column">
+        <box marginTop={1} flexDirection="column">
           {detectedTools.map((tool, index) => {
             const isHighlighted = index === highlightedIndex;
             const isEnabled = enabledNames.has(tool.name);
 
             return (
-              <Box key={tool.name} paddingX={1}>
-                <Text
+              <box key={tool.name} paddingLeft={1} paddingRight={1}>
+                <text
                   color={isHighlighted ? theme.accent : theme.fg}
                   bold={isHighlighted}
                   inverse={isHighlighted}
                 >
-                  {isEnabled ? "☑ " : "☐ "}
+                  {isEnabled ? "\u2611 " : "\u2610 "}
                   {tool.label}
-                </Text>
-              </Box>
+                </text>
+              </box>
             );
           })}
-        </Box>
+        </box>
       )}
 
       {/* Custom actions already added */}
       {customActions.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
-          <Text color={theme.muted}>Custom commands:</Text>
+        <box marginTop={1} flexDirection="column">
+          <text color={theme.muted}>Custom commands:</text>
           {customActions.map((action) => (
-            <Box key={action.name} paddingX={1}>
-              <Text color={theme.success}>+ {action.command}</Text>
-            </Box>
+            <box key={action.name} paddingLeft={1} paddingRight={1}>
+              <text color={theme.success}>+ {action.command}</text>
+            </box>
           ))}
-        </Box>
+        </box>
       )}
 
       {/* "Add custom" row */}
-      <Box marginTop={1} paddingX={1}>
-        <Text
+      <box marginTop={1} paddingLeft={1} paddingRight={1}>
+        <text
           color={
             highlightedIndex === detectedTools.length
               ? theme.accent
@@ -228,14 +232,14 @@ export function OnSaveStep({
           inverse={highlightedIndex === detectedTools.length}
         >
           + Add custom command
-        </Text>
-      </Box>
+        </text>
+      </box>
 
-      <Box marginTop={1}>
-        <Text color={theme.muted}>
-          ↑↓ navigate · Space/Enter toggle · [c] confirm · [s] skip · Esc go back
-        </Text>
-      </Box>
-    </Box>
+      <box marginTop={1}>
+        <text color={theme.muted}>
+          {"\u2191\u2193"} navigate {"\u00b7"} Space/Enter toggle {"\u00b7"} [c] confirm {"\u00b7"} [s] skip {"\u00b7"} Esc go back
+        </text>
+      </box>
+    </box>
   );
 }

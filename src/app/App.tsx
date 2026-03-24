@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useInput } from "ink";
-import { FullScreenBox } from "fullscreen-ink";
+import { useKeyboard } from "@opentui/react";
 import { ThemeProvider } from "../ui/theme-provider.js";
 import { MainLayout } from "../ui/layout/index.js";
 import { WizardContainer } from "../ui/wizard/index.js";
@@ -36,14 +35,14 @@ interface AppProps {
 function KeyboardHandler(): null {
   const { runShortcut } = useAppContext();
 
-  useInput(
+  useKeyboard(
     useCallback(
-      (input: string, key: { tab?: boolean }) => {
+      (event: { name: string }) => {
         // Don't intercept tab (used for module switching)
-        if (key.tab) return;
+        if (event.name === "tab") return;
         // Single char shortcuts
-        if (input.length === 1) {
-          runShortcut(input);
+        if (event.name.length === 1) {
+          runShortcut(event.name);
         }
       },
       [runShortcut]
@@ -139,7 +138,7 @@ export function App({
     name: "Setting up...",
     isDefault: true,
     worktree: null,
-    branch: "—",
+    branch: "\u2014",
     platform: "ios",
     mode: "dirty",
     metroPort: 8081,
@@ -162,7 +161,7 @@ export function App({
 
   return (
     <ThemeProvider theme={theme}>
-      <FullScreenBox>
+      <box flexGrow={1} backgroundColor={theme.colors.bg}>
         <AppProvider
           profile={displayProfile}
           metro={metro}
@@ -182,7 +181,7 @@ export function App({
             watcherEnabled={watcherEnabled}
           />
         </AppProvider>
-      </FullScreenBox>
+      </box>
     </ThemeProvider>
   );
 }

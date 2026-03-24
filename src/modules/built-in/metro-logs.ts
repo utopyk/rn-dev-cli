@@ -1,9 +1,7 @@
 import React from "react";
-import { Box, Text } from "ink";
 import type { RnDevModule } from "../../core/types.js";
 import { useAppContext } from "../../app/AppContext.js";
 import { LogViewer } from "../../ui/components/LogViewer.js";
-import { Panel } from "../../ui/components/Panel.js";
 import { useTheme } from "../../ui/theme-provider.js";
 
 function MetroLogsView(): React.JSX.Element {
@@ -11,26 +9,23 @@ function MetroLogsView(): React.JSX.Element {
   const theme = useTheme();
 
   return React.createElement(
-    Box,
-    { flexDirection: "column", flexGrow: 1 },
+    "box",
+    { flexDirection: "column", flexGrow: 1, backgroundColor: theme.bg },
     // Instructions
     React.createElement(
-      Box,
-      { paddingX: 1, paddingY: 0 },
+      "box",
+      { paddingLeft: 1, paddingRight: 1 },
       React.createElement(
-        Text,
+        "text",
         { color: theme.muted },
         "[C] Clear Logs  [r] Reload  [d] Dev Menu"
       )
     ),
     // Full-screen metro log viewer
     React.createElement(
-      Box,
+      "box",
       { flexGrow: 1 },
-      React.createElement(
-        Panel,
-        { title: "Metro Logs", width: "100%", children: React.createElement(LogViewer, { lines: metroLines, follow: true }) }
-      )
+      React.createElement(LogViewer, { lines: metroLines, follow: true, title: "Metro Logs", focused: true })
     )
   );
 }
@@ -38,7 +33,7 @@ function MetroLogsView(): React.JSX.Element {
 export const metroLogsModule: RnDevModule = {
   id: "metro-logs",
   name: "Metro Logs",
-  icon: "📡",
+  icon: "\ud83d\udce1",
   order: 20,
   component: MetroLogsView,
   shortcuts: [

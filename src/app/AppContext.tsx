@@ -103,7 +103,7 @@ export function AppProvider({
       name: string;
       result: { success: boolean; output: string; durationMs: number };
     }) => {
-      const status = result.success ? "✓" : "✗";
+      const status = result.success ? "\u2713" : "\u2717";
       const header = `${status} ${name} (${result.durationMs}ms)`;
       const outputLines = result.output
         .split("\n")
@@ -139,16 +139,16 @@ export function AppProvider({
       setBuildPhase(phase);
       setToolOutputLines((prev) => {
         const copy = prev.slice(0, -1);
-        copy.push(`  ⏳ ${phase}...`);
+        copy.push(`  \u23f3 ${phase}...`);
         return copy.slice(-500);
       });
     };
     const onDone = ({ success, errors }: { success: boolean; errors: Array<{ summary: string; reason?: string; suggestion?: string }> }) => {
       setBuildPhase(null);
       if (success) {
-        setToolOutputLines((prev) => [...prev, "✅ Build complete!", ""].slice(-500));
+        setToolOutputLines((prev) => [...prev, "\u2705 Build complete!", ""].slice(-500));
       } else {
-        const lines = ["❌ Build failed:"];
+        const lines = ["\u274c Build failed:"];
         for (const err of errors) {
           lines.push(`  ${err.summary}`);
           if (err.reason) lines.push(`    Reason: ${err.reason}`);
@@ -176,7 +176,7 @@ export function AppProvider({
 
   const runCommand = useCallback(
     (label: string, cmd: string) => {
-      appendToolOutput(`▶ ${label}...`);
+      appendToolOutput(`\u25b6 ${label}...`);
       try {
         const output = execSync(cmd, {
           cwd: profile.projectRoot,
@@ -185,13 +185,13 @@ export function AppProvider({
           stdio: ["pipe", "pipe", "pipe"],
         });
         const lines = output.split("\n").filter((l: string) => l.length > 0);
-        appendToolOutput(...lines, `✓ ${label} complete`, "");
+        appendToolOutput(...lines, `\u2713 ${label} complete`, "");
       } catch (err: unknown) {
         const error = err as { stdout?: string; stderr?: string; message?: string };
         const output = (error.stdout ?? error.stderr ?? error.message ?? "Unknown error")
           .split("\n")
           .filter((l: string) => l.length > 0);
-        appendToolOutput(...output, `✗ ${label} failed`, "");
+        appendToolOutput(...output, `\u2717 ${label} failed`, "");
       }
     },
     [profile.projectRoot, appendToolOutput]
@@ -201,21 +201,21 @@ export function AppProvider({
     (key: string) => {
       switch (key) {
         case "r":
-          appendToolOutput("▶ Reloading app...");
+          appendToolOutput("\u25b6 Reloading app...");
           if (metro && worktreeKey) {
             metro.reload(worktreeKey);
-            appendToolOutput("✓ Reload signal sent", "");
+            appendToolOutput("\u2713 Reload signal sent", "");
           } else {
-            appendToolOutput("✗ Metro not running", "");
+            appendToolOutput("\u2717 Metro not running", "");
           }
           break;
         case "d":
-          appendToolOutput("▶ Opening dev menu...");
+          appendToolOutput("\u25b6 Opening dev menu...");
           if (metro && worktreeKey) {
             metro.devMenu(worktreeKey);
-            appendToolOutput("✓ Dev menu signal sent", "");
+            appendToolOutput("\u2713 Dev menu signal sent", "");
           } else {
-            appendToolOutput("✗ Metro not running", "");
+            appendToolOutput("\u2717 Metro not running", "");
           }
           break;
         case "l":
@@ -225,14 +225,14 @@ export function AppProvider({
           runCommand("Type Check", "npx tsc --noEmit 2>&1 || true");
           break;
         case "c":
-          appendToolOutput("▶ Clean requires interactive mode. Use 'rn-dev clean' from CLI.", "");
+          appendToolOutput("\u25b6 Clean requires interactive mode. Use 'rn-dev clean' from CLI.", "");
           break;
         case "w":
           if (watcher) {
             const enabled = watcher.toggle();
-            appendToolOutput(`✓ Watcher ${enabled ? "enabled" : "disabled"}`, "");
+            appendToolOutput(`\u2713 Watcher ${enabled ? "enabled" : "disabled"}`, "");
           } else {
-            appendToolOutput("✗ No watcher configured", "");
+            appendToolOutput("\u2717 No watcher configured", "");
           }
           break;
         case "q":

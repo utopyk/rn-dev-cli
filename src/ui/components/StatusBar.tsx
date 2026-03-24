@@ -1,7 +1,6 @@
 import React from "react";
-import { Box, Text } from "ink";
-import Spinner from "ink-spinner";
 import { useTheme } from "../theme-provider.js";
+import { Spinner } from "./Spinner.js";
 
 export interface StatusBarProps {
   metroStatus: "starting" | "running" | "error" | "stopped";
@@ -46,31 +45,23 @@ export function StatusBar({
   activeModule,
 }: StatusBarProps): React.JSX.Element {
   const theme = useTheme();
-  const separator = <Text color={theme.muted}> │ </Text>;
 
   return (
-    <Box>
-      <Text color={theme.fg}>Metro: </Text>
-      {metroStatus === "starting" ? (
-        <Text color={theme.warning}>
-          <Spinner type="dots" />
-        </Text>
-      ) : (
-        <Text color={getMetroDotColor(metroStatus, theme)}>●</Text>
-      )}
-      <Text color={theme.fg}>
-        {" "}
-        {getMetroLabel(metroStatus)}
+    <box height={1} paddingLeft={1} backgroundColor={theme.selection}>
+      <text color={theme.fg}>
+        Metro:{" "}
+        {metroStatus === "starting" ? (
+          <span color={theme.warning}><Spinner type="dots" /></span>
+        ) : (
+          <span color={getMetroDotColor(metroStatus, theme)} bold>{"\u25cf"}</span>
+        )}
+        {" "}{getMetroLabel(metroStatus)}
         {metroPort != null ? ` :${metroPort}` : ""}
-      </Text>
-      {separator}
-      <Text color={theme.fg}>Watcher: </Text>
-      <Text color={watcherEnabled ? theme.success : theme.muted}>
-        {watcherEnabled ? "ON" : "OFF"}
-      </Text>
-      {separator}
-      <Text color={theme.fg}>Module: </Text>
-      <Text color={theme.accent}>{activeModule}</Text>
-    </Box>
+        <span color={theme.muted}> {"\u2502"} </span>
+        Watcher: <span color={watcherEnabled ? theme.success : theme.muted} bold>{watcherEnabled ? "ON" : "OFF"}</span>
+        <span color={theme.muted}> {"\u2502"} </span>
+        Module: <span color={theme.accent}>{activeModule}</span>
+      </text>
+    </box>
   );
 }
