@@ -312,8 +312,8 @@ async function startServices(
   startupLog: string[];
   builder: import("../core/builder.js").Builder;
 }> {
-  const logSymbols = await import("log-symbols");
-  const sym = logSymbols.default;
+  // Helper to yield control to the renderer between blocking operations
+  const yieldToRenderer = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
   const startupLog: string[] = [];
   const emit = (line: string) => {
@@ -331,23 +331,25 @@ async function startServices(
 
     if (needsPreflight) {
       emit("\u23f3 Running preflight checks...");
+      await yieldToRenderer();
       const { createDefaultPreflightEngine } = await import(
         "../core/preflight.js"
       );
       const engine = createDefaultPreflightEngine(projectRoot);
       const results = await engine.runAll(profile.platform, profile.preflight);
+      await yieldToRenderer();
 
       let hasErrors = false;
       for (const [id, result] of results) {
-        const icon = result.passed ? sym.success : sym.error;
+        const icon = result.passed ? "\u2714" : "\u2716";
         emit(`  ${icon} ${id}: ${result.message}`);
         if (!result.passed) hasErrors = true;
       }
 
       if (hasErrors) {
-        emit(`  ${sym.warning} Some preflight checks failed. Continuing anyway...`);
+        emit(`  ⚠ Some preflight checks failed. Continuing anyway...`);
       } else {
-        emit(`  ${sym.success} All preflight checks passed`);
+        emit(`  ✔ All preflight checks passed`);
       }
       emit("");
 
@@ -358,15 +360,17 @@ async function startServices(
 
   // Run clean if needed
   if (profile.mode !== "dirty") {
+    await yieldToRenderer();
     const cleaner = new CleanManager(projectRoot);
     emit(`\u23f3 Running ${profile.mode} clean...`);
     await cleaner.execute(profile.mode, profile.platform, (step, status) => {
-      const icon = status === "done" ? sym.success : status === "skip" ? sym.info : sym.warning;
+      const icon = status === "done" ? "\u2714" : status === "skip" ? "\u2139" : "\u26a0";
       emit(`  ${icon} ${step}`);
     });
     emit("");
   }
 
+  await yieldToRenderer();
   // Start Metro — kill stale process first if port is occupied
   const metro = new MetroManager(artifactStore);
   const worktreeKey = artifactStore.worktreeHash(profile.worktree);
@@ -374,15 +378,16 @@ async function startServices(
 
   const portFree = await metro.isPortFree(port);
   if (!portFree) {
-    emit(`${sym.warning} Port ${port} is in use. Killing stale process...`);
+    emit(`⚠ Port ${port} is in use. Killing stale process...`);
     const killed = await metro.killProcessOnPort(port);
     if (killed) {
-      emit(`  ${sym.success} Killed process on port ${port}`);
+      emit(`  ✔ Killed process on port ${port}`);
       await new Promise((resolve) => setTimeout(resolve, 1000));
     } else {
-      emit(`  ${sym.error} Could not kill process on port ${port}. Trying anyway...`);
+      emit(`  ✖ Could not kill process on port ${port}. Trying anyway...`);
     }
   }
+  await yieldToRenderer();
   // Always reset watchman for this project to prevent recrawl warnings
   try {
     const effectiveRoot = profile.worktree ?? projectRoot;
@@ -390,7 +395,7 @@ async function startServices(
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    emit(`${sym.success} Watchman watch cleared for project`);
+    emit(`✔ Watchman watch cleared for project`);
   } catch {
     // Watchman may not be installed or no watch exists — that's fine
   }
@@ -431,17 +436,17 @@ async function startServices(
         emit(`\u23f3 Booting simulator ${device.name}...`);
         const booted = bootDevice(device);
         if (booted) {
-          emit(`  ${sym.success} Simulator booted`);
+          emit(`  ✔ Simulator booted`);
         } else {
-          emit(`  ${sym.warning} Could not boot simulator \u2014 may already be booting`);
+          emit(`  ⚠ Could not boot simulator \u2014 may already be booting`);
         }
       } else if (device && device.status === "booted") {
-        emit(`  ${sym.success} Simulator ${device.name} already booted`);
+        emit(`  ✔ Simulator ${device.name} already booted`);
       }
     }
   }
 
-  emit(`${sym.success} All services started`);
+  emit(`✔ All services started`);
   emit("");
 
   // Create builder — caller triggers build after TUI renders so output streams live
