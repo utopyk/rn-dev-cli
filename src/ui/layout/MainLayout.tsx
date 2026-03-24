@@ -21,6 +21,7 @@ export interface MainLayoutProps {
   metroStatus: "starting" | "running" | "error" | "stopped";
   metroPort?: number;
   watcherEnabled: boolean;
+  wizardContent?: React.ReactNode;
 }
 
 /**
@@ -40,6 +41,7 @@ export function MainLayout({
   metroStatus,
   metroPort,
   watcherEnabled,
+  wizardContent,
 }: MainLayoutProps): React.JSX.Element {
   const theme = useTheme();
   const { height, width } = useScreenSize();
@@ -135,9 +137,15 @@ export function MainLayout({
       {/* ── Separator ── */}
       <Text color={theme.border}>{hr}</Text>
 
-      {/* ── Active module content ── */}
-      <Box flexGrow={1} flexDirection="column">
-        {ActiveComponent != null && <ActiveComponent />}
+      {/* ── Active module content or wizard ── */}
+      <Box flexGrow={1} flexDirection="column" overflow="hidden">
+        {wizardContent ? (
+          <Box flexDirection="column" paddingX={1} paddingY={1}>
+            {wizardContent}
+          </Box>
+        ) : (
+          ActiveComponent != null && <ActiveComponent />
+        )}
       </Box>
 
       {/* ── Separator ── */}

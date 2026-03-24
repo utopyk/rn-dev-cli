@@ -134,35 +134,54 @@ export function App({
     label: s.label,
   }));
 
+  // Build a placeholder profile for wizard mode (shows "Setting up..." in banner)
+  const displayProfile: Profile = activeProfile ?? {
+    name: "Setting up...",
+    isDefault: true,
+    worktree: null,
+    branch: "—",
+    platform: "ios",
+    mode: "dirty",
+    metroPort: 8081,
+    devices: {},
+    buildVariant: "debug",
+    preflight: { checks: [], frequency: "once" },
+    onSave: [],
+    env: {},
+    projectRoot: projectRoot ?? "",
+  };
+
+  const wizardNode =
+    showWizard && projectRoot ? (
+      <WizardContainer
+        projectRoot={projectRoot}
+        onComplete={handleWizardComplete}
+        onCancel={handleWizardCancel}
+      />
+    ) : undefined;
+
   return (
     <ThemeProvider theme={theme}>
       <FullScreenBox>
-        {showWizard && projectRoot ? (
-          <WizardContainer
-            projectRoot={projectRoot}
-            onComplete={handleWizardComplete}
-            onCancel={handleWizardCancel}
+        <AppProvider
+          profile={displayProfile}
+          metro={metro}
+          watcher={watcher}
+          worktreeKey={worktreeKey}
+          startupLog={startupLog}
+          builder={builder}
+        >
+          {!showWizard && <KeyboardHandler />}
+          <MainLayout
+            profile={displayProfile}
+            modules={modules}
+            shortcuts={shortcuts}
+            metroStatus={metroStatus}
+            metroPort={displayProfile.metroPort}
+            watcherEnabled={watcherEnabled}
+            wizardContent={wizardNode}
           />
-        ) : activeProfile ? (
-          <AppProvider
-            profile={activeProfile}
-            metro={metro}
-            watcher={watcher}
-            worktreeKey={worktreeKey}
-            startupLog={startupLog}
-            builder={builder}
-          >
-            <KeyboardHandler />
-            <MainLayout
-              profile={activeProfile}
-              modules={modules}
-              shortcuts={shortcuts}
-              metroStatus={metroStatus}
-              metroPort={activeProfile.metroPort}
-              watcherEnabled={watcherEnabled}
-            />
-          </AppProvider>
-        ) : null}
+        </AppProvider>
       </FullScreenBox>
     </ThemeProvider>
   );

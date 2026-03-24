@@ -1,4 +1,5 @@
 import path from "path";
+import { execSync } from "child_process";
 import React from "react";
 import { render } from "ink";
 
@@ -341,6 +342,18 @@ async function startServices(
       emit(`  ${sym.error} Could not kill process on port ${port}. Trying anyway...`);
     }
   }
+  // Always reset watchman for this project to prevent recrawl warnings
+  try {
+    const effectiveRoot = profile.worktree ?? projectRoot;
+    execSync(`watchman watch-del '${effectiveRoot}'`, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    emit(`${sym.success} Watchman watch cleared for project`);
+  } catch {
+    // Watchman may not be installed or no watch exists — that's fine
+  }
+
   emit(`⏳ Starting Metro on port ${port}...`);
   metro.start({
     worktreeKey,
