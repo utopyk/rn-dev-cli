@@ -1,3 +1,4 @@
+import path from "path";
 import { spawn, execSync, type ChildProcess } from "child_process";
 import { existsSync, rmSync } from "fs";
 import { EventEmitter } from "events";
@@ -47,7 +48,7 @@ export class Builder extends EventEmitter {
   build(options: BuildOptions): void {
     const { projectRoot, platform, deviceId, port, variant, env } = options;
 
-    const args = ["react-native", `run-${platform}`, "--port", String(port)];
+    const args = [`run-${platform}`, "--port", String(port)];
 
     this.detectedXcresultPath = null;
 
@@ -67,13 +68,16 @@ export class Builder extends EventEmitter {
       }
     }
 
+    // Use local binary directly to avoid npx resolution overhead
+    const rnBin = path.join(projectRoot, "node_modules", ".bin", "react-native");
+
     this.emit("progress", { phase: "Building" });
     this.emit("line", { text: `Building for ${platform}...`, stream: "stdout" });
-    this.emit("line", { text: `  npx ${args.join(" ")}`, stream: "stdout" });
+    this.emit("line", { text: `  ${rnBin} ${args.join(" ")}`, stream: "stdout" });
 
     this.rawOutput = "";
 
-    const child = spawn("npx", args, {
+    const child = spawn(rnBin, args, {
       cwd: projectRoot,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ...env },

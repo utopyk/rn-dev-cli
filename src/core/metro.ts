@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import path from "path";
 import { spawn } from "child_process";
 import * as net from "net";
 import { execFile } from "child_process";
@@ -156,7 +157,7 @@ export class MetroManager extends EventEmitter {
 
     const port = explicitPort ?? this.allocatePort(worktreeKey);
 
-    const args = ["react-native", "start", "--port", String(port)];
+    const args = ["start", "--port", String(port)];
     if (resetCache) {
       args.push("--reset-cache");
     }
@@ -164,7 +165,9 @@ export class MetroManager extends EventEmitter {
       args.push("--verbose");
     }
 
-    const child = spawn("npx", args, {
+    // Use local binary directly to avoid npx resolution overhead
+    const rnBin = path.join(projectRoot, "node_modules", ".bin", "react-native");
+    const child = spawn(rnBin, args, {
       cwd: projectRoot,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
