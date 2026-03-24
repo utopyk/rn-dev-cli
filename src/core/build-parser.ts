@@ -1,9 +1,89 @@
+import { execSync } from "child_process";
 import type { BuildError } from "./types.js";
 
 // Strip ANSI escape codes from text
 function stripAnsi(text: string): string {
   // eslint-disable-next-line no-control-regex
   return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+}
+
+// ---------------------------------------------------------------------------
+// parseXcresultErrors — structured errors from Xcode result bundles
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an .xcresult bundle using xcresulttool for structured build errors.
+ * Returns BuildError[] with exact file paths and line numbers.
+ */
+export function parseXcresultErrors(xcresultPath: string): BuildError[] {
+  const errors: BuildError[] = [];
+
+  try {
+    const json = execSync(
+      `xcrun xcresulttool get build-results --path '${xcresultPath}'`,
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 }
+    );
+
+    const result = JSON.parse(json);
+
+    // Xcode 16+ format: { errors: [{ issueType, message, targetName, sourceURL }] }
+    if (Array.isArray(result.errors)) {
+      for (const err of result.errors) {
+        const message = err.message ?? err.title ?? "Unknown error";
+        let file: string | undefined;
+        let line: number | undefined;
+
+        // sourceURL format: file:///path/to/File.swift:15:12
+        if (err.sourceURL) {
+          const urlMatch = err.sourceURL.match(/^file:\/\/(.+?)(?::(\d+)(?::(\d+))?)?$/);
+          if (urlMatch) {
+            file = urlMatch[1];
+            line = urlMatch[2] ? parseInt(urlMatch[2], 10) : undefined;
+          }
+        }
+
+        errors.push({
+          source: "xcodebuild",
+          summary: message,
+          file,
+          line,
+          rawOutput: JSON.stringify(err),
+          suggestion: findSuggestion(message),
+        });
+      }
+    }
+  } catch {
+    // xcresulttool not available or parse failed — fall through
+  }
+
+  // Fallback: try the older action log format
+  if (errors.length === 0) {
+    try {
+      const json = execSync(
+        `xcrun xcresulttool get log --type action --path '${xcresultPath}'`,
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 }
+      );
+      const result = JSON.parse(json);
+
+      // Walk messages looking for errors
+      if (Array.isArray(result.messages)) {
+        for (const msg of result.messages) {
+          if (msg.type === "error" || msg.severity === "error") {
+            errors.push({
+              source: "xcodebuild",
+              summary: msg.title ?? msg.text ?? "Unknown error",
+              rawOutput: JSON.stringify(msg),
+              suggestion: findSuggestion(msg.title ?? ""),
+            });
+          }
+        }
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  return errors;
 }
 
 // ---------------------------------------------------------------------------
