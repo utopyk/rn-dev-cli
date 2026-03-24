@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
+import Spinner from "ink-spinner";
 import { useTheme } from "../theme-provider.js";
 
 export interface LogViewerProps {
@@ -8,15 +9,22 @@ export interface LogViewerProps {
   follow?: boolean;
   height?: number | string;
   title?: string;
+  buildPhase?: string | null;
 }
 
-function getLineColor(line: string, theme: { fg: string; error: string; warning: string }): string {
+function getLineColor(line: string, theme: { fg: string; error: string; warning: string; success: string; accent: string }): string {
   const lower = line.toLowerCase();
-  if (lower.includes("error")) {
+  if (lower.startsWith("error ") || lower.startsWith("❌") || /^\s*✖/.test(line)) {
     return theme.error;
   }
-  if (lower.includes("warn")) {
+  if (lower.startsWith("warn ") || lower.startsWith("⚠")) {
     return theme.warning;
+  }
+  if (lower.startsWith("✔") || lower.startsWith("✅") || lower.startsWith("success ")) {
+    return theme.success;
+  }
+  if (lower.startsWith("⏳") || lower.startsWith("▶")) {
+    return theme.accent;
   }
   return theme.fg;
 }
@@ -27,6 +35,7 @@ export function LogViewer({
   follow = true,
   height,
   title,
+  buildPhase,
 }: LogViewerProps): React.JSX.Element {
   const theme = useTheme();
 
@@ -37,13 +46,10 @@ export function LogViewer({
     return lines.slice(lines.length - maxLines);
   }, [lines, maxLines]);
 
-  // When follow is true, we show the last lines that fit in the viewport.
-  // Ink doesn't have native scrolling, so we slice from the end.
   const displayLines = useMemo(() => {
     if (!follow || typeof height !== "number") {
       return visibleLines;
     }
-    // Reserve 2 lines for border + title
     const availableHeight = Math.max(1, height - (title ? 3 : 2));
     if (visibleLines.length <= availableHeight) {
       return visibleLines;
@@ -51,14 +57,33 @@ export function LogViewer({
     return visibleLines.slice(visibleLines.length - availableHeight);
   }, [visibleLines, follow, height, title]);
 
-  const content = (
-    <Box flexDirection="column" height={height as number | undefined}>
-      {displayLines.map((line, index) => (
-        <Text key={index} color={getLineColor(line, theme)} wrap="truncate">
-          {line}
-        </Text>
-      ))}
-    </Box>
+  const renderLines = (linesToRender: string[]) => (
+    <>
+      {linesToRender.map((line, index) => {
+        // If this is the last line and we're building, show spinner
+        const isLastLine = index === linesToRender.length - 1;
+        const showSpinner = isLastLine && buildPhase;
+
+        if (showSpinner) {
+          return (
+            <Box key={index}>
+              <Text color={theme.warning}>
+                <Spinner type="dots" />
+              </Text>
+              <Text color={getLineColor(line, theme)} wrap="truncate">
+                {" "}{line}
+              </Text>
+            </Box>
+          );
+        }
+
+        return (
+          <Text key={index} color={getLineColor(line, theme)} wrap="truncate">
+            {line}
+          </Text>
+        );
+      })}
+    </>
   );
 
   if (title) {
@@ -75,15 +100,15 @@ export function LogViewer({
           </Text>
         </Box>
         <Box flexDirection="column" paddingX={1}>
-          {displayLines.map((line, index) => (
-            <Text key={index} color={getLineColor(line, theme)} wrap="truncate">
-              {line}
-            </Text>
-          ))}
+          {renderLines(displayLines)}
         </Box>
       </Box>
     );
   }
 
-  return content;
+  return (
+    <Box flexDirection="column" height={height as number | undefined}>
+      {renderLines(displayLines)}
+    </Box>
+  );
 }

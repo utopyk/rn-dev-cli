@@ -63,9 +63,8 @@ export class Builder extends EventEmitter {
     }
 
     this.emit("progress", { phase: "Building" });
-    this.emit("line", { text: `⏳ Building for ${platform}...`, stream: "stdout" });
+    this.emit("line", { text: `Building for ${platform}...`, stream: "stdout" });
     this.emit("line", { text: `  npx ${args.join(" ")}`, stream: "stdout" });
-    this.emit("line", { text: "", stream: "stdout" });
 
     this.rawOutput = "";
 

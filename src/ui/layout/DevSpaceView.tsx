@@ -64,26 +64,13 @@ export function DevSpaceView({
 
         {/* Right panel: tool output or wizard */}
         <Box flexGrow={1}>
-          <Panel
-            title={wizardContent ? "Setup Wizard" : buildPhase ? `Building: ${buildPhase}` : "Tool Output"}
-            width="100%"
-          >
+          <Panel title={wizardContent ? "Setup Wizard" : "Tool Output"} width="100%">
             {wizardContent ? (
               <Box flexDirection="column" paddingX={1}>
                 {wizardContent}
               </Box>
             ) : (
-              <Box flexDirection="column" flexGrow={1}>
-                {buildPhase && (
-                  <Box paddingX={1} marginBottom={1}>
-                    <Text color={theme.warning}>
-                      <Spinner type="dots" />
-                    </Text>
-                    <Text color={theme.accent} bold>{` ${buildPhase}...`}</Text>
-                  </Box>
-                )}
-                <LogViewer lines={toolOutputLines} follow={true} />
-              </Box>
+              <LogViewer lines={toolOutputLines} follow={true} buildPhase={buildPhase} />
             )}
           </Panel>
         </Box>
