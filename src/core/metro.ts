@@ -1,13 +1,8 @@
 import { EventEmitter } from "node:events";
 import path from "path";
-import { spawn } from "child_process";
 import * as net from "net";
-import { execFile } from "child_process";
-import { promisify } from "util";
 import type { ArtifactStore } from "./artifact.js";
 import type { MetroInstance } from "./types.js";
-
-const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // MetroManager
@@ -96,12 +91,13 @@ export class MetroManager extends EventEmitter {
    */
   async findProcessOnPort(port: number): Promise<number | null> {
     try {
-      const { stdout } = await execFileAsync("lsof", [
-        "-i",
-        `:${port}`,
-        "-t",
-      ]);
-      const pid = parseInt(stdout.trim(), 10);
+      const proc = Bun.spawn(["lsof", "-i", `:${port}`, "-t"], {
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const text = await new Response(proc.stdout).text();
+      await proc.exited;
+      const pid = parseInt(text.trim(), 10);
       return isNaN(pid) ? null : pid;
     } catch {
       return null;
@@ -165,25 +161,23 @@ export class MetroManager extends EventEmitter {
       args.push("--verbose");
     }
 
-    // Use local binary directly to avoid npx resolution overhead
+    // Use Bun.spawn for proper async stream handling
     const rnBin = path.join(projectRoot, "node_modules", ".bin", "react-native");
-    const child = spawn(rnBin, args, {
+    const proc = Bun.spawn([rnBin, ...args], {
       cwd: projectRoot,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
       env: {
         ...process.env,
         ...env,
       },
     });
 
-    // Unref so the parent process can exit independently of Metro
-    child.unref();
-
     const instance: MetroInstance = {
       worktree: worktreeKey,
       port,
-      pid: child.pid ?? 0,
+      pid: proc.pid,
       status: "starting",
       startedAt: new Date(),
       projectRoot,
@@ -191,37 +185,44 @@ export class MetroManager extends EventEmitter {
 
     this.instances.set(worktreeKey, instance);
 
-    // Pipe stdout lines to subscribers
-    child.stdout?.on("data", (chunk: Buffer) => {
-      const lines = chunk.toString().split("\n");
-      for (const line of lines) {
-        if (line.trim()) {
-          // Detect Metro ready signal
-          if (
-            line.includes("Metro waiting on") ||
-            line.includes("Metro is running") ||
-            line.includes("Welcome to Metro")
-          ) {
-            instance.status = "running";
-            this.emit("status", { worktreeKey, status: "running" });
+    // Read stdout asynchronously — non-blocking
+    const readStream = async (stream: ReadableStream<Uint8Array> | null, streamName: "stdout" | "stderr") => {
+      if (!stream) return;
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = decoder.decode(value, { stream: true });
+          const lines = text.split("\n");
+          for (const line of lines) {
+            if (line.trim()) {
+              if (
+                streamName === "stdout" && (
+                  line.includes("Metro waiting on") ||
+                  line.includes("Metro is running") ||
+                  line.includes("Welcome to Metro") ||
+                  line.includes("Dev server ready")
+                )
+              ) {
+                instance.status = "running";
+                this.emit("status", { worktreeKey, status: "running" });
+              }
+              this.emit("log", { worktreeKey, line, stream: streamName });
+            }
           }
-          this.emit("log", { worktreeKey, line, stream: "stdout" });
         }
+      } catch {
+        // Stream closed
       }
-    });
+    };
 
-    // Pipe stderr lines to subscribers
-    child.stderr?.on("data", (chunk: Buffer) => {
-      const lines = chunk.toString().split("\n");
-      for (const line of lines) {
-        if (line.trim()) {
-          this.emit("log", { worktreeKey, line, stream: "stderr" });
-        }
-      }
-    });
+    readStream(proc.stdout as ReadableStream<Uint8Array>, "stdout");
+    readStream(proc.stderr as ReadableStream<Uint8Array>, "stderr");
 
     // Handle process exit
-    child.on("exit", (code) => {
+    proc.exited.then((code) => {
       const current = this.instances.get(worktreeKey);
       if (current) {
         const newStatus = code === 0 ? "stopped" : "error";
@@ -232,18 +233,6 @@ export class MetroManager extends EventEmitter {
           payload.error = `Metro exited with code ${code}`;
         }
         this.emit("status", payload);
-      }
-    });
-
-    child.on("error", (err) => {
-      const current = this.instances.get(worktreeKey);
-      if (current) {
-        current.status = "error";
-        this.emit("status", {
-          worktreeKey,
-          status: "error",
-          error: err.message,
-        });
       }
     });
 
@@ -261,15 +250,13 @@ export class MetroManager extends EventEmitter {
     }
 
     try {
-      // Kill the entire process group (negative PID) since Metro is
-      // spawned detached via npx which creates a process tree
+      // Kill entire process tree
       process.kill(-instance.pid, "SIGKILL");
     } catch {
-      // Fallback: kill the direct PID
       try {
         process.kill(instance.pid, "SIGKILL");
       } catch {
-        // Process may have already exited — that's fine
+        // Process may have already exited
       }
     }
 

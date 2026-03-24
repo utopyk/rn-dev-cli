@@ -1,7 +1,7 @@
 import path from "path";
-import { spawn, execSync, type ChildProcess } from "child_process";
 import { existsSync, rmSync } from "fs";
 import { EventEmitter } from "events";
+import { type Subprocess } from "bun";
 import { parseXcodebuildErrors, parseGradleErrors, parseXcresultErrors } from "./build-parser.js";
 import type { BuildError } from "./types.js";
 
@@ -40,7 +40,7 @@ export interface BuildResult {
  *   'done'     — { success: boolean, errors: BuildError[] }
  */
 export class Builder extends EventEmitter {
-  private process: ChildProcess | null = null;
+  private process: Subprocess | null = null;
   private rawOutput = "";
   private xcresultPath: string | null = null;
   private detectedXcresultPath: string | null = null;
@@ -77,68 +77,93 @@ export class Builder extends EventEmitter {
 
     this.rawOutput = "";
 
-    const child = spawn(rnBin, args, {
-      cwd: projectRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...env },
-    });
+    let proc: Subprocess;
+    try {
+      proc = Bun.spawn([rnBin, ...args], {
+        cwd: projectRoot,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, ...env },
+      });
+    } catch (err: any) {
+      this.emit("done", {
+        success: false,
+        errors: [{
+          source: platform === "ios" ? "xcodebuild" : "gradle",
+          summary: `Failed to spawn build process: ${err.message}`,
+          rawOutput: err.message,
+        }],
+      });
+      return;
+    }
 
-    this.process = child;
+    this.process = proc;
 
-    const handleData = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
-      const text = stripAnsi(chunk.toString());
-      this.rawOutput += text;
+    // Async stream reader — non-blocking, yields to event loop
+    const readStream = async (stream: ReadableStream<Uint8Array> | null, streamName: "stdout" | "stderr") => {
+      if (!stream) return;
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = stripAnsi(decoder.decode(value, { stream: true }));
+          this.rawOutput += text;
 
-      // Detect auto-generated xcresult bundle path from stderr
-      const xcresultMatch = text.match(/(?:Writing|Wrote)\s+(?:error\s+)?result\s+bundle\s+to\s+(.+?\.xcresult)/i);
-      if (xcresultMatch) {
-        this.detectedXcresultPath = xcresultMatch[1].trim();
-      }
+          // Detect xcresult bundle path
+          const xcresultMatch = text.match(/(?:Writing|Wrote)\s+(?:error\s+)?result\s+bundle\s+to\s+(.+?\.xcresult)/i);
+          if (xcresultMatch) {
+            this.detectedXcresultPath = xcresultMatch[1].trim();
+          }
 
-      const lines = text.split("\n");
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+          const lines = text.split("\n");
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
 
-        // Milestone lines — always emitted immediately
-        const isMilestone =
-          trimmed.startsWith("BUILD SUCCESSFUL") ||
-          trimmed.startsWith("Build Succeeded") ||
-          trimmed.includes("BUILD FAILED") ||
-          trimmed.startsWith("error ") ||
-          trimmed.startsWith("info Found") ||
-          trimmed.startsWith("info Building") ||
-          trimmed.startsWith("info Installing") ||
-          trimmed.startsWith("info Launching") ||
-          trimmed.startsWith("success ") ||
-          trimmed.startsWith("warn ") ||
-          trimmed.includes("FAILURE:") ||
-          /^\s*error:/.test(trimmed) ||
-          /^\/.+:\d+:\d+: (error|fatal error):/.test(trimmed);
+            const isMilestone =
+              trimmed.startsWith("BUILD SUCCESSFUL") ||
+              trimmed.startsWith("Build Succeeded") ||
+              trimmed.includes("BUILD FAILED") ||
+              trimmed.startsWith("error ") ||
+              trimmed.startsWith("info Found") ||
+              trimmed.startsWith("info Building") ||
+              trimmed.startsWith("info Installing") ||
+              trimmed.startsWith("info Launching") ||
+              trimmed.startsWith("success ") ||
+              trimmed.startsWith("warn ") ||
+              trimmed.includes("FAILURE:") ||
+              /^\s*error:/.test(trimmed) ||
+              /^\/.+:\d+:\d+: (error|fatal error):/.test(trimmed);
 
-        // Detect build phases
-        if (trimmed.includes("Compiling") || trimmed.includes("CompileC")) {
-          this.emit("progress", { phase: "Compiling" });
-        } else if (trimmed.includes("Linking") || trimmed.includes("Ld ")) {
-          this.emit("progress", { phase: "Linking" });
-        } else if (trimmed.startsWith("info Installing")) {
-          this.emit("progress", { phase: "Installing" });
-        } else if (trimmed.startsWith("info Launching")) {
-          this.emit("progress", { phase: "Launching" });
+            if (trimmed.includes("Compiling") || trimmed.includes("CompileC")) {
+              this.emit("progress", { phase: "Compiling" });
+            } else if (trimmed.includes("Linking") || trimmed.includes("Ld ")) {
+              this.emit("progress", { phase: "Linking" });
+            } else if (trimmed.startsWith("info Installing")) {
+              this.emit("progress", { phase: "Installing" });
+            } else if (trimmed.startsWith("info Launching")) {
+              this.emit("progress", { phase: "Launching" });
+            }
+
+            if (isMilestone) {
+              this.emit("line", { text: trimmed, stream: streamName, replace: false });
+            } else {
+              this.emit("line", { text: `  ${trimmed.slice(0, 100)}`, stream: streamName, replace: true });
+            }
+          }
         }
-
-        if (isMilestone) {
-          this.emit("line", { text: trimmed, stream, replace: false });
-        } else {
-          this.emit("line", { text: `  ${trimmed.slice(0, 100)}`, stream, replace: true });
-        }
+      } catch {
+        // Stream closed
       }
     };
 
-    child.stdout?.on("data", handleData("stdout"));
-    child.stderr?.on("data", handleData("stderr"));
+    readStream(proc.stdout as ReadableStream<Uint8Array>, "stdout");
+    readStream(proc.stderr as ReadableStream<Uint8Array>, "stderr");
 
-    child.on("exit", (code) => {
+    proc.exited.then((code) => {
       const success = code === 0;
       let errors: BuildError[] = [];
 
@@ -209,27 +234,15 @@ export class Builder extends EventEmitter {
       this.emit("done", { success, errors });
       this.process = null;
     });
-
-    child.on("error", (err) => {
-      this.emit("done", {
-        success: false,
-        errors: [{
-          source: platform === "ios" ? "xcodebuild" : "gradle",
-          summary: `Failed to spawn build process: ${err.message}`,
-          rawOutput: err.message,
-        }],
-      });
-      this.process = null;
-    });
   }
 
   cancel(): void {
     if (this.process) {
       try {
-        process.kill(-this.process.pid!, "SIGKILL");
+        process.kill(-this.process.pid, "SIGKILL");
       } catch {
         try {
-          this.process.kill("SIGKILL");
+          this.process.kill();
         } catch {}
       }
       this.process = null;
