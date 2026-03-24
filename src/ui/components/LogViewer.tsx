@@ -6,6 +6,7 @@ import { useTheme } from "../theme-provider.js";
 export interface LogViewerProps {
   lines: string[];
   maxLines?: number;
+  maxVisibleLines?: number;
   follow?: boolean;
   height?: number | string;
   title?: string;
@@ -13,17 +14,17 @@ export interface LogViewerProps {
 }
 
 function getLineColor(line: string, theme: { fg: string; error: string; warning: string; success: string; accent: string }): string {
-  const lower = line.toLowerCase();
-  if (lower.startsWith("error ") || lower.startsWith("❌") || /^\s*✖/.test(line)) {
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith("error ") || trimmed.startsWith("❌") || trimmed.startsWith("✖") || trimmed.startsWith("✗")) {
     return theme.error;
   }
-  if (lower.startsWith("warn ") || lower.startsWith("⚠")) {
+  if (trimmed.startsWith("warn ") || trimmed.startsWith("⚠")) {
     return theme.warning;
   }
-  if (lower.startsWith("✔") || lower.startsWith("✅") || lower.startsWith("success ")) {
+  if (trimmed.startsWith("✔") || trimmed.startsWith("✅") || trimmed.startsWith("success ")) {
     return theme.success;
   }
-  if (lower.startsWith("⏳") || lower.startsWith("▶")) {
+  if (trimmed.startsWith("⏳") || trimmed.startsWith("▶") || trimmed.startsWith("Building")) {
     return theme.accent;
   }
   return theme.fg;
@@ -32,6 +33,7 @@ function getLineColor(line: string, theme: { fg: string; error: string; warning:
 export function LogViewer({
   lines,
   maxLines = 500,
+  maxVisibleLines,
   follow = true,
   height,
   title,
@@ -39,28 +41,26 @@ export function LogViewer({
 }: LogViewerProps): React.JSX.Element {
   const theme = useTheme();
 
-  const visibleLines = useMemo(() => {
-    if (lines.length <= maxLines) {
-      return lines;
-    }
+  // Trim to buffer limit
+  const bufferedLines = useMemo(() => {
+    if (lines.length <= maxLines) return lines;
     return lines.slice(lines.length - maxLines);
   }, [lines, maxLines]);
 
+  // Auto-scroll: show only the last N lines that fit in the viewport
   const displayLines = useMemo(() => {
-    if (!follow || typeof height !== "number") {
-      return visibleLines;
-    }
-    const availableHeight = Math.max(1, height - (title ? 3 : 2));
-    if (visibleLines.length <= availableHeight) {
-      return visibleLines;
-    }
-    return visibleLines.slice(visibleLines.length - availableHeight);
-  }, [visibleLines, follow, height, title]);
+    if (!follow) return bufferedLines;
+
+    const limit = maxVisibleLines ?? (typeof height === "number" ? Math.max(1, height - 2) : undefined);
+    if (!limit) return bufferedLines;
+
+    if (bufferedLines.length <= limit) return bufferedLines;
+    return bufferedLines.slice(bufferedLines.length - limit);
+  }, [bufferedLines, follow, maxVisibleLines, height]);
 
   const renderLines = (linesToRender: string[]) => (
     <>
       {linesToRender.map((line, index) => {
-        // If this is the last line and we're building, show spinner
         const isLastLine = index === linesToRender.length - 1;
         const showSpinner = isLastLine && buildPhase;
 
