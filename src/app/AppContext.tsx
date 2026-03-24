@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { execSync, spawn } from "child_process";
 import type { Profile } from "../core/types.js";
 import type { MetroManager } from "../core/metro.js";
 import type { FileWatcher } from "../core/watcher.js";
 import type { Builder } from "../core/builder.js";
+import { serviceBus } from "./service-bus.js";
 
 // ---------------------------------------------------------------------------
 // Context shape
@@ -70,6 +70,37 @@ export function AppProvider({
   const [buildPhase, setBuildPhase] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalConfig | null>(null);
 
+  // Live service references updated via service bus
+  const [liveMetro, setLiveMetro] = useState<MetroManager | undefined>(metro);
+  const [liveBuilder, setLiveBuilder] = useState<Builder | undefined>(builder);
+  const [liveWatcher, setLiveWatcher] = useState<FileWatcher | null | undefined>(watcher);
+  const [liveWorktreeKey, setLiveWorktreeKey] = useState<string | undefined>(worktreeKey);
+
+  // Subscribe to service bus — bridges start-flow → React state
+  useEffect(() => {
+    const onLog = (text: string) => {
+      setToolOutputLines((prev) => [...prev, text].slice(-500));
+    };
+    const onMetro = (m: MetroManager) => setLiveMetro(m);
+    const onBuilder = (b: any) => setLiveBuilder(b);
+    const onWatcher = (w: FileWatcher) => setLiveWatcher(w);
+    const onWorktreeKey = (k: string) => setLiveWorktreeKey(k);
+
+    serviceBus.on("log", onLog);
+    serviceBus.on("metro", onMetro);
+    serviceBus.on("builder", onBuilder);
+    serviceBus.on("watcher", onWatcher);
+    serviceBus.on("worktreeKey", onWorktreeKey);
+
+    return () => {
+      serviceBus.off("log", onLog);
+      serviceBus.off("metro", onMetro);
+      serviceBus.off("builder", onBuilder);
+      serviceBus.off("watcher", onWatcher);
+      serviceBus.off("worktreeKey", onWorktreeKey);
+    };
+  }, []);
+
   const showModal = useCallback((config: ModalConfig) => {
     setModal(config);
   }, []);
@@ -78,22 +109,23 @@ export function AppProvider({
     setModal(null);
   }, []);
 
-  // Subscribe to metro output
+  // Subscribe to metro output — uses liveMetro from service bus
   useEffect(() => {
-    if (!metro || !worktreeKey) return;
+    if (!liveMetro || !liveWorktreeKey) return;
 
     const handler = ({ line }: { worktreeKey: string; line: string; stream: string }) => {
       setMetroLines((prev) => [...prev, line].slice(-500));
     };
 
-    metro.on("log", handler);
+    liveMetro.on("log", handler);
     return () => {
-      metro.off("log", handler);
+      liveMetro.off("log", handler);
     };
-  }, [metro, worktreeKey]);
+  }, [liveMetro, liveWorktreeKey]);
 
-  // Subscribe to watcher pipeline events
+  // Subscribe to watcher pipeline events — uses liveWatcher
   useEffect(() => {
+    const watcher = liveWatcher;
     if (!watcher) return;
 
     const onActionComplete = ({
@@ -117,11 +149,12 @@ export function AppProvider({
     return () => {
       watcher.off("action-complete", onActionComplete);
     };
-  }, [watcher]);
+  }, [liveWatcher]);
 
-  // Subscribe to builder events for live build output
+  // Subscribe to builder events for live build output — uses liveBuilder
   useEffect(() => {
-    if (!builder) return;
+    if (!liveBuilder) return;
+    const builder = liveBuilder;
 
     const onLine = ({ text, replace }: { text: string; replace?: boolean }) => {
       if (replace) {
@@ -166,7 +199,7 @@ export function AppProvider({
       builder.off("progress", onProgress);
       builder.off("done", onDone);
     };
-  }, [builder]);
+  }, [liveBuilder]);
 
   // Shortcut actions
   const appendToolOutput = useCallback((...lines: string[]) => {
@@ -201,8 +234,8 @@ export function AppProvider({
       switch (key) {
         case "r":
           appendToolOutput("\u25b6 Reloading app...");
-          if (metro && worktreeKey) {
-            metro.reload(worktreeKey);
+          if (liveMetro && liveWorktreeKey) {
+            liveMetro.reload(liveWorktreeKey);
             appendToolOutput("\u2713 Reload signal sent", "");
           } else {
             appendToolOutput("\u2717 Metro not running", "");
@@ -210,8 +243,8 @@ export function AppProvider({
           break;
         case "d":
           appendToolOutput("\u25b6 Opening dev menu...");
-          if (metro && worktreeKey) {
-            metro.devMenu(worktreeKey);
+          if (liveMetro && liveWorktreeKey) {
+            liveMetro.devMenu(liveWorktreeKey);
             appendToolOutput("\u2713 Dev menu signal sent", "");
           } else {
             appendToolOutput("\u2717 Metro not running", "");
@@ -227,8 +260,8 @@ export function AppProvider({
           appendToolOutput("\u25b6 Clean requires interactive mode. Use 'rn-dev clean' from CLI.", "");
           break;
         case "w":
-          if (watcher) {
-            const enabled = watcher.toggle();
+          if (liveWatcher) {
+            const enabled = liveWatcher.toggle();
             appendToolOutput(`\u2713 Watcher ${enabled ? "enabled" : "disabled"}`, "");
           } else {
             appendToolOutput("\u2717 No watcher configured", "");
@@ -236,8 +269,8 @@ export function AppProvider({
           break;
         case "q":
           // Kill Metro, disable mouse, restore terminal, exit
-          if (metro) metro.stopAll();
-          if (watcher) watcher.stop();
+          if (liveMetro) liveMetro.stopAll();
+          if (liveWatcher) liveWatcher.stop();
           // Disable mouse reporting and restore terminal
           process.stdout.write("\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1006l");
           process.stdout.write("\x1b[?25h");   // show cursor

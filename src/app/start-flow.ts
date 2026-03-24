@@ -21,6 +21,7 @@ import {
 } from "../modules/index.js";
 import { firstRunSetup } from "./first-run.js";
 import { App } from "./App.js";
+import { serviceBus } from "./service-bus.js";
 import type { Profile, Platform, RunMode } from "../core/types.js";
 
 // ---------------------------------------------------------------------------
@@ -227,50 +228,22 @@ export async function startFlow(options: StartOptions): Promise<void> {
       : new URL("./service-worker.ts", import.meta.url).href;
     const worker = new Worker(workerUrl);
 
-    // Collect startup logs from the worker in real-time
-    const liveStartupLog: string[] = [];
-
     worker.onmessage = (event: MessageEvent) => {
       const msg = event.data;
 
       if (msg.type === "log") {
-        liveStartupLog.push(msg.text);
-        // Re-render to show the new log line
-        renderApp({
-          theme,
-          registry,
-          wizardMode: false,
-          profile,
-          metro,
-          watcher,
-          worktreeKey,
-          startupLog: [...liveStartupLog],
-          builder,
-        });
+        // Push log to React via service bus (triggers setState inside AppContext)
+        serviceBus.log(msg.text);
       } else if (msg.type === "done") {
         worktreeKey = msg.result.worktreeKey;
+        serviceBus.setWorktreeKey(worktreeKey!);
         worker.terminate();
 
         const effectiveRoot = profile.worktree ?? projectRoot;
 
-        // Helper to yield to renderer
-        const tick = () => new Promise<void>(r => setTimeout(r, 0));
-
-        // Helper to re-render with ALL current state
-        const rerender = () => {
-          renderApp({
-            theme, registry, wizardMode: false, profile,
-            metro, watcher, worktreeKey,
-            startupLog: [...liveStartupLog], builder,
-          });
-        };
-
-        // Run async steps, yielding between each
+        // Start services — all using Bun.spawn (non-blocking)
         (async () => {
-          // Step 1: Start Metro
-          liveStartupLog.push("⏳ Starting Metro...");
-          rerender();
-          await tick();
+          serviceBus.log("⏳ Starting Metro on port " + profile.metroPort + "...");
 
           const metroMgr = new MetroManager(artifactStore);
           metro = metroMgr;
@@ -281,36 +254,31 @@ export async function startFlow(options: StartOptions): Promise<void> {
             resetCache: profile.mode !== "dirty",
             env: profile.env,
           });
+          serviceBus.setMetro(metroMgr);
+          serviceBus.log("✔ Metro started");
 
-          liveStartupLog.push("✔ Metro started on port " + profile.metroPort);
-          rerender();
-          await tick();
-
-          // Step 2: IPC + watcher
+          // IPC
           const ipcServer = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
           ipcServer.start().catch(() => {});
           ipc = ipcServer;
 
+          // Watcher
           if (profile.onSave.length > 0) {
             watcher = new FileWatcher({ projectRoot, actions: profile.onSave });
             watcher.start();
-            liveStartupLog.push("✔ File watcher started");
+            serviceBus.setWatcher(watcher);
+            serviceBus.log("✔ File watcher started");
           }
 
-          rerender();
-          await tick();
-
-          // Step 3: Builder
+          // Builder
           const { Builder: BuilderClass } = await import("../core/builder.js");
           const b = new BuilderClass();
           builder = b;
+          serviceBus.setBuilder(b);
+          serviceBus.log("✔ All services started");
+          serviceBus.log("");
 
-          liveStartupLog.push("✔ All services started");
-          liveStartupLog.push("");
-          rerender();
-          await tick();
-
-          // Step 4: Trigger build
+          // Trigger build
           const platforms: Array<"ios" | "android"> =
             profile.platform === "both" ? ["ios", "android"] : [profile.platform];
           for (const plat of platforms) {
