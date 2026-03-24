@@ -236,15 +236,14 @@ export function AppProvider({
           }
           break;
         case "q":
-          // Reset terminal background, kill Metro in background, exit
-          process.stdout.write("\x1b[0m\x1b[2J\x1b[H"); // reset + clear + home
-          try {
-            const port = profile.metroPort;
-            spawn("sh", ["-c", `lsof -ti :${port} | xargs kill -9 2>/dev/null`], {
-              detached: true,
-              stdio: "ignore",
-            }).unref();
-          } catch {}
+          // Kill Metro, disable mouse, restore terminal, exit
+          if (metro) metro.stopAll();
+          if (watcher) watcher.stop();
+          // Disable mouse reporting and restore terminal
+          process.stdout.write("\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1006l");
+          process.stdout.write("\x1b[?25h");   // show cursor
+          process.stdout.write("\x1b[?1049l"); // exit alternate screen
+          process.stdout.write("\x1b[0m");     // reset colors
           process.exit(0);
           break;
         default:

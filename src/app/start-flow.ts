@@ -105,7 +105,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
     if (options.port) profile.metroPort = options.port;
   }
 
-  // 7. If we have a profile already, start services immediately
+  // 7. Declare service references (populated after initial render)
   let metro: MetroManager | undefined;
   let watcher: FileWatcher | null = null;
   let ipc: IpcServer | undefined;
@@ -113,21 +113,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
   let startupLog: string[] = [];
   let builder: import("../core/builder.js").Builder | undefined;
 
-  if (profile && !needsWizard) {
-    const result = await startServices(
-      profile,
-      projectRoot,
-      artifactStore
-    );
-    metro = result.metro;
-    watcher = result.watcher;
-    ipc = result.ipc;
-    worktreeKey = result.worktreeKey;
-    startupLog = result.startupLog;
-    builder = result.builder;
-  }
-
-  // 8. Create OpenTUI renderer with post-processing effects
+  // 8. Create OpenTUI renderer FIRST so TUI appears immediately
   const vignetteEffect = new VignetteEffect(effects.vignetteStrength);
 
   const renderer = await createCliRenderer({
@@ -232,29 +218,65 @@ export async function startFlow(options: StartOptions): Promise<void> {
     },
   });
 
-  // 10. Trigger build after TUI is rendered (so output streams live to panel)
-  if (builder && profile && !needsWizard) {
-    const platformsToBuild: Array<"ios" | "android"> =
-      profile.platform === "both" ? ["ios", "android"] : [profile.platform];
+  // 10. Start services AFTER initial render (so TUI appears immediately)
+  if (profile && !needsWizard) {
+    // Use setTimeout to let the first frame render before blocking on services
+    setTimeout(async () => {
+      const result = await startServices(profile, projectRoot, artifactStore);
+      metro = result.metro;
+      watcher = result.watcher;
+      ipc = result.ipc;
+      worktreeKey = result.worktreeKey;
+      startupLog = result.startupLog;
+      builder = result.builder;
 
-    for (const platform of platformsToBuild) {
-      const deviceId = platform === "ios" ? profile.devices?.ios : profile.devices?.android;
-      builder.build({
-        projectRoot: profile.worktree ?? projectRoot,
-        platform,
-        deviceId: deviceId ?? undefined,
-        port: profile.metroPort,
-        variant: profile.buildVariant,
-        env: profile.env,
+      // Re-render with services attached
+      renderApp({
+        theme,
+        registry,
+        wizardMode: false,
+        profile,
+        metro: result.metro,
+        watcher: result.watcher,
+        worktreeKey: result.worktreeKey,
+        startupLog: result.startupLog,
+        builder: result.builder,
       });
-    }
+
+      // Trigger build
+      const platformsToBuild: Array<"ios" | "android"> =
+        profile.platform === "both" ? ["ios", "android"] : [profile.platform];
+      for (const platform of platformsToBuild) {
+        const deviceId = platform === "ios" ? profile.devices?.ios : profile.devices?.android;
+        result.builder.build({
+          projectRoot: profile.worktree ?? projectRoot,
+          platform,
+          deviceId: deviceId ?? undefined,
+          port: profile.metroPort,
+          variant: profile.buildVariant,
+          env: profile.env,
+        });
+      }
+    }, 50);
   }
 
-  // 11. Handle cleanup on exit
+  // (builder and services are started asynchronously in step 10 above)
+
+  // 11. Handle cleanup on exit — must destroy renderer to restore terminal
   const cleanup = (): void => {
     metro?.stopAll();
     watcher?.stop();
     ipc?.stop();
+    try {
+      root.unmount();
+      renderer.destroy();
+    } catch {
+      // renderer may already be destroyed
+    }
+    // Explicitly disable mouse reporting and restore terminal
+    process.stdout.write("\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1006l");
+    process.stdout.write("\x1b[?25h");  // show cursor
+    process.stdout.write("\x1b[?1049l"); // exit alternate screen
   };
 
   process.on("SIGINT", () => {
@@ -265,6 +287,11 @@ export async function startFlow(options: StartOptions): Promise<void> {
   process.on("SIGTERM", () => {
     cleanup();
     process.exit(0);
+  });
+
+  // Also handle the 'q' key quit from AppContext
+  process.on("exit", () => {
+    cleanup();
   });
 }
 
