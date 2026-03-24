@@ -47,7 +47,7 @@ export class Builder extends EventEmitter {
   build(options: BuildOptions): void {
     const { projectRoot, platform, deviceId, port, variant, env } = options;
 
-    const args = ["react-native", `run-${platform}`, "--port", String(port), "--verbose"];
+    const args = ["react-native", `run-${platform}`, "--port", String(port)];
 
     this.detectedXcresultPath = null;
 
@@ -80,33 +80,6 @@ export class Builder extends EventEmitter {
     });
 
     this.process = child;
-
-    // Throttle verbose (non-milestone) line emissions to prevent flooding
-    // the React render loop. Milestone lines always emit immediately.
-    let lastVerboseEmit = 0;
-    let pendingVerboseLine: string | null = null;
-    let verboseTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const emitVerbose = (text: string) => {
-      const now = Date.now();
-      if (now - lastVerboseEmit >= 200) {
-        lastVerboseEmit = now;
-        this.emit("line", { text, stream: "stdout", replace: true });
-      } else {
-        // Queue — will be emitted on next tick or next milestone
-        pendingVerboseLine = text;
-        if (!verboseTimer) {
-          verboseTimer = setTimeout(() => {
-            verboseTimer = null;
-            if (pendingVerboseLine) {
-              lastVerboseEmit = Date.now();
-              this.emit("line", { text: pendingVerboseLine, stream: "stdout", replace: true });
-              pendingVerboseLine = null;
-            }
-          }, 200);
-        }
-      }
-    };
 
     const handleData = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
       const text = stripAnsi(chunk.toString());
@@ -151,12 +124,9 @@ export class Builder extends EventEmitter {
         }
 
         if (isMilestone) {
-          // Flush any pending verbose line first
-          pendingVerboseLine = null;
           this.emit("line", { text: trimmed, stream, replace: false });
         } else {
-          // Throttled verbose output
-          emitVerbose(`  ${trimmed.slice(0, 100)}`);
+          this.emit("line", { text: `  ${trimmed.slice(0, 100)}`, stream, replace: true });
         }
       }
     };
