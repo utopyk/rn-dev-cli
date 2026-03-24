@@ -91,8 +91,8 @@ export function DevSpaceView({
 
       {/* Right side: tool output + metro output stacked */}
       <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg}>
-        {/* Tool output or wizard */}
-        <box flexGrow={1} flexDirection="column" onMouseDown={() => setFocusedPanel("tool")}>
+        {/* Tool output or wizard — fixed 50% */}
+        <box height="50%" flexDirection="column" overflow="hidden" onMouseDown={() => setFocusedPanel("tool")}>
           {wizardContent ? (
             <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg}>
               <box paddingLeft={1} backgroundColor={theme.bg}>
@@ -103,6 +103,7 @@ export function DevSpaceView({
                 borderColor={theme.accent}
                 flexGrow={1}
                 paddingLeft={1}
+                overflow="hidden"
                 backgroundColor={theme.bg}
               >
                 {wizardContent}
@@ -120,8 +121,8 @@ export function DevSpaceView({
           )}
         </box>
 
-        {/* Metro output */}
-        <box flexGrow={1} flexDirection="column" onMouseDown={() => setFocusedPanel("metro")}>
+        {/* Metro output — fixed 50% */}
+        <box height="50%" flexDirection="column" overflow="hidden" onMouseDown={() => setFocusedPanel("metro")}>
           <LogViewer
             lines={metroLines}
             follow={true}

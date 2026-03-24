@@ -282,7 +282,7 @@ export function AppProvider({
           break;
       }
     },
-    [metro, watcher, worktreeKey, runCommand, appendToolOutput]
+    [liveMetro, liveWatcher, liveWorktreeKey, runCommand, appendToolOutput]
   );
 
   const shortcuts = [
