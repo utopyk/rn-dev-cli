@@ -98,11 +98,11 @@ export function DevSpaceView({
     : "Metro Output";
 
   return (
-    <Box flexDirection="column" height={contentHeight}>
+    <Box flexDirection="column" height={contentHeight} backgroundColor={theme.bg}>
       {/* Top half: shortcuts + tool output side by side */}
-      <Box flexDirection="row" height={topHalfHeight}>
+      <Box flexDirection="row" height={topHalfHeight} backgroundColor={theme.bg}>
         {/* Left panel: shortcuts list with mini logo */}
-        <Box width="35%">
+        <Box width="35%" backgroundColor={theme.bg}>
           <Panel title="Shortcuts" width="100%" height={topHalfHeight}>
             <Box flexDirection="column">
               {/* Gradient logo */}
@@ -124,7 +124,7 @@ export function DevSpaceView({
         </Box>
 
         {/* Right panel: tool output or wizard */}
-        <Box flexGrow={1}>
+        <Box flexGrow={1} backgroundColor={theme.bg}>
           <Panel
             title={toolTitle}
             width="100%"
@@ -151,7 +151,7 @@ export function DevSpaceView({
       </Box>
 
       {/* Bottom half: Metro output */}
-      <Box height={bottomHalfHeight}>
+      <Box height={bottomHalfHeight} backgroundColor={theme.bg}>
         <Panel
           title={metroTitle}
           width="100%"

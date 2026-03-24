@@ -121,7 +121,7 @@ export function MainLayout({
   return (
     <Box flexDirection="column" width={width} height={height} backgroundColor={theme.bg}>
       {/* ── Tab bar ── */}
-      <Box paddingX={1} height={3} gap={1} alignItems="center">
+      <Box paddingX={1} height={3} gap={1} alignItems="center" backgroundColor={theme.bg}>
         {modules.map((mod) => {
           const isActive = mod.id === activeModuleId;
           return (
@@ -129,6 +129,7 @@ export function MainLayout({
               key={mod.id}
               borderStyle={isActive ? "bold" : "single"}
               borderColor={isActive ? theme.accent : theme.border}
+              backgroundColor={theme.bg}
               paddingX={1}
             >
               <Text
@@ -146,7 +147,7 @@ export function MainLayout({
 
       {/* ── Profile banner ── */}
       {!bannerCollapsed && (
-        <Box borderStyle="single" borderColor={theme.border} paddingX={1}>
+        <Box borderStyle="single" borderColor={theme.border} backgroundColor={theme.bg} paddingX={1}>
           <Gradient name="passion">
             {`⚙ ${profile.name}`}
           </Gradient>
@@ -171,7 +172,7 @@ export function MainLayout({
       <Text color={theme.border}>{hr}</Text>
 
       {/* ── Active module content ── */}
-      <Box flexGrow={1} flexDirection="column" overflow="hidden">
+      <Box flexGrow={1} flexDirection="column" overflow="hidden" backgroundColor={theme.bg}>
         {ActiveComponent != null && <ActiveComponent />}
       </Box>
 
@@ -179,12 +180,12 @@ export function MainLayout({
       <Text color={theme.border}>{hr}</Text>
 
       {/* ── Shortcut bar ── */}
-      <Box paddingX={1} height={1}>
+      <Box paddingX={1} height={1} backgroundColor={theme.bg}>
         <ShortcutBar shortcuts={shortcuts} />
       </Box>
 
       {/* ── Status bar ── */}
-      <Box paddingX={1} height={1}>
+      <Box paddingX={1} height={1} backgroundColor={theme.bg}>
         <StatusBar
           metroStatus={metroStatus}
           metroPort={metroPort}

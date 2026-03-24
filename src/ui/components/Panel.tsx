@@ -30,14 +30,6 @@ export function Panel({
 
   const isCollapsed = controlledCollapsed ?? internalCollapsed;
 
-  const handleToggle = () => {
-    if (onToggle) {
-      onToggle();
-    } else {
-      setInternalCollapsed((prev) => !prev);
-    }
-  };
-
   const resolvedBorderColor = focused
     ? theme.accent
     : borderColor ?? theme.border;
@@ -53,22 +45,23 @@ export function Panel({
       flexDirection="column"
       borderStyle={focused ? "bold" : "round"}
       borderColor={resolvedBorderColor}
+      backgroundColor={theme.bg}
       width={width as number | undefined}
       height={isCollapsed ? undefined : (height as number | undefined)}
     >
       {titleDisplay && (
-        <Box marginTop={-1} marginLeft={1}>
+        <Box marginTop={-1} marginLeft={1} backgroundColor={theme.bg}>
           <Text
             color={focused ? theme.accent : theme.fg}
             bold={focused}
-            backgroundColor={focused ? theme.selection : undefined}
+            backgroundColor={focused ? theme.selection : theme.bg}
           >
             {titleDisplay}
           </Text>
         </Box>
       )}
       {!isCollapsed && (
-        <Box flexDirection="column" paddingX={1}>
+        <Box flexDirection="column" paddingX={1} backgroundColor={theme.bg}>
           {children}
         </Box>
       )}
