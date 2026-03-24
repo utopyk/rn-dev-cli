@@ -3,6 +3,12 @@ import { EventEmitter } from "events";
 import { parseXcodebuildErrors, parseGradleErrors } from "./build-parser.js";
 import type { BuildError } from "./types.js";
 
+// Strip ANSI escape codes
+function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+}
+
 // ---------------------------------------------------------------------------
 // Builder
 // ---------------------------------------------------------------------------
@@ -56,6 +62,7 @@ export class Builder extends EventEmitter {
       }
     }
 
+    this.emit("progress", { phase: "Building" });
     this.emit("line", { text: `⏳ Building for ${platform}...`, stream: "stdout" });
     this.emit("line", { text: `  npx ${args.join(" ")}`, stream: "stdout" });
     this.emit("line", { text: "", stream: "stdout" });
@@ -71,7 +78,7 @@ export class Builder extends EventEmitter {
     this.process = child;
 
     const handleData = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
-      const text = chunk.toString();
+      const text = stripAnsi(chunk.toString());
       this.rawOutput += text;
 
       const lines = text.split("\n");

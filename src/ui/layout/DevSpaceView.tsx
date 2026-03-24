@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
+import Spinner from "ink-spinner";
 import gradientString from "gradient-string";
 import { Panel } from "../components/Panel.js";
 import { LogViewer } from "../components/LogViewer.js";
@@ -23,6 +24,7 @@ export interface DevSpaceViewProps {
   toolOutputLines: string[];
   shortcuts: DevSpaceShortcut[];
   wizardContent?: React.ReactNode;
+  buildPhase?: string | null;
 }
 
 export function DevSpaceView({
@@ -30,6 +32,7 @@ export function DevSpaceView({
   toolOutputLines,
   shortcuts,
   wizardContent,
+  buildPhase,
 }: DevSpaceViewProps): React.JSX.Element {
   const theme = useTheme();
 
@@ -61,13 +64,26 @@ export function DevSpaceView({
 
         {/* Right panel: tool output or wizard */}
         <Box flexGrow={1}>
-          <Panel title={wizardContent ? "Setup Wizard" : "Tool Output"} width="100%">
+          <Panel
+            title={wizardContent ? "Setup Wizard" : buildPhase ? `Building: ${buildPhase}` : "Tool Output"}
+            width="100%"
+          >
             {wizardContent ? (
               <Box flexDirection="column" paddingX={1}>
                 {wizardContent}
               </Box>
             ) : (
-              <LogViewer lines={toolOutputLines} follow={true} />
+              <Box flexDirection="column" flexGrow={1}>
+                {buildPhase && (
+                  <Box paddingX={1} marginBottom={1}>
+                    <Text color={theme.warning}>
+                      <Spinner type="dots" />
+                    </Text>
+                    <Text color={theme.accent} bold>{` ${buildPhase}...`}</Text>
+                  </Box>
+                )}
+                <LogViewer lines={toolOutputLines} follow={true} />
+              </Box>
             )}
           </Panel>
         </Box>

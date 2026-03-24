@@ -1,5 +1,11 @@
 import type { BuildError } from "./types.js";
 
+// Strip ANSI escape codes from text
+function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+}
+
 // ---------------------------------------------------------------------------
 // Suggestion map (case-insensitive match on error text)
 // ---------------------------------------------------------------------------
@@ -66,7 +72,7 @@ const XCODE_CAUSED_BY_RE = /^(?:caused by|underlying error)[:\s]+(.+)$/i;
  * Only errors (not warnings) are returned.
  */
 export function parseXcodebuildErrors(output: string): BuildError[] {
-  const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = stripAnsi(output).split("\n").map((l) => l.trim()).filter(Boolean);
   const errors: BuildError[] = [];
   let pendingReason: string | undefined;
 
@@ -169,7 +175,8 @@ export function parseXcodebuildErrors(output: string): BuildError[] {
 /**
  * Parses gradle build output and returns an array of BuildError objects.
  */
-export function parseGradleErrors(output: string): BuildError[] {
+export function parseGradleErrors(rawOutput: string): BuildError[] {
+  const output = stripAnsi(rawOutput);
   // Fast path: no failure markers
   if (!output.includes("FAILURE:") && !output.includes("FAILED")) {
     return [];

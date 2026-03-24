@@ -16,6 +16,7 @@ export interface AppContextValue {
   shortcuts: Array<{ key: string; label: string; action: () => void }>;
   runShortcut: (key: string) => void;
   wizardContent?: React.ReactNode;
+  buildPhase: string | null; // null = not building, string = current phase
 }
 
 const AppContextInstance = createContext<AppContextValue | null>(null);
@@ -55,6 +56,7 @@ export function AppProvider({
   const [toolOutputLines, setToolOutputLines] = useState<string[]>(
     startupLog ?? []
   );
+  const [buildPhase, setBuildPhase] = useState<string | null>(null);
 
   // Subscribe to metro output
   useEffect(() => {
@@ -114,6 +116,7 @@ export function AppProvider({
       }
     };
     const onProgress = ({ phase }: { phase: string }) => {
+      setBuildPhase(phase);
       setToolOutputLines((prev) => {
         const copy = prev.slice(0, -1);
         copy.push(`  ⏳ ${phase}...`);
@@ -121,6 +124,7 @@ export function AppProvider({
       });
     };
     const onDone = ({ success, errors }: { success: boolean; errors: Array<{ summary: string; reason?: string; suggestion?: string }> }) => {
+      setBuildPhase(null);
       if (success) {
         setToolOutputLines((prev) => [...prev, "✅ Build complete!", ""].slice(-500));
       } else {
@@ -247,6 +251,7 @@ export function AppProvider({
     shortcuts,
     runShortcut,
     wizardContent,
+    buildPhase,
   };
 
   return React.createElement(
