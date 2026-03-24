@@ -218,49 +218,114 @@ export async function startFlow(options: StartOptions): Promise<void> {
     },
   });
 
-  // 10. Start services AFTER initial render (so TUI appears immediately)
+  // 10. Start services in a WORKER THREAD (so execSync doesn't block the renderer)
   if (profile && !needsWizard) {
-    // Use setTimeout to let the first frame render before blocking on services
-    setTimeout(async () => {
-      const result = await startServices(profile, projectRoot, artifactStore);
-      metro = result.metro;
-      watcher = result.watcher;
-      ipc = result.ipc;
-      worktreeKey = result.worktreeKey;
-      startupLog = result.startupLog;
-      builder = result.builder;
+    const workerUrl = new URL("./service-worker.ts", import.meta.url).href;
+    const worker = new Worker(workerUrl);
 
-      // Re-render with services attached
-      renderApp({
-        theme,
-        registry,
-        wizardMode: false,
-        profile,
-        metro: result.metro,
-        watcher: result.watcher,
-        worktreeKey: result.worktreeKey,
-        startupLog: result.startupLog,
-        builder: result.builder,
-      });
+    // Collect startup logs from the worker in real-time
+    const liveStartupLog: string[] = [];
 
-      // Trigger build
-      const platformsToBuild: Array<"ios" | "android"> =
-        profile.platform === "both" ? ["ios", "android"] : [profile.platform];
-      for (const platform of platformsToBuild) {
-        const deviceId = platform === "ios" ? profile.devices?.ios : profile.devices?.android;
-        result.builder.build({
+    worker.onmessage = (event: MessageEvent) => {
+      const msg = event.data;
+
+      if (msg.type === "log") {
+        liveStartupLog.push(msg.text);
+        // Re-render to show the new log line
+        renderApp({
+          theme,
+          registry,
+          wizardMode: false,
+          profile,
+          metro,
+          watcher,
+          worktreeKey,
+          startupLog: [...liveStartupLog],
+          builder,
+        });
+      } else if (msg.type === "done") {
+        // Worker finished — now create Metro/watcher/builder on main thread
+        worktreeKey = msg.result.worktreeKey;
+
+        const metroMgr = new MetroManager(artifactStore);
+        metro = metroMgr;
+
+        // Start Metro (non-blocking spawn)
+        metroMgr.start({
+          worktreeKey: worktreeKey!,
           projectRoot: profile.worktree ?? projectRoot,
-          platform,
-          deviceId: deviceId ?? undefined,
           port: profile.metroPort,
-          variant: profile.buildVariant,
+          resetCache: profile.mode !== "dirty",
+          verbose: true,
           env: profile.env,
         });
-      }
-    }, 50);
-  }
 
-  // (builder and services are started asynchronously in step 10 above)
+        // Start watcher if on-save actions configured
+        if (profile.onSave.length > 0) {
+          watcher = new FileWatcher({ projectRoot, actions: profile.onSave });
+          watcher.start();
+        }
+
+        // Start IPC
+        const ipcServer = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
+        ipcServer.start().catch(() => {});
+        ipc = ipcServer;
+
+        // Create builder
+        import("../core/builder.js").then(({ Builder: BuilderClass }) => {
+          const b = new BuilderClass();
+          builder = b;
+
+          // Re-render with all services attached
+          renderApp({
+            theme,
+            registry,
+            wizardMode: false,
+            profile,
+            metro: metroMgr,
+            watcher,
+            worktreeKey,
+            startupLog: [...liveStartupLog],
+            builder: b,
+          });
+
+          // Trigger build
+          const platformsToBuild: Array<"ios" | "android"> =
+            profile.platform === "both" ? ["ios", "android"] : [profile.platform];
+          for (const platform of platformsToBuild) {
+            const deviceId = platform === "ios" ? profile.devices?.ios : profile.devices?.android;
+            b.build({
+              projectRoot: profile.worktree ?? projectRoot,
+              platform,
+              deviceId: deviceId ?? undefined,
+              port: profile.metroPort,
+              variant: profile.buildVariant,
+              env: profile.env,
+            });
+          }
+        });
+
+        worker.terminate();
+      } else if (msg.type === "error") {
+        liveStartupLog.push(`✖ Service startup error: ${msg.message}`);
+        renderApp({
+          theme,
+          registry,
+          wizardMode: false,
+          profile,
+          startupLog: [...liveStartupLog],
+        });
+        worker.terminate();
+      }
+    };
+
+    // Send the startup config to the worker
+    worker.postMessage({
+      profile,
+      projectRoot,
+      artifactsDir: path.join(projectRoot, ".rn-dev", "artifacts"),
+    });
+  }
 
   // 11. Handle cleanup on exit — must destroy renderer to restore terminal
   const cleanup = (): void => {
