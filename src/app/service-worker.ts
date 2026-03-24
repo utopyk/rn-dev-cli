@@ -68,9 +68,11 @@ self.onmessage = async (event: MessageEvent) => {
     if (!existsSync(path.join(effectiveRoot, "node_modules"))) {
       emit("⚠ node_modules not found — auto-installing dependencies...");
 
-      const hasYarnLock = existsSync(path.join(effectiveRoot, "yarn.lock"));
+      // Detect package manager: package-lock.json → npm, bun.lock → bun, yarn.lock (alone) → yarn
+      const hasPackageLock = existsSync(path.join(effectiveRoot, "package-lock.json"));
       const hasBunLock = existsSync(path.join(effectiveRoot, "bun.lock")) || existsSync(path.join(effectiveRoot, "bun.lockb"));
-      const installCmd = hasBunLock ? "bun install" : hasYarnLock ? "yarn install" : "npm install";
+      const hasYarnLock = existsSync(path.join(effectiveRoot, "yarn.lock"));
+      const installCmd = hasPackageLock ? "npm install" : hasBunLock ? "bun install" : hasYarnLock ? "yarn install" : "npm install";
 
       emit(`  ⏳ ${installCmd}...`);
       try {
