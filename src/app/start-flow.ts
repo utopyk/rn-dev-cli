@@ -247,6 +247,8 @@ export async function startFlow(options: StartOptions): Promise<void> {
         worktreeKey = msg.result.worktreeKey;
         worker.terminate();
 
+        const effectiveRoot = profile.worktree ?? projectRoot;
+
         // Chain each step with setTimeout to yield to renderer between each
         // Step 1: Start Metro
         setTimeout(() => {
@@ -257,7 +259,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
           metro = metroMgr;
           metroMgr.start({
             worktreeKey: worktreeKey!,
-            projectRoot: profile.worktree ?? projectRoot,
+            projectRoot: effectiveRoot,
             port: profile.metroPort,
             resetCache: profile.mode !== "dirty",
             env: profile.env,

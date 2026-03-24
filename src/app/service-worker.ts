@@ -8,7 +8,7 @@
 
 import path from "path";
 import { execSync } from "child_process";
-import { ProfileStore } from "../core/profile.js";
+import { existsSync } from "fs";
 import { ArtifactStore } from "../core/artifact.js";
 import { MetroManager } from "../core/metro.js";
 import { CleanManager } from "../core/clean.js";
@@ -60,6 +60,51 @@ self.onmessage = async (event: MessageEvent) => {
 
         const worktreeKey = artifactStore.worktreeHash(profile.worktree);
         artifactStore.save(worktreeKey, { preflightPassed: !hasErrors });
+      }
+    }
+
+    // Check node_modules — auto-install if missing
+    const effectiveRoot = profile.worktree ?? projectRoot;
+    if (!existsSync(path.join(effectiveRoot, "node_modules"))) {
+      emit("⚠ node_modules not found — auto-installing dependencies...");
+
+      const hasYarnLock = existsSync(path.join(effectiveRoot, "yarn.lock"));
+      const hasBunLock = existsSync(path.join(effectiveRoot, "bun.lock")) || existsSync(path.join(effectiveRoot, "bun.lockb"));
+      const installCmd = hasBunLock ? "bun install" : hasYarnLock ? "yarn install" : "npm install";
+
+      emit(`  ⏳ ${installCmd}...`);
+      try {
+        execSync(installCmd, {
+          cwd: effectiveRoot,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 300000,
+        });
+        emit("  ✔ Dependencies installed");
+      } catch (err: any) {
+        emit(`  ✖ Install failed: ${(err.message ?? "").slice(0, 120)}`);
+        emit("  ⚠ Build will likely fail without node_modules");
+      }
+      emit("");
+
+      // Install pods if iOS and Podfile exists
+      if (profile.platform === "ios" || profile.platform === "both") {
+        const podfilePath = path.join(effectiveRoot, "ios", "Podfile");
+        if (existsSync(podfilePath)) {
+          emit("  ⏳ pod install...");
+          try {
+            execSync("pod install", {
+              cwd: path.join(effectiveRoot, "ios"),
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: 300000,
+            });
+            emit("  ✔ Pods installed");
+          } catch {
+            emit("  ⚠ pod install failed");
+          }
+          emit("");
+        }
       }
     }
 
