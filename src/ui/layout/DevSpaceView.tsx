@@ -117,7 +117,7 @@ export function DevSpaceView({
                 </Box>
               ))}
               <Box marginTop={1}>
-                <Text color={theme.muted} dimColor>[f] or click to focus  [↑↓] scroll</Text>
+                <Text color={theme.muted} dimColor>[f]/click focus [↑↓] scroll [m] mouse off (Shift+click=select)</Text>
               </Box>
             </Box>
           </Panel>

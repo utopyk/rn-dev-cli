@@ -60,7 +60,7 @@ export function MainLayout({
   }, [modules]);
 
   // Mouse click on tab bar (Y = 1-2) to select tab
-  useMouse(
+  const { mouseActive, toggleMouse } = useMouse(
     useCallback(
       (event) => {
         if (event.type !== "press" || event.button !== "left") return;
@@ -94,9 +94,11 @@ export function MainLayout({
           cycleModule();
         } else if (input === "p" || input === "P") {
           setBannerCollapsed((prev) => !prev);
+        } else if (input === "m") {
+          toggleMouse();
         }
       },
-      [cycleModule]
+      [cycleModule, toggleMouse]
     )
   );
 

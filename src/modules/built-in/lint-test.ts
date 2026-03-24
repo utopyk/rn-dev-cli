@@ -41,9 +41,5 @@ export const lintTestModule: RnDevModule = {
   icon: "🧪",
   order: 10,
   component: LintTestView,
-  shortcuts: [
-    { key: "l", label: "Run Lint", action: async () => {}, showInPanel: true },
-    { key: "t", label: "Run Tests", action: async () => {}, showInPanel: true },
-    { key: "T", label: "Run Type Check", action: async () => {}, showInPanel: true },
-  ],
+  shortcuts: [],
 };
