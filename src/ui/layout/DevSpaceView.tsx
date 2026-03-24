@@ -38,7 +38,7 @@ export function DevSpaceView({
   buildPhase,
 }: DevSpaceViewProps): React.JSX.Element {
   const theme = useTheme();
-  const { height: screenHeight } = useScreenSize();
+  const { height: screenHeight, width: screenWidth } = useScreenSize();
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>("tool");
 
   // Calculate available height for the content area
@@ -81,6 +81,11 @@ export function DevSpaceView({
   // Inside panels: border top (1) + title (0, overlayed) + border bottom (1) + padding = ~2
   const panelContentHeight = Math.max(3, topHalfHeight - 2);
   const metroPanelContentHeight = Math.max(3, bottomHalfHeight - 2);
+
+  // Panel widths for background padding
+  const shortcutPanelWidth = Math.floor(screenWidth * 0.35);
+  const toolPanelWidth = screenWidth - shortcutPanelWidth;
+  const metroPanelWidth = screenWidth;
 
   const toolTitle = wizardContent
     ? "Setup Wizard"
@@ -138,6 +143,7 @@ export function DevSpaceView({
                 buildPhase={buildPhase}
                 scrollable={focusedPanel === "tool"}
                 focused={focusedPanel === "tool"}
+                panelWidth={toolPanelWidth}
               />
             )}
           </Panel>
@@ -158,6 +164,7 @@ export function DevSpaceView({
             maxVisibleLines={metroPanelContentHeight}
             scrollable={focusedPanel === "metro"}
             focused={focusedPanel === "metro"}
+            panelWidth={metroPanelWidth}
           />
         </Panel>
       </Box>

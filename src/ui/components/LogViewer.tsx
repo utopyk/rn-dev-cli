@@ -13,6 +13,7 @@ export interface LogViewerProps {
   buildPhase?: string | null;
   scrollable?: boolean;
   focused?: boolean;
+  panelWidth?: number;
 }
 
 function getLineColor(line: string, theme: { fg: string; error: string; warning: string; success: string; accent: string }): string {
@@ -42,6 +43,7 @@ export function LogViewer({
   buildPhase,
   scrollable = true,
   focused = false,
+  panelWidth,
 }: LogViewerProps): React.JSX.Element {
   const theme = useTheme();
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -110,8 +112,17 @@ export function LogViewer({
     return bufferedLines.slice(bufferedLines.length - limit);
   }, [bufferedLines, limit, scrollOffset, isManualScroll]);
 
-  // Subtle background tint for focused panel
+  // Subtle background tint for focused panel — pad lines to fill width
   const focusBg = focused ? theme.selection : undefined;
+  // Account for panel border (2) + padding (2) = 4 chars
+  const lineWidth = panelWidth ? panelWidth - 4 : 0;
+
+  const padLine = (text: string): string => {
+    if (!focused || !lineWidth) return text;
+    const visibleLen = text.length;
+    if (visibleLen >= lineWidth) return text;
+    return text + " ".repeat(lineWidth - visibleLen);
+  };
 
   const renderLines = (linesToRender: string[]) => (
     <>
@@ -126,7 +137,7 @@ export function LogViewer({
                 <Spinner type="dots" />
               </Text>
               <Text color={getLineColor(line, theme)} backgroundColor={focusBg} wrap="truncate">
-                {" "}{line}
+                {padLine(" " + line)}
               </Text>
             </Box>
           );
@@ -134,13 +145,21 @@ export function LogViewer({
 
         return (
           <Text key={index} color={getLineColor(line, theme)} backgroundColor={focusBg} wrap="truncate">
-            {line}
+            {padLine(line)}
           </Text>
         );
       })}
+      {/* Fill remaining empty lines with background */}
+      {focused && lineWidth > 0 && limit && linesToRender.length < limit &&
+        Array.from({ length: limit - linesToRender.length }, (_, i) => (
+          <Text key={`empty-${i}`} backgroundColor={focusBg}>
+            {" ".repeat(lineWidth)}
+          </Text>
+        ))
+      }
       {isManualScroll && scrollOffset > 0 && (
         <Text color={theme.muted} backgroundColor={focusBg} dimColor>
-          ↑↓ scroll │ {scrollOffset} lines below ▼
+          {padLine(`↑↓ scroll │ ${scrollOffset} lines below ▼`)}
         </Text>
       )}
     </>

@@ -7,12 +7,13 @@ export interface MouseEvent {
   type: "press" | "release";
 }
 
+// Global reference count — only enable/disable mouse reporting once
+let mouseRefCount = 0;
+
 /**
  * Enable terminal mouse reporting and parse click events.
- * Uses SGR extended mode (\x1b[?1006h) for reliable coordinates.
- *
- * IMPORTANT: This is experimental — some terminals don't support it.
- * Falls back gracefully (no events emitted if unsupported).
+ * Uses SGR extended mode for reliable coordinates.
+ * Multiple hooks can be active — mouse reporting is reference-counted.
  */
 export function useMouse(onMouseEvent: (event: MouseEvent) => void): void {
   const callbackRef = useRef(onMouseEvent);
@@ -21,15 +22,17 @@ export function useMouse(onMouseEvent: (event: MouseEvent) => void): void {
   useEffect(() => {
     const stdin = process.stdin;
 
-    // Enable mouse tracking (SGR extended mode for coordinates > 223)
-    process.stdout.write("\x1b[?1000h"); // Enable normal tracking
-    process.stdout.write("\x1b[?1006h"); // Enable SGR extended mode
-
-    // SGR mouse format: \x1b[<button;x;y;M (press) or \x1b[<button;x;y;m (release)
-    const sgrRegex = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
+    // Enable mouse tracking on first subscriber
+    if (mouseRefCount === 0) {
+      process.stdout.write("\x1b[?1000h");
+      process.stdout.write("\x1b[?1006h");
+    }
+    mouseRefCount++;
 
     const onData = (data: Buffer) => {
       const str = data.toString();
+      // SGR mouse format: \x1b[<button;x;y;M (press) or \x1b[<button;x;y;m (release)
+      const sgrRegex = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
       let match;
       while ((match = sgrRegex.exec(str)) !== null) {
         const buttonCode = parseInt(match[1], 10);
@@ -40,7 +43,6 @@ export function useMouse(onMouseEvent: (event: MouseEvent) => void): void {
         let button: MouseEvent["button"];
         const baseButton = buttonCode & 3;
         if (buttonCode & 64) {
-          // Scroll events
           button = baseButton === 0 ? "scrollUp" : "scrollDown";
         } else if (baseButton === 0) {
           button = "left";
@@ -63,9 +65,12 @@ export function useMouse(onMouseEvent: (event: MouseEvent) => void): void {
 
     return () => {
       stdin.off("data", onData);
-      // Disable mouse tracking
-      process.stdout.write("\x1b[?1006l");
-      process.stdout.write("\x1b[?1000l");
+      mouseRefCount--;
+      // Disable mouse tracking when last subscriber unsubscribes
+      if (mouseRefCount === 0) {
+        process.stdout.write("\x1b[?1006l");
+        process.stdout.write("\x1b[?1000l");
+      }
     };
   }, []);
 }

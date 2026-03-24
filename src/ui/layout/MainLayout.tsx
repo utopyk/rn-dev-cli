@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import Gradient from "ink-gradient";
 import { useScreenSize } from "fullscreen-ink";
@@ -6,6 +6,7 @@ import type { Profile } from "../../core/types.js";
 import { ShortcutBar } from "../components/ShortcutBar.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { useTheme } from "../theme-provider.js";
+import { useMouse } from "../hooks/useMouse.js";
 
 export interface MainLayoutModule {
   id: string;
@@ -56,6 +57,40 @@ export function MainLayout({
       process.stdout.write("\x1b[0m");
     };
   }, [theme.bg]);
+
+  // Calculate tab X boundaries for mouse click detection
+  // Each tab: border(1) + paddingX(1) + "icon name" + paddingX(1) + border(1) = content + 4
+  // Plus gap(1) between tabs, plus paddingX(1) on the container
+  const tabBoundaries = useMemo(() => {
+    let x = 2; // paddingX(1) on container + first border
+    return modules.map((mod) => {
+      const labelLen = mod.icon.length + 1 + mod.name.length; // "🚀 Dev Space"
+      const tabWidth = labelLen + 4; // borders + padding
+      const start = x;
+      const end = x + tabWidth;
+      x = end + 1; // gap
+      return { id: mod.id, start, end };
+    });
+  }, [modules]);
+
+  // Mouse click on tab bar (Y = 1-2) to select tab
+  useMouse(
+    useCallback(
+      (event) => {
+        if (event.type !== "press" || event.button !== "left") return;
+        // Tab bar is rows 1-3
+        if (event.y <= 3) {
+          for (const tab of tabBoundaries) {
+            if (event.x >= tab.start && event.x <= tab.end) {
+              setActiveModuleId(tab.id);
+              break;
+            }
+          }
+        }
+      },
+      [tabBoundaries]
+    )
+  );
 
   const cycleModule = useCallback(() => {
     const currentIndex = modules.findIndex((m) => m.id === activeModuleId);
