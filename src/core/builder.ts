@@ -164,13 +164,43 @@ export class Builder extends EventEmitter {
           }
         }
 
-        // Strategy 3: Generic fallback
-        if (errors.length === 0) {
-          errors.push({
-            source: platform === "ios" ? "xcodebuild" : "gradle",
-            summary: `Build failed with exit code ${code}`,
-            rawOutput: this.rawOutput.slice(-2000),
-          });
+        // Strategy 3: Extract context from raw output
+        // When we only have the generic wrapper error, show the last
+        // meaningful lines before "Failed to build" for context
+        if (errors.length === 0 || errors.every(e => e.summary.includes("exited with error code"))) {
+          const rawLines = this.rawOutput.split("\n").map(l => l.trim()).filter(Boolean);
+          const contextLines: string[] = [];
+          for (let i = rawLines.length - 1; i >= 0 && contextLines.length < 15; i--) {
+            const l = rawLines[i];
+            // Skip the generic wrapper and empty/decorative lines
+            if (l.includes("exited with error code") || l.includes("To debug build logs") || l.length < 3) continue;
+            // Capture anything that looks useful
+            if (l.includes("error") || l.includes("Error") || l.includes("FAIL") ||
+                l.includes("fatal") || l.includes("warning:") || l.includes("note:") ||
+                l.includes("Reason:") || l.includes("required") || l.includes("missing") ||
+                l.includes("not found") || l.includes("denied") || l.includes("could not") ||
+                l.includes("unable to") || l.includes("BUILD FAILED")) {
+              contextLines.unshift(l);
+            }
+          }
+
+          if (contextLines.length > 0 && errors.every(e => e.summary.includes("exited with error code"))) {
+            // Replace the generic error with actual context
+            errors = contextLines.map(line => ({
+              source: (platform === "ios" ? "xcodebuild" : "gradle") as "xcodebuild" | "gradle",
+              summary: line.slice(0, 200),
+              rawOutput: line,
+            }));
+          }
+
+          // If still nothing, add the generic fallback
+          if (errors.length === 0) {
+            errors.push({
+              source: platform === "ios" ? "xcodebuild" : "gradle",
+              summary: `Build failed with exit code ${code}. Check Xcode for details.`,
+              rawOutput: this.rawOutput.slice(-2000),
+            });
+          }
         }
       }
 
