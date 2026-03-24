@@ -162,7 +162,7 @@ export function App({
 
   return (
     <ThemeProvider theme={theme}>
-      <FullScreenBox>
+      <FullScreenBox backgroundColor={theme.colors.bg}>
         <AppProvider
           profile={displayProfile}
           metro={metro}

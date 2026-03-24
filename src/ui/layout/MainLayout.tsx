@@ -119,7 +119,7 @@ export function MainLayout({
   const hr = "─".repeat(width);
 
   return (
-    <Box flexDirection="column" width={width} height={height}>
+    <Box flexDirection="column" width={width} height={height} backgroundColor={theme.bg}>
       {/* ── Tab bar ── */}
       <Box paddingX={1} height={3} gap={1} alignItems="center">
         {modules.map((mod) => {
