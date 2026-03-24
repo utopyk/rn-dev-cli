@@ -42,21 +42,16 @@ export class Builder extends EventEmitter {
   private process: ChildProcess | null = null;
   private rawOutput = "";
   private xcresultPath: string | null = null;
+  private detectedXcresultPath: string | null = null;
 
   build(options: BuildOptions): void {
     const { projectRoot, platform, deviceId, port, variant, env } = options;
 
     const args = ["react-native", `run-${platform}`, "--port", String(port), "--verbose"];
 
-    if (platform === "ios") {
-      // Create a unique xcresult path for structured error extraction
-      this.xcresultPath = `/tmp/rn-dev-build-${Date.now()}.xcresult`;
-      // Clean up any previous result bundle at this path
-      if (existsSync(this.xcresultPath)) {
-        rmSync(this.xcresultPath, { recursive: true, force: true });
-      }
-      args.push("--extra-params", `-resultBundlePath ${this.xcresultPath}`);
+    this.detectedXcresultPath = null;
 
+    if (platform === "ios") {
       if (deviceId) {
         args.push("--udid", deviceId);
       }
@@ -64,7 +59,6 @@ export class Builder extends EventEmitter {
         args.push("--configuration", "Release");
       }
     } else {
-      this.xcresultPath = null;
       if (deviceId) {
         args.push("--deviceId", deviceId);
       }
@@ -90,6 +84,13 @@ export class Builder extends EventEmitter {
     const handleData = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
       const text = stripAnsi(chunk.toString());
       this.rawOutput += text;
+
+      // Detect auto-generated xcresult bundle path from stderr
+      // xcodebuild writes: "Writing error result bundle to /var/folders/.../ResultBundle_DATE.xcresult"
+      const xcresultMatch = text.match(/(?:Writing|Wrote)\s+(?:error\s+)?result\s+bundle\s+to\s+(.+?\.xcresult)/i);
+      if (xcresultMatch) {
+        this.detectedXcresultPath = xcresultMatch[1].trim();
+      }
 
       const lines = text.split("\n");
       for (const line of lines) {
@@ -141,9 +142,14 @@ export class Builder extends EventEmitter {
 
       if (!success) {
         // Strategy 1: Parse xcresult bundle (iOS only, most reliable)
-        if (platform === "ios" && this.xcresultPath && existsSync(this.xcresultPath)) {
+        // Use detected auto-generated path from stderr
+        const xcresult = this.detectedXcresultPath;
+        if (platform === "ios" && xcresult && existsSync(xcresult)) {
           try {
-            errors = parseXcresultErrors(this.xcresultPath);
+            errors = parseXcresultErrors(xcresult);
+            if (errors.length > 0) {
+              this.emit("line", { text: `  📋 Extracted ${errors.length} error(s) from xcresult bundle`, stream: "stdout" });
+            }
           } catch {
             // Fall through to regex parsing
           }
@@ -165,15 +171,6 @@ export class Builder extends EventEmitter {
             summary: `Build failed with exit code ${code}`,
             rawOutput: this.rawOutput.slice(-2000),
           });
-        }
-      }
-
-      // Clean up xcresult bundle
-      if (this.xcresultPath && existsSync(this.xcresultPath)) {
-        try {
-          rmSync(this.xcresultPath, { recursive: true, force: true });
-        } catch {
-          // ignore
         }
       }
 
