@@ -44,7 +44,7 @@ export class Builder extends EventEmitter {
   build(options: BuildOptions): void {
     const { projectRoot, platform, deviceId, port, variant, env } = options;
 
-    const args = ["react-native", `run-${platform}`, "--port", String(port)];
+    const args = ["react-native", `run-${platform}`, "--port", String(port), "--verbose"];
 
     if (platform === "ios") {
       if (deviceId) {
