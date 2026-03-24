@@ -165,6 +165,32 @@ export function parseXcodebuildErrors(output: string): BuildError[] {
     }
   }
 
+  // Second pass: if no structured errors found but build failed,
+  // use the same regex the RN CLI uses internally to extract errors
+  // from the raw xcodebuild output (catches errors missed by xcbeautify)
+  if (errors.length === 0 || errors.every(e => e.summary.includes("exited with error code"))) {
+    const rnCliErrorRegex = /error\b[^\S\r\n]*[:\-\s]*([^\r\n]+)/gim;
+    const rawErrors = new Set<string>();
+    let match;
+    while ((match = rnCliErrorRegex.exec(output)) !== null) {
+      const msg = match[1]?.trim();
+      if (msg && msg.length > 5 && !msg.includes("exited with error code")) {
+        rawErrors.add(msg);
+      }
+    }
+    for (const msg of rawErrors) {
+      // Don't duplicate existing errors
+      if (!errors.some(e => e.summary === msg)) {
+        errors.push({
+          source: "xcodebuild",
+          summary: msg,
+          rawOutput: msg,
+          suggestion: findSuggestion(msg),
+        });
+      }
+    }
+  }
+
   return errors;
 }
 
