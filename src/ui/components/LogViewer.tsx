@@ -12,6 +12,7 @@ export interface LogViewerProps {
   title?: string;
   buildPhase?: string | null;
   scrollable?: boolean;
+  focused?: boolean;
 }
 
 function getLineColor(line: string, theme: { fg: string; error: string; warning: string; success: string; accent: string }): string {
@@ -40,6 +41,7 @@ export function LogViewer({
   title,
   buildPhase,
   scrollable = true,
+  focused = false,
 }: LogViewerProps): React.JSX.Element {
   const theme = useTheme();
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -108,6 +110,9 @@ export function LogViewer({
     return bufferedLines.slice(bufferedLines.length - limit);
   }, [bufferedLines, limit, scrollOffset, isManualScroll]);
 
+  // Subtle background tint for focused panel
+  const focusBg = focused ? theme.selection : undefined;
+
   const renderLines = (linesToRender: string[]) => (
     <>
       {linesToRender.map((line, index) => {
@@ -117,10 +122,10 @@ export function LogViewer({
         if (showSpinner) {
           return (
             <Box key={index}>
-              <Text color={theme.warning}>
+              <Text color={theme.warning} backgroundColor={focusBg}>
                 <Spinner type="dots" />
               </Text>
-              <Text color={getLineColor(line, theme)} wrap="truncate">
+              <Text color={getLineColor(line, theme)} backgroundColor={focusBg} wrap="truncate">
                 {" "}{line}
               </Text>
             </Box>
@@ -128,13 +133,13 @@ export function LogViewer({
         }
 
         return (
-          <Text key={index} color={getLineColor(line, theme)} wrap="truncate">
+          <Text key={index} color={getLineColor(line, theme)} backgroundColor={focusBg} wrap="truncate">
             {line}
           </Text>
         );
       })}
       {isManualScroll && scrollOffset > 0 && (
-        <Text color={theme.muted} dimColor>
+        <Text color={theme.muted} backgroundColor={focusBg} dimColor>
           ↑↓ scroll │ {scrollOffset} lines below ▼
         </Text>
       )}
