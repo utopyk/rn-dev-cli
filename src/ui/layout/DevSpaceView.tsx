@@ -36,15 +36,16 @@ export function DevSpaceView({
   const theme = useTheme();
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>("tool");
 
-  // Toggle focus between panels with f key
+  // Toggle focus between panels with f key (disabled during wizard)
   useKeyboard(
     useCallback(
       (event: { name: string }) => {
+        if (wizardContent) return;
         if (event.name === "f") {
           setFocusedPanel((prev) => (prev === "tool" ? "metro" : "tool"));
         }
       },
-      []
+      [wizardContent]
     )
   );
 

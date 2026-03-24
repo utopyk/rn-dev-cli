@@ -32,12 +32,14 @@ interface AppProps {
 // KeyboardHandler — captures shortcut keys and dispatches to AppContext
 // ---------------------------------------------------------------------------
 
-function KeyboardHandler(): null {
+function KeyboardHandler({ wizardActive }: { wizardActive: boolean }): null {
   const { runShortcut } = useAppContext();
 
   useKeyboard(
     useCallback(
       (event: { name: string }) => {
+        // Don't intercept shortcuts when wizard/input is active
+        if (wizardActive) return;
         // Don't intercept tab (used for module switching)
         if (event.name === "tab") return;
         // Single char shortcuts
@@ -45,7 +47,7 @@ function KeyboardHandler(): null {
           runShortcut(event.name);
         }
       },
-      [runShortcut]
+      [runShortcut, wizardActive]
     )
   );
 
@@ -171,7 +173,7 @@ export function App({
           builder={builder}
           wizardContent={wizardNode}
         >
-          {!showWizard && <KeyboardHandler />}
+          <KeyboardHandler wizardActive={showWizard} />
           <MainLayout
             profile={displayProfile}
             modules={modules}

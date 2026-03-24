@@ -245,65 +245,70 @@ export async function startFlow(options: StartOptions): Promise<void> {
         });
       } else if (msg.type === "done") {
         // Worker finished — now create Metro/watcher/builder on main thread
+        // Each step is wrapped in setTimeout(0) to yield to renderer between steps
         worktreeKey = msg.result.worktreeKey;
+        liveStartupLog.push("⏳ Starting Metro...");
+        renderApp({ theme, registry, wizardMode: false, profile, startupLog: [...liveStartupLog] });
 
-        const metroMgr = new MetroManager(artifactStore);
-        metro = metroMgr;
+        setTimeout(() => {
+          const metroMgr = new MetroManager(artifactStore);
+          metro = metroMgr;
 
-        // Start Metro (non-blocking spawn)
-        metroMgr.start({
-          worktreeKey: worktreeKey!,
-          projectRoot: profile.worktree ?? projectRoot,
-          port: profile.metroPort,
-          resetCache: profile.mode !== "dirty",
-          verbose: true,
-          env: profile.env,
-        });
-
-        // Start watcher if on-save actions configured
-        if (profile.onSave.length > 0) {
-          watcher = new FileWatcher({ projectRoot, actions: profile.onSave });
-          watcher.start();
-        }
-
-        // Start IPC
-        const ipcServer = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
-        ipcServer.start().catch(() => {});
-        ipc = ipcServer;
-
-        // Create builder
-        import("../core/builder.js").then(({ Builder: BuilderClass }) => {
-          const b = new BuilderClass();
-          builder = b;
-
-          // Re-render with all services attached
-          renderApp({
-            theme,
-            registry,
-            wizardMode: false,
-            profile,
-            metro: metroMgr,
-            watcher,
-            worktreeKey,
-            startupLog: [...liveStartupLog],
-            builder: b,
+          metroMgr.start({
+            worktreeKey: worktreeKey!,
+            projectRoot: profile.worktree ?? projectRoot,
+            port: profile.metroPort,
+            resetCache: profile.mode !== "dirty",
+            verbose: true,
+            env: profile.env,
           });
 
-          // Trigger build
-          const platformsToBuild: Array<"ios" | "android"> =
-            profile.platform === "both" ? ["ios", "android"] : [profile.platform];
-          for (const platform of platformsToBuild) {
-            const deviceId = platform === "ios" ? profile.devices?.ios : profile.devices?.android;
-            b.build({
-              projectRoot: profile.worktree ?? projectRoot,
-              platform,
-              deviceId: deviceId ?? undefined,
-              port: profile.metroPort,
-              variant: profile.buildVariant,
-              env: profile.env,
-            });
+          liveStartupLog.push("✔ Metro spawned");
+
+          // Watcher (skip if no on-save actions — chokidar is heavy)
+          if (profile.onSave.length > 0) {
+            liveStartupLog.push("⏳ Starting file watcher...");
+            watcher = new FileWatcher({ projectRoot, actions: profile.onSave });
+            watcher.start();
+            liveStartupLog.push("✔ Watcher started");
           }
-        });
+
+          // IPC
+          const ipcServer = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
+          ipcServer.start().catch(() => {});
+          ipc = ipcServer;
+
+          // Builder + build trigger
+          import("../core/builder.js").then(({ Builder: BuilderClass }) => {
+            const b = new BuilderClass();
+            builder = b;
+            liveStartupLog.push("✔ Ready");
+            liveStartupLog.push("");
+
+            renderApp({
+              theme, registry, wizardMode: false, profile,
+              metro: metroMgr, watcher, worktreeKey,
+              startupLog: [...liveStartupLog], builder: b,
+            });
+
+            // Trigger build in next tick
+            setTimeout(() => {
+              const platformsToBuild: Array<"ios" | "android"> =
+                profile.platform === "both" ? ["ios", "android"] : [profile.platform];
+              for (const plat of platformsToBuild) {
+                const devId = plat === "ios" ? profile.devices?.ios : profile.devices?.android;
+                b.build({
+                  projectRoot: profile.worktree ?? projectRoot,
+                  platform: plat,
+                  deviceId: devId ?? undefined,
+                  port: profile.metroPort,
+                  variant: profile.buildVariant,
+                  env: profile.env,
+                });
+              }
+            }, 100);
+          });
+        }, 0);
 
         worker.terminate();
       } else if (msg.type === "error") {
