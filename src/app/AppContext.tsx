@@ -78,17 +78,34 @@ export function AppProvider({
     setModal(null);
   }, []);
 
-  // Subscribe to metro output
+  // Subscribe to metro output — batched to avoid flooding the render loop
   useEffect(() => {
     if (!metro || !worktreeKey) return;
 
+    let buffer: string[] = [];
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flush = () => {
+      flushTimer = null;
+      if (buffer.length > 0) {
+        const lines = buffer;
+        buffer = [];
+        setMetroLines((prev) => [...prev, ...lines].slice(-500));
+      }
+    };
+
     const handler = ({ line }: { worktreeKey: string; line: string; stream: string }) => {
-      setMetroLines((prev) => [...prev, line].slice(-500));
+      buffer.push(line);
+      if (!flushTimer) {
+        flushTimer = setTimeout(flush, 150);
+      }
     };
 
     metro.on("log", handler);
     return () => {
       metro.off("log", handler);
+      if (flushTimer) clearTimeout(flushTimer);
+      flush();
     };
   }, [metro, worktreeKey]);
 
@@ -119,19 +136,47 @@ export function AppProvider({
     };
   }, [watcher]);
 
-  // Subscribe to builder events for live build output
+  // Subscribe to builder events — throttle verbose (replace) lines
   useEffect(() => {
     if (!builder) return;
 
-    const onLine = ({ text, replace }: { text: string; replace?: boolean }) => {
-      if (replace) {
-        // Replace the last line (progress update)
+    let lastReplaceTime = 0;
+    let pendingReplace: string | null = null;
+    let replaceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flushReplace = () => {
+      replaceTimer = null;
+      if (pendingReplace) {
+        const text = pendingReplace;
+        pendingReplace = null;
+        lastReplaceTime = Date.now();
         setToolOutputLines((prev) => {
           const copy = prev.slice(0, -1);
           copy.push(text);
           return copy.slice(-500);
         });
+      }
+    };
+
+    const onLine = ({ text, replace }: { text: string; replace?: boolean }) => {
+      if (replace) {
+        const now = Date.now();
+        if (now - lastReplaceTime >= 250) {
+          lastReplaceTime = now;
+          setToolOutputLines((prev) => {
+            const copy = prev.slice(0, -1);
+            copy.push(text);
+            return copy.slice(-500);
+          });
+        } else {
+          pendingReplace = text;
+          if (!replaceTimer) {
+            replaceTimer = setTimeout(flushReplace, 250);
+          }
+        }
       } else {
+        // Milestone lines — always immediate
+        pendingReplace = null;
         setToolOutputLines((prev) => [...prev, text].slice(-500));
       }
     };
