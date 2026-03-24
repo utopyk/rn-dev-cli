@@ -22,12 +22,14 @@ export interface DevSpaceViewProps {
   metroLines: string[];
   toolOutputLines: string[];
   shortcuts: DevSpaceShortcut[];
+  wizardContent?: React.ReactNode;
 }
 
 export function DevSpaceView({
   metroLines,
   toolOutputLines,
   shortcuts,
+  wizardContent,
 }: DevSpaceViewProps): React.JSX.Element {
   const theme = useTheme();
 
@@ -57,10 +59,16 @@ export function DevSpaceView({
           </Panel>
         </Box>
 
-        {/* Right panel: tool output */}
+        {/* Right panel: tool output or wizard */}
         <Box flexGrow={1}>
-          <Panel title="Tool Output" width="100%">
-            <LogViewer lines={toolOutputLines} follow={true} />
+          <Panel title={wizardContent ? "Setup Wizard" : "Tool Output"} width="100%">
+            {wizardContent ? (
+              <Box flexDirection="column" paddingX={1}>
+                {wizardContent}
+              </Box>
+            ) : (
+              <LogViewer lines={toolOutputLines} follow={true} />
+            )}
           </Panel>
         </Box>
       </Box>

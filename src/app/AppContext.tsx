@@ -15,6 +15,7 @@ export interface AppContextValue {
   toolOutputLines: string[];
   shortcuts: Array<{ key: string; label: string; action: () => void }>;
   runShortcut: (key: string) => void;
+  wizardContent?: React.ReactNode;
 }
 
 const AppContextInstance = createContext<AppContextValue | null>(null);
@@ -36,6 +37,7 @@ interface AppProviderProps {
   worktreeKey?: string;
   startupLog?: string[];
   builder?: Builder;
+  wizardContent?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -46,6 +48,7 @@ export function AppProvider({
   worktreeKey,
   startupLog,
   builder,
+  wizardContent,
   children,
 }: AppProviderProps): React.JSX.Element {
   const [metroLines, setMetroLines] = useState<string[]>([]);
@@ -243,6 +246,7 @@ export function AppProvider({
     toolOutputLines,
     shortcuts,
     runShortcut,
+    wizardContent,
   };
 
   return React.createElement(

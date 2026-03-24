@@ -4,11 +4,12 @@ import { DevSpaceView } from "../../ui/layout/DevSpaceView.js";
 import { useAppContext } from "../../app/AppContext.js";
 
 const DevSpaceViewConnected: React.FC = () => {
-  const { metroLines, toolOutputLines, shortcuts } = useAppContext();
+  const { metroLines, toolOutputLines, shortcuts, wizardContent } = useAppContext();
   return React.createElement(DevSpaceView, {
     metroLines,
     toolOutputLines,
     shortcuts,
+    wizardContent,
   });
 };
 

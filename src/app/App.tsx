@@ -170,6 +170,7 @@ export function App({
           worktreeKey={worktreeKey}
           startupLog={startupLog}
           builder={builder}
+          wizardContent={wizardNode}
         >
           {!showWizard && <KeyboardHandler />}
           <MainLayout
@@ -179,7 +180,6 @@ export function App({
             metroStatus={metroStatus}
             metroPort={displayProfile.metroPort}
             watcherEnabled={watcherEnabled}
-            wizardContent={wizardNode}
           />
         </AppProvider>
       </FullScreenBox>

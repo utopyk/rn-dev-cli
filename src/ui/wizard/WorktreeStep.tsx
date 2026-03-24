@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react";
+import { basename } from "path";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { useTheme } from "../theme-provider.js";
@@ -46,8 +47,10 @@ export function WorktreeStep({
 
     for (const wt of worktrees) {
       if (!wt.isMain) {
+        const folderName = basename(wt.path);
+        const branchName = wt.branch.replace(/^refs\/heads\//, "");
         list.push({
-          label: `${wt.path} (${wt.branch})`,
+          label: `📂 ${folderName} → ${branchName}`,
           value: wt.path,
         });
       }

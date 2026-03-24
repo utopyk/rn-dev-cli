@@ -15,6 +15,11 @@ const SUGGESTION_MAP: Array<[string, string]> = [
   ["dex merge", "Enable multidex or resolve duplicate dependencies"],
   ["java_home is not set", "Run preflight fix (press 'f')"],
   ["sdk location not found", "Set ANDROID_HOME environment variable"],
+  ["exited with error code 'null'", "Build was cancelled or crashed. Try clean build (press 'c')"],
+  ["exited with error code '65'", "Open Xcode to see detailed error, or try ultra-clean"],
+  ["no development team", "Set DEVELOPMENT_TEAM in Xcode signing settings"],
+  ["provisioning profile", "Fix provisioning profile in Xcode signing settings"],
+  ["command phasescriptexecution failed", "A build phase script failed. Check Pods or custom scripts"],
 ];
 
 function findSuggestion(text: string): string | undefined {
@@ -40,6 +45,9 @@ const XCODE_FILE_ERROR_RE =
 // Matches: /path/to/File.swift:3:8: warning: ... (we skip warnings)
 // Matches plain: error: something or fatal error: something (no file prefix)
 const XCODE_BARE_ERROR_RE = /^((?:fatal )?error: .+)$/;
+
+// Matches RN CLI error wrapper: error Failed to build ios project. "xcodebuild" exited with error code '65'.
+const RN_CLI_BUILD_ERROR_RE = /^error\s+(.+)$/i;
 
 // Matches linker errors: ld: message
 const XCODE_LD_RE = /^ld: (.+)$/;
@@ -132,6 +140,20 @@ export function parseXcodebuildErrors(output: string): BuildError[] {
         source: "xcodebuild",
         summary: line,
         rawOutput: line,
+      });
+      continue;
+    }
+
+    // RN CLI error wrapper: error Failed to build ios project...
+    const rnCliMatch = RN_CLI_BUILD_ERROR_RE.exec(line);
+    if (rnCliMatch) {
+      const message = rnCliMatch[1].trim();
+      const suggestion = findSuggestion(message) ?? findSuggestion(line);
+      errors.push({
+        source: "xcodebuild",
+        summary: message,
+        rawOutput: line,
+        suggestion,
       });
       continue;
     }

@@ -76,38 +76,41 @@ export class Builder extends EventEmitter {
 
       const lines = text.split("\n");
       for (const line of lines) {
-        if (!line.trim()) continue;
+        const trimmed = line.trim();
+        if (!trimmed) continue;
 
-        // Milestone lines — appended permanently
+        // Milestone lines — appended permanently (important status messages)
         const isMilestone =
-          line.includes("BUILD SUCCESSFUL") ||
-          line.includes("Build Succeeded") ||
-          line.includes("BUILD FAILED") ||
-          line.includes("error:") ||
-          line.includes("FAILURE:") ||
-          line.includes("Installing") ||
-          line.includes("Launching") ||
-          line.includes("info ") ||
-          line.includes("success ") ||
-          line.includes("warn ");
+          trimmed.startsWith("BUILD SUCCESSFUL") ||
+          trimmed.startsWith("Build Succeeded") ||
+          trimmed.includes("BUILD FAILED") ||
+          trimmed.startsWith("error ") ||           // RN CLI: "error Failed to build..."
+          trimmed.startsWith("info Found") ||        // RN CLI: "info Found Xcode workspace..."
+          trimmed.startsWith("info Building") ||     // RN CLI: "info Building (using..."
+          trimmed.startsWith("info Installing") ||   // RN CLI: "info Installing..."
+          trimmed.startsWith("info Launching") ||    // RN CLI: "info Launching..."
+          trimmed.startsWith("success ") ||          // RN CLI: "success Successfully built..."
+          trimmed.startsWith("warn ") ||             // RN CLI: "warn ..."
+          trimmed.includes("FAILURE:") ||
+          /^\s*error:/.test(trimmed) ||              // xcodebuild: "error: ..."
+          /^\/.+:\d+:\d+: (error|fatal error):/.test(trimmed); // compiler: "/path:line:col: error: msg"
 
         // Detect build phases for progress indicator
-        if (line.includes("Compiling") || line.includes("CompileC")) {
+        if (trimmed.includes("Compiling") || trimmed.includes("CompileC")) {
           this.emit("progress", { phase: "Compiling" });
-        } else if (line.includes("Linking") || line.includes("Ld ")) {
+        } else if (trimmed.includes("Linking") || trimmed.includes("Ld ")) {
           this.emit("progress", { phase: "Linking" });
-        } else if (line.includes("Installing") || line.includes("install")) {
+        } else if (trimmed.startsWith("info Installing")) {
           this.emit("progress", { phase: "Installing" });
-        } else if (line.includes("Launching") || line.includes("launch")) {
+        } else if (trimmed.startsWith("info Launching")) {
           this.emit("progress", { phase: "Launching" });
         }
 
         if (isMilestone) {
-          // Milestone: append as a permanent line
-          this.emit("line", { text: line, stream, replace: false });
+          this.emit("line", { text: trimmed, stream, replace: false });
         } else {
-          // Verbose output: replace the current progress line
-          this.emit("line", { text: `  ${line.slice(0, 80)}`, stream, replace: true });
+          // Verbose: replace the current progress line (truncated)
+          this.emit("line", { text: `  ${trimmed.slice(0, 100)}`, stream, replace: true });
         }
       }
     };
