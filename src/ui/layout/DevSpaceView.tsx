@@ -84,7 +84,7 @@ export function DevSpaceView({
           </text>
         ))}
         <text> </text>
-        <text color={theme.muted}>[f] focus [{\u2191}{\u2193}] scroll</text>
+        <text color={theme.muted}>{"[f] focus [↑↓] scroll"}</text>
         <text color={theme.muted}>[Tab] switch tab [p] profile</text>
       </box>
 
