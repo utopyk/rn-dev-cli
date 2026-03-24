@@ -220,7 +220,11 @@ export async function startFlow(options: StartOptions): Promise<void> {
 
   // 10. Start services in a WORKER THREAD (so execSync doesn't block the renderer)
   if (profile && !needsWizard) {
-    const workerUrl = new URL("./service-worker.ts", import.meta.url).href;
+    // Resolve worker — works from both source (bun src/index.tsx) and built (bun dist/index.js)
+    const isBuilt = import.meta.url.includes("/dist/");
+    const workerUrl = isBuilt
+      ? new URL("./app/service-worker.js", import.meta.url).href
+      : new URL("./service-worker.ts", import.meta.url).href;
     const worker = new Worker(workerUrl);
 
     // Collect startup logs from the worker in real-time
