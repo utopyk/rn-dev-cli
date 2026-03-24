@@ -9,6 +9,14 @@ import type { Builder } from "../core/builder.js";
 // Context shape
 // ---------------------------------------------------------------------------
 
+export interface ModalConfig {
+  title: string;
+  message: string;
+  icon?: string;
+  actions: Array<{ label: string; key: string; accent?: boolean; danger?: boolean }>;
+  onAction: (key: string) => void;
+}
+
 export interface AppContextValue {
   profile: Profile;
   metroLines: string[];
@@ -16,7 +24,10 @@ export interface AppContextValue {
   shortcuts: Array<{ key: string; label: string; action: () => void }>;
   runShortcut: (key: string) => void;
   wizardContent?: React.ReactNode;
-  buildPhase: string | null; // null = not building, string = current phase
+  buildPhase: string | null;
+  modal: ModalConfig | null;
+  showModal: (config: ModalConfig) => void;
+  dismissModal: () => void;
 }
 
 const AppContextInstance = createContext<AppContextValue | null>(null);
@@ -57,6 +68,15 @@ export function AppProvider({
     startupLog ?? []
   );
   const [buildPhase, setBuildPhase] = useState<string | null>(null);
+  const [modal, setModal] = useState<ModalConfig | null>(null);
+
+  const showModal = useCallback((config: ModalConfig) => {
+    setModal(config);
+  }, []);
+
+  const dismissModal = useCallback(() => {
+    setModal(null);
+  }, []);
 
   // Subscribe to metro output
   useEffect(() => {
@@ -252,6 +272,9 @@ export function AppProvider({
     runShortcut,
     wizardContent,
     buildPhase,
+    modal,
+    showModal,
+    dismissModal,
   };
 
   return React.createElement(

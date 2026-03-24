@@ -5,8 +5,10 @@ import { useScreenSize } from "fullscreen-ink";
 import type { Profile } from "../../core/types.js";
 import { ShortcutBar } from "../components/ShortcutBar.js";
 import { StatusBar } from "../components/StatusBar.js";
+import { Modal } from "../components/Modal.js";
 import { useTheme } from "../theme-provider.js";
 import { useMouse } from "../hooks/useMouse.js";
+import { useAppContext } from "../../app/AppContext.js";
 
 export interface MainLayoutModule {
   id: string;
@@ -98,6 +100,8 @@ export function MainLayout({
     )
   );
 
+  const { modal } = useAppContext();
+
   const activeModule = modules.find((m) => m.id === activeModuleId);
   const ActiveComponent = activeModule?.component ?? null;
   const hr = "─".repeat(width);
@@ -155,9 +159,19 @@ export function MainLayout({
       {/* ── Separator ── */}
       <Text color={theme.border}>{hr}</Text>
 
-      {/* ── Active module content ── */}
+      {/* ── Active module content (or modal overlay) ── */}
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
-        {ActiveComponent != null && <ActiveComponent />}
+        {modal ? (
+          <Modal
+            title={modal.title}
+            message={modal.message}
+            icon={modal.icon}
+            actions={modal.actions}
+            onAction={modal.onAction}
+          />
+        ) : (
+          ActiveComponent != null && <ActiveComponent />
+        )}
       </Box>
 
       {/* ── Separator ── */}
