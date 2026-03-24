@@ -1,8 +1,16 @@
 import path from "path";
-import { existsSync, rmSync } from "fs";
+import fs, { existsSync, rmSync } from "fs";
 import { EventEmitter } from "events";
 import { type Subprocess } from "bun";
 import { parseXcodebuildErrors, parseGradleErrors, parseXcresultErrors } from "./build-parser.js";
+
+function resolveRnBin(projectRoot: string): [string, ...string[]] {
+  const localBin = path.join(projectRoot, "node_modules", ".bin", "react-native");
+  if (fs.existsSync(localBin)) {
+    return [localBin];
+  }
+  return ["npx", "react-native"];
+}
 import type { BuildError } from "./types.js";
 
 // Strip ANSI escape codes
@@ -68,18 +76,17 @@ export class Builder extends EventEmitter {
       }
     }
 
-    // Use local binary directly to avoid npx resolution overhead
-    const rnBin = path.join(projectRoot, "node_modules", ".bin", "react-native");
+    const [cmd, ...cmdPrefix] = resolveRnBin(projectRoot);
 
     this.emit("progress", { phase: "Building" });
     this.emit("line", { text: `Building for ${platform}...`, stream: "stdout" });
-    this.emit("line", { text: `  ${rnBin} ${args.join(" ")}`, stream: "stdout" });
+    this.emit("line", { text: `  ${cmd} ${[...cmdPrefix, ...args].join(" ")}`, stream: "stdout" });
 
     this.rawOutput = "";
 
     let proc: Subprocess;
     try {
-      proc = Bun.spawn([rnBin, ...args], {
+      proc = Bun.spawn([cmd, ...cmdPrefix, ...args], {
         cwd: projectRoot,
         stdin: "ignore",
         stdout: "pipe",

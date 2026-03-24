@@ -1,8 +1,22 @@
 import { EventEmitter } from "node:events";
 import path from "path";
+import fs from "fs";
 import * as net from "net";
 import type { ArtifactStore } from "./artifact.js";
 import type { MetroInstance } from "./types.js";
+
+/**
+ * Resolve react-native binary: prefer local .bin, fall back to npx.
+ * Returns [command, ...prefixArgs] to spread before the actual args.
+ */
+function resolveRnBin(projectRoot: string): [string, ...string[]] {
+  const localBin = path.join(projectRoot, "node_modules", ".bin", "react-native");
+  if (fs.existsSync(localBin)) {
+    return [localBin];
+  }
+  // Fallback to npx
+  return ["npx", "react-native"];
+}
 
 // ---------------------------------------------------------------------------
 // MetroManager
@@ -162,8 +176,8 @@ export class MetroManager extends EventEmitter {
     }
 
     // Use Bun.spawn for proper async stream handling
-    const rnBin = path.join(projectRoot, "node_modules", ".bin", "react-native");
-    const proc = Bun.spawn([rnBin, ...args], {
+    const [cmd, ...cmdPrefix] = resolveRnBin(projectRoot);
+    const proc = Bun.spawn([cmd, ...cmdPrefix, ...args], {
       cwd: projectRoot,
       stdin: "ignore",
       stdout: "pipe",
