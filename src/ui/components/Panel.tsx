@@ -45,23 +45,23 @@ export function Panel({
       flexDirection="column"
       borderStyle={focused ? "bold" : "round"}
       borderColor={resolvedBorderColor}
-      backgroundColor={theme.bg}
+     
       width={width as number | undefined}
       height={isCollapsed ? undefined : (height as number | undefined)}
     >
       {titleDisplay && (
-        <Box marginTop={-1} marginLeft={1} backgroundColor={theme.bg}>
+        <Box marginTop={-1} marginLeft={1}>
           <Text
             color={focused ? theme.accent : theme.fg}
             bold={focused}
-            backgroundColor={focused ? theme.selection : theme.bg}
+            backgroundColor={focused ? theme.selection : undefined}
           >
             {titleDisplay}
           </Text>
         </Box>
       )}
       {!isCollapsed && (
-        <Box flexDirection="column" paddingX={1} backgroundColor={theme.bg}>
+        <Box flexDirection="column" paddingX={1}>
           {children}
         </Box>
       )}
