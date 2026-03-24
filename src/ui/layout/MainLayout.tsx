@@ -24,15 +24,6 @@ export interface MainLayoutProps {
   watcherEnabled: boolean;
 }
 
-/**
- * Convert hex color (#RRGGBB) to ANSI 24-bit escape for terminal background.
- */
-function hexToBgAnsi(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `\x1b[48;2;${r};${g};${b}m`;
-}
 
 export function MainLayout({
   profile,
@@ -50,13 +41,6 @@ export function MainLayout({
   );
   const [bannerCollapsed, setBannerCollapsed] = useState(false);
 
-  // Set terminal background color
-  useEffect(() => {
-    process.stdout.write(hexToBgAnsi(theme.bg));
-    return () => {
-      process.stdout.write("\x1b[0m");
-    };
-  }, [theme.bg]);
 
   // Calculate tab X boundaries for mouse click detection
   // Each tab: border(1) + paddingX(1) + "icon name" + paddingX(1) + border(1) = content + 4
