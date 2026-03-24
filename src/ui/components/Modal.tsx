@@ -32,7 +32,7 @@ export function Modal({
   width: explicitWidth,
 }: ModalProps): React.JSX.Element {
   const theme = useTheme();
-  const [screenWidth, screenHeight] = useTerminalDimensions();
+  const { width: screenWidth, height: screenHeight } = useTerminalDimensions();
 
   const modalWidth = explicitWidth ?? Math.min(60, screenWidth - 10);
 

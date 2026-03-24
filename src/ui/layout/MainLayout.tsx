@@ -34,7 +34,7 @@ export function MainLayout({
   watcherEnabled,
 }: MainLayoutProps): React.JSX.Element {
   const theme = useTheme();
-  const [width, height] = useTerminalDimensions();
+  const { width, height } = useTerminalDimensions();
 
   const [activeModuleId, setActiveModuleId] = useState<string>(
     modules[0]?.id ?? ""

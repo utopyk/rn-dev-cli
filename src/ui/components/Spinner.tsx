@@ -14,11 +14,11 @@ const FRAMES: Record<string, string[]> = {
 
 const INTERVAL = 80;
 
-export function Spinner({
-  message,
-  type = "dots",
-}: SpinnerProps): React.JSX.Element {
-  const theme = useTheme();
+/**
+ * Returns the current spinner frame as a plain string.
+ * Use this when you need the spinner text inline (e.g. inside <span>).
+ */
+export function useSpinnerFrame(type: "dots" | "line" | "arc" = "dots"): string {
   const [frameIndex, setFrameIndex] = useState(0);
   const frames = FRAMES[type] ?? FRAMES.dots;
 
@@ -29,10 +29,26 @@ export function Spinner({
     return () => clearInterval(timer);
   }, [frames.length]);
 
+  return frames[frameIndex] ?? frames[0] ?? "";
+}
+
+export function Spinner({
+  message,
+  type = "dots",
+}: SpinnerProps): React.JSX.Element {
+  const theme = useTheme();
+  const frame = useSpinnerFrame(type);
+
+  if (message) {
+    return (
+      <text>
+        <span color={theme.accent}>{frame}</span>
+        <span color={theme.fg}> {message}</span>
+      </text>
+    );
+  }
+
   return (
-    <text>
-      <span color={theme.accent}>{frames[frameIndex]}</span>
-      {message && <span color={theme.fg}> {message}</span>}
-    </text>
+    <text color={theme.accent}>{frame}</text>
   );
 }

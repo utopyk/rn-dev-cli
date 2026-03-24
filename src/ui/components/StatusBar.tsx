@@ -1,6 +1,6 @@
 import React from "react";
 import { useTheme } from "../theme-provider.js";
-import { Spinner } from "./Spinner.js";
+import { useSpinnerFrame } from "./Spinner.js";
 
 export interface StatusBarProps {
   metroStatus: "starting" | "running" | "error" | "stopped";
@@ -45,23 +45,25 @@ export function StatusBar({
   activeModule,
 }: StatusBarProps): React.JSX.Element {
   const theme = useTheme();
+  const spinnerFrame = useSpinnerFrame("dots");
+
+  const metroDot = metroStatus === "starting"
+    ? spinnerFrame
+    : "\u25cf";
+  const metroDotColor = getMetroDotColor(metroStatus, theme);
+  const portStr = metroPort != null ? ` :${metroPort}` : "";
 
   return (
-    <box height={1} paddingLeft={1} backgroundColor={theme.selection}>
-      <text color={theme.fg}>
-        Metro:{" "}
-        {metroStatus === "starting" ? (
-          <span color={theme.warning}><Spinner type="dots" /></span>
-        ) : (
-          <span color={getMetroDotColor(metroStatus, theme)} bold>{"\u25cf"}</span>
-        )}
-        {" "}{getMetroLabel(metroStatus)}
-        {metroPort != null ? ` :${metroPort}` : ""}
-        <span color={theme.muted}> {"\u2502"} </span>
-        Watcher: <span color={watcherEnabled ? theme.success : theme.muted} bold>{watcherEnabled ? "ON" : "OFF"}</span>
-        <span color={theme.muted}> {"\u2502"} </span>
-        Module: <span color={theme.accent}>{activeModule}</span>
-      </text>
+    <box height={1} paddingLeft={1} backgroundColor={theme.selection} flexDirection="row">
+      <text color={theme.fg}>{"Metro: "}</text>
+      <text color={metroDotColor} bold>{metroDot}</text>
+      <text color={theme.fg}>{` ${getMetroLabel(metroStatus)}${portStr}`}</text>
+      <text color={theme.muted}>{" \u2502 "}</text>
+      <text color={theme.fg}>{"Watcher: "}</text>
+      <text color={watcherEnabled ? theme.success : theme.muted} bold>{watcherEnabled ? "ON" : "OFF"}</text>
+      <text color={theme.muted}>{" \u2502 "}</text>
+      <text color={theme.fg}>{"Module: "}</text>
+      <text color={theme.accent}>{activeModule}</text>
     </box>
   );
 }
