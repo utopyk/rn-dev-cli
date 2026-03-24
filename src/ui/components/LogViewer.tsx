@@ -112,16 +112,22 @@ export function LogViewer({
     return bufferedLines.slice(bufferedLines.length - limit);
   }, [bufferedLines, limit, scrollOffset, isManualScroll]);
 
-  // Subtle background tint for focused panel — pad lines to fill width
+  // Use ANSI escape codes for full-width background tint.
+  // \x1b[K (Erase in Line) fills from cursor to end of line with the
+  // current background color — this is how tmux does solid backgrounds.
   const focusBg = focused ? theme.selection : undefined;
-  // Account for panel border (2) + padding (2) = 4 chars
-  const lineWidth = panelWidth ? panelWidth - 4 : 0;
 
-  const padLine = (text: string): string => {
-    if (!focused || !lineWidth) return text;
-    const visibleLen = text.length;
-    if (visibleLen >= lineWidth) return text;
-    return text + " ".repeat(lineWidth - visibleLen);
+  function hexToAnsiBg(hex: string): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `\x1b[48;2;${r};${g};${b}m`;
+  }
+
+  // Wrap text with ANSI bg + erase-to-end-of-line for full-width background
+  const bgWrap = (text: string): string => {
+    if (!focused || !focusBg) return text;
+    return `${hexToAnsiBg(focusBg)}${text}\x1b[K\x1b[0m`;
   };
 
   const renderLines = (linesToRender: string[]) => (
@@ -133,33 +139,33 @@ export function LogViewer({
         if (showSpinner) {
           return (
             <Box key={index}>
-              <Text color={theme.warning} backgroundColor={focusBg}>
+              <Text color={theme.warning}>
                 <Spinner type="dots" />
               </Text>
-              <Text color={getLineColor(line, theme)} backgroundColor={focusBg} wrap="truncate">
-                {padLine(" " + line)}
+              <Text color={getLineColor(line, theme)} wrap="truncate">
+                {bgWrap(" " + line)}
               </Text>
             </Box>
           );
         }
 
         return (
-          <Text key={index} color={getLineColor(line, theme)} backgroundColor={focusBg} wrap="truncate">
-            {padLine(line)}
+          <Text key={index} color={getLineColor(line, theme)} wrap="truncate">
+            {bgWrap(line)}
           </Text>
         );
       })}
       {/* Fill remaining empty lines with background */}
-      {focused && lineWidth > 0 && limit && linesToRender.length < limit &&
+      {focused && focusBg && limit && linesToRender.length < limit &&
         Array.from({ length: limit - linesToRender.length }, (_, i) => (
-          <Text key={`empty-${i}`} backgroundColor={focusBg}>
-            {" ".repeat(lineWidth)}
+          <Text key={`empty-${i}`}>
+            {bgWrap("")}
           </Text>
         ))
       }
       {isManualScroll && scrollOffset > 0 && (
-        <Text color={theme.muted} backgroundColor={focusBg} dimColor>
-          {padLine(`↑↓ scroll │ ${scrollOffset} lines below ▼`)}
+        <Text color={theme.muted} dimColor>
+          {bgWrap(`↑↓ scroll │ ${scrollOffset} lines below ▼`)}
         </Text>
       )}
     </>
