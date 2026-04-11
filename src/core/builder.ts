@@ -56,7 +56,7 @@ export class Builder extends EventEmitter {
   build(options: BuildOptions): void {
     const { projectRoot, platform, deviceId, port, variant, env } = options;
 
-    const args = [`run-${platform}`, "--port", String(port)];
+    const args = [`run-${platform}`, "--port", String(port), "--verbose"];
 
     this.detectedXcresultPath = null;
 
