@@ -189,8 +189,11 @@ export function AppProvider({
         }
         lines.push("");
         const plat = platform ?? "ios";
-        lines.push(`  Full build log: /tmp/rn-dev-logs/build-${plat}.log`);
-        lines.push("  Press [o] to dump all logs");
+        const logPath = `/tmp/rn-dev-logs/build-${plat}.log`;
+        // OSC 8 hyperlink: \x1b]8;;URL\x07text\x1b]8;;\x07
+        const link = `\x1b]8;;file://${logPath}\x07${logPath}\x1b]8;;\x07`;
+        lines.push(`  Full build log: ${link}`);
+        lines.push("  Press [o] to dump logs, [y] to copy errors to clipboard");
         lines.push("");
         setToolOutputLines((prev) => [...prev, ...lines].slice(-500));
       }
@@ -280,6 +283,26 @@ export function AppProvider({
             appendToolOutput("\u2717 No on-save actions configured", "");
           }
           break;
+        case "y": {
+          // Copy tool output to system clipboard via pbcopy/xclip
+          const text = toolOutputLines.join("\n");
+          try {
+            const proc = Bun.spawn(["pbcopy"], { stdin: "pipe" });
+            proc.stdin.write(text);
+            proc.stdin.end();
+            appendToolOutput("✔ Tool output copied to clipboard (" + toolOutputLines.length + " lines)");
+          } catch {
+            try {
+              const proc = Bun.spawn(["xclip", "-selection", "clipboard"], { stdin: "pipe" });
+              proc.stdin.write(text);
+              proc.stdin.end();
+              appendToolOutput("✔ Copied to clipboard");
+            } catch {
+              appendToolOutput("✖ Could not copy — pbcopy/xclip not available");
+            }
+          }
+          break;
+        }
         case "o": {
           // Dump logs to files for easy copying/inspection
           const fs = require("fs");
@@ -323,6 +346,7 @@ export function AppProvider({
     { key: "t", label: "Type Check", action: () => runShortcut("t") },
     { key: "c", label: "Clean", action: () => runShortcut("c") },
     { key: "w", label: "Toggle Watcher", action: () => runShortcut("w") },
+    { key: "y", label: "Copy Logs", action: () => runShortcut("y") },
     { key: "o", label: "Dump Logs", action: () => runShortcut("o") },
     { key: "q", label: "Quit", action: () => runShortcut("q") },
   ];
