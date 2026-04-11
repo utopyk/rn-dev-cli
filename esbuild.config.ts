@@ -2,7 +2,7 @@
 // Run with: bun run build
 
 const result = await Bun.build({
-  entrypoints: ["src/index.tsx", "src/app/service-worker.ts"],
+  entrypoints: ["src/index.tsx"],
   outdir: "dist",
   target: "bun",
   format: "esm",

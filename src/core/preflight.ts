@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
 import * as net from "net";
 import semver from "semver";
+import { execAsync, execShellAsync } from "./exec-async.js";
 import type { Platform, PreflightConfig, PreflightCheck, PreflightResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -93,12 +93,12 @@ export class PreflightEngine {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function runCmd(cmd: string, options?: { cwd?: string }): string {
-  return execSync(cmd, {
-    stdio: ["pipe", "pipe", "pipe"],
-    encoding: "utf-8",
+async function runCmd(cmd: string, options?: { cwd?: string }): Promise<string> {
+  const result = await execAsync(cmd, {
     cwd: options?.cwd,
-  }).toString().trim();
+    timeout: 15000,
+  });
+  return result.trim();
 }
 
 function readFileSafe(filePath: string): string | null {
@@ -185,7 +185,7 @@ function makeNodeVersionCheck(projectRoot: string): PreflightCheck {
     async check(): Promise<PreflightResult> {
       let actualVersion: string;
       try {
-        actualVersion = runCmd("node -v");
+        actualVersion = await runCmd("node -v");
       } catch {
         return {
           passed: false,
@@ -257,7 +257,7 @@ function makeRubyVersionCheck(projectRoot: string): PreflightCheck {
     async check(): Promise<PreflightResult> {
       let actualVersion: string;
       try {
-        actualVersion = runCmd("ruby -v");
+        actualVersion = await runCmd("ruby -v");
       } catch {
         return {
           passed: false,
@@ -341,7 +341,7 @@ function makeJavaHomeCheck(): PreflightCheck {
     },
     async fix(): Promise<boolean> {
       try {
-        const javaHome = runCmd("/usr/libexec/java_home");
+        const javaHome = await runCmd("/usr/libexec/java_home");
         if (javaHome && existsSync(javaHome)) {
           process.env["JAVA_HOME"] = javaHome;
           return true;
@@ -440,7 +440,7 @@ function makeAndroidSdkLicensesCheck(): PreflightCheck {
     },
     async fix(): Promise<boolean> {
       try {
-        runCmd("sdkmanager --licenses");
+        await runCmd("sdkmanager --licenses");
         return true;
       } catch {
         return false;
@@ -457,7 +457,7 @@ function makeXcodeCliToolsCheck(): PreflightCheck {
     platform: "ios",
     async check(): Promise<PreflightResult> {
       try {
-        const path = runCmd("xcode-select -p");
+        const path = await runCmd("xcode-select -p");
         if (path && existsSync(path)) {
           return {
             passed: true,
@@ -479,7 +479,7 @@ function makeXcodeCliToolsCheck(): PreflightCheck {
     },
     async fix(): Promise<boolean> {
       try {
-        runCmd("xcode-select --install");
+        await runCmd("xcode-select --install");
         return true;
       } catch {
         return false;
@@ -496,7 +496,7 @@ function makeCocoapodsInstalledCheck(): PreflightCheck {
     platform: "ios",
     async check(): Promise<PreflightResult> {
       try {
-        const version = runCmd("pod --version");
+        const version = await runCmd("pod --version");
         return {
           passed: true,
           message: `CocoaPods ${version} is installed`,
@@ -511,7 +511,7 @@ function makeCocoapodsInstalledCheck(): PreflightCheck {
     },
     async fix(): Promise<boolean> {
       try {
-        runCmd("gem install cocoapods");
+        await runCmd("gem install cocoapods");
         return true;
       } catch {
         return false;
@@ -560,7 +560,7 @@ function makePodfileLockSyncCheck(projectRoot: string): PreflightCheck {
     async fix(): Promise<boolean> {
       try {
         const iosDir = join(projectRoot, "ios");
-        runCmd("pod install", { cwd: iosDir });
+        await runCmd("pod install", { cwd: iosDir });
         return true;
       } catch {
         return false;
@@ -577,7 +577,7 @@ function makeWatchmanCheck(): PreflightCheck {
     platform: "all",
     async check(): Promise<PreflightResult> {
       try {
-        const version = runCmd("watchman version");
+        const version = await runCmd("watchman version");
         return {
           passed: true,
           message: `Watchman is installed: ${version.slice(0, 60)}`,
@@ -593,7 +593,7 @@ function makeWatchmanCheck(): PreflightCheck {
     },
     async fix(): Promise<boolean> {
       try {
-        runCmd("brew install watchman");
+        await runCmd("brew install watchman");
         return true;
       } catch {
         return false;
@@ -629,7 +629,7 @@ function makeMetroPortCheck(): PreflightCheck {
     async fix(): Promise<boolean> {
       // Offer to kill the process on the port
       try {
-        runCmd(`lsof -ti:${port} | xargs kill -9`);
+        await execShellAsync(`lsof -ti:${port} | xargs kill -9`, { timeout: 15000 });
         return true;
       } catch {
         return false;
@@ -680,7 +680,7 @@ function makeNodeModulesSyncCheck(projectRoot: string): PreflightCheck {
     },
     async fix(): Promise<boolean> {
       try {
-        runCmd("npm install", { cwd: projectRoot });
+        await runCmd("npm install", { cwd: projectRoot });
         return true;
       } catch {
         return false;
@@ -785,7 +785,7 @@ function makePatchPackageCheck(projectRoot: string): PreflightCheck {
 
       // Check if patches are applied by running patch-package in check mode
       try {
-        runCmd("npx patch-package --error-on-fail", { cwd: projectRoot });
+        await runCmd("npx patch-package --error-on-fail", { cwd: projectRoot });
         return {
           passed: true,
           message: `${patchFiles.length} patch(es) are applied`,
@@ -800,7 +800,7 @@ function makePatchPackageCheck(projectRoot: string): PreflightCheck {
     },
     async fix(): Promise<boolean> {
       try {
-        runCmd("npx patch-package", { cwd: projectRoot });
+        await runCmd("npx patch-package", { cwd: projectRoot });
         return true;
       } catch {
         return false;

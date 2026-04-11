@@ -1,9 +1,9 @@
 import path from "path";
-import { execSync } from "child_process";
 import React from "react";
 import { createCliRenderer, VignetteEffect, applyScanlines } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 
+import { execShellAsync } from "../core/exec-async.js";
 import { detectProjectRoot, getCurrentBranch } from "../core/project.js";
 import { ProfileStore } from "../core/profile.js";
 import { ArtifactStore } from "../core/artifact.js";
@@ -88,7 +88,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
     profile = loaded;
   } else {
     // Try to find default profile for current worktree+branch
-    const branch = getCurrentBranch(projectRoot) ?? "main";
+    const branch = (await getCurrentBranch(projectRoot)) ?? "main";
     const worktree: string | null = null;
     const defaultProfile = profileStore.findDefault(worktree, branch);
     if (defaultProfile) {
@@ -155,7 +155,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
         worktree: wizardProfile.worktree ?? null,
         branch:
           wizardProfile.branch ??
-          (getCurrentBranch(projectRoot) ?? "main"),
+          ((await getCurrentBranch(projectRoot)) ?? "main"),
         platform: wizardProfile.platform ?? "both",
         mode: wizardProfile.mode ?? "clean",
         metroPort: wizardProfile.metroPort ?? 8081,
@@ -219,98 +219,32 @@ export async function startFlow(options: StartOptions): Promise<void> {
     },
   });
 
-  // 10. Start services in a WORKER THREAD (so execSync doesn't block the renderer)
+  // 10. Start services async on the main thread (all shell calls use Bun.spawn, never blocks)
   if (profile && !needsWizard) {
-    // Resolve worker — works from both source (bun src/index.tsx) and built (bun dist/index.js)
-    const isBuilt = import.meta.url.includes("/dist/");
-    const workerUrl = isBuilt
-      ? new URL("./app/service-worker.js", import.meta.url).href
-      : new URL("./service-worker.ts", import.meta.url).href;
-    const worker = new Worker(workerUrl);
+    startServicesAsync(profile, projectRoot, artifactStore).then((result) => {
+      metro = result.metro;
+      watcher = result.watcher;
+      ipc = result.ipc;
+      worktreeKey = result.worktreeKey;
+      builder = result.builder;
 
-    worker.onmessage = (event: MessageEvent) => {
-      const msg = event.data;
+      // Trigger build after services are ready
+      const platformsToBuild: Array<"ios" | "android"> =
+        profile.platform === "both" ? ["ios", "android"] : [profile.platform];
 
-      if (msg.type === "log") {
-        // Push log to React via service bus (triggers setState inside AppContext)
-        serviceBus.log(msg.text);
-      } else if (msg.type === "done") {
-        worktreeKey = msg.result.worktreeKey;
-        serviceBus.setWorktreeKey(worktreeKey!);
-        worker.terminate();
-
-        const effectiveRoot = profile.worktree ?? projectRoot;
-
-        // Start services — all using Bun.spawn (non-blocking)
-        (async () => {
-          serviceBus.log("⏳ Starting Metro on port " + profile.metroPort + "...");
-
-          const metroMgr = new MetroManager(artifactStore);
-          metro = metroMgr;
-          metroMgr.start({
-            worktreeKey: worktreeKey!,
-            projectRoot: effectiveRoot,
-            port: profile.metroPort,
-            resetCache: profile.mode !== "dirty",
-            env: profile.env,
-          });
-          serviceBus.setMetro(metroMgr);
-          serviceBus.log("✔ Metro started");
-
-          // IPC
-          const ipcServer = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
-          ipcServer.start().catch(() => {});
-          ipc = ipcServer;
-
-          // Watcher
-          if (profile.onSave.length > 0) {
-            watcher = new FileWatcher({ projectRoot, actions: profile.onSave });
-            watcher.start();
-            serviceBus.setWatcher(watcher);
-            serviceBus.log("✔ File watcher started");
-          }
-
-          // Builder
-          const { Builder: BuilderClass } = await import("../core/builder.js");
-          const b = new BuilderClass();
-          builder = b;
-          serviceBus.setBuilder(b);
-          serviceBus.log("✔ All services started");
-          serviceBus.log("");
-
-          // Trigger build
-          const platforms: Array<"ios" | "android"> =
-            profile.platform === "both" ? ["ios", "android"] : [profile.platform];
-          for (const plat of platforms) {
-            const devId = plat === "ios" ? profile.devices?.ios : profile.devices?.android;
-            b.build({
-              projectRoot: profile.worktree ?? projectRoot,
-              platform: plat,
-              deviceId: devId ?? undefined,
-              port: profile.metroPort,
-              variant: profile.buildVariant,
-              env: profile.env,
-            });
-          }
-        })();
-      } else if (msg.type === "error") {
-        liveStartupLog.push(`✖ Service startup error: ${msg.message}`);
-        renderApp({
-          theme,
-          registry,
-          wizardMode: false,
-          profile,
-          startupLog: [...liveStartupLog],
+      for (const plat of platformsToBuild) {
+        const devId = plat === "ios" ? profile.devices?.ios : profile.devices?.android;
+        result.builder.build({
+          projectRoot: profile.worktree ?? projectRoot,
+          platform: plat,
+          deviceId: devId ?? undefined,
+          port: profile.metroPort,
+          variant: profile.buildVariant,
+          env: profile.env,
         });
-        worker.terminate();
       }
-    };
-
-    // Send the startup config to the worker
-    worker.postMessage({
-      profile,
-      projectRoot,
-      artifactsDir: path.join(projectRoot, ".rn-dev", "artifacts"),
+    }).catch((err) => {
+      serviceBus.log(`\u2716 Service startup error: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
 
@@ -348,32 +282,23 @@ export async function startFlow(options: StartOptions): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: start Metro, watcher, IPC
+// Helper: start all services async (runs on main thread, never blocks)
 // ---------------------------------------------------------------------------
 
-async function startServices(
+async function startServicesAsync(
   profile: Profile,
   projectRoot: string,
-  artifactStore: ArtifactStore,
-  log?: (line: string) => void
+  artifactStore: ArtifactStore
 ): Promise<{
   metro: MetroManager;
   watcher: FileWatcher | null;
   ipc: IpcServer;
   worktreeKey: string;
-  startupLog: string[];
   builder: import("../core/builder.js").Builder;
 }> {
-  // Helper to yield control to the renderer between blocking operations
-  const yieldToRenderer = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  const emit = (line: string) => serviceBus.log(line);
 
-  const startupLog: string[] = [];
-  const emit = (line: string) => {
-    startupLog.push(line);
-    if (log) log(line);
-  };
-
-  // Run preflights if configured
+  // 1. Run preflights if configured
   if (profile.preflight.checks.length > 0) {
     const artifact = artifactStore.load(
       artifactStore.worktreeHash(profile.worktree)
@@ -383,13 +308,11 @@ async function startServices(
 
     if (needsPreflight) {
       emit("\u23f3 Running preflight checks...");
-      await yieldToRenderer();
       const { createDefaultPreflightEngine } = await import(
         "../core/preflight.js"
       );
       const engine = createDefaultPreflightEngine(projectRoot);
       const results = await engine.runAll(profile.platform, profile.preflight);
-      await yieldToRenderer();
 
       let hasErrors = false;
       for (const [id, result] of results) {
@@ -399,20 +322,59 @@ async function startServices(
       }
 
       if (hasErrors) {
-        emit(`  ⚠ Some preflight checks failed. Continuing anyway...`);
+        emit(`  \u26a0 Some preflight checks failed. Continuing anyway...`);
       } else {
-        emit(`  ✔ All preflight checks passed`);
+        emit(`  \u2714 All preflight checks passed`);
       }
       emit("");
 
-      const worktreeKey = artifactStore.worktreeHash(profile.worktree);
-      artifactStore.save(worktreeKey, { preflightPassed: !hasErrors });
+      const wKey = artifactStore.worktreeHash(profile.worktree);
+      artifactStore.save(wKey, { preflightPassed: !hasErrors });
     }
   }
 
-  // Run clean if needed
+  // 2. Check node_modules — auto-install if missing
+  const effectiveRoot = profile.worktree ?? projectRoot;
+  const { existsSync: exists } = await import("fs");
+  if (!exists(path.join(effectiveRoot, "node_modules"))) {
+    emit("\u26a0 node_modules not found \u2014 auto-installing dependencies...");
+
+    const hasPackageLock = exists(path.join(effectiveRoot, "package-lock.json"));
+    const hasBunLock = exists(path.join(effectiveRoot, "bun.lock")) || exists(path.join(effectiveRoot, "bun.lockb"));
+    const hasYarnLock = exists(path.join(effectiveRoot, "yarn.lock"));
+    const installCmd = hasPackageLock ? "npm install" : hasBunLock ? "bun install" : hasYarnLock ? "yarn install" : "npm install";
+
+    emit(`  \u23f3 ${installCmd}...`);
+    try {
+      await execShellAsync(installCmd, { cwd: effectiveRoot, timeout: 300000 });
+      emit("  \u2714 Dependencies installed");
+    } catch (err: any) {
+      emit(`  \u2716 Install failed: ${(err.message ?? "").slice(0, 120)}`);
+      emit("  \u26a0 Build will likely fail without node_modules");
+    }
+    emit("");
+
+    // Install pods if iOS and Podfile exists
+    if (profile.platform === "ios" || profile.platform === "both") {
+      const podfilePath = path.join(effectiveRoot, "ios", "Podfile");
+      if (exists(podfilePath)) {
+        emit("  \u23f3 pod install...");
+        try {
+          await execShellAsync("pod install", {
+            cwd: path.join(effectiveRoot, "ios"),
+            timeout: 300000,
+          });
+          emit("  \u2714 Pods installed");
+        } catch {
+          emit("  \u26a0 pod install failed");
+        }
+        emit("");
+      }
+    }
+  }
+
+  // 3. Run clean if needed
   if (profile.mode !== "dirty") {
-    await yieldToRenderer();
     const cleaner = new CleanManager(projectRoot);
     emit(`\u23f3 Running ${profile.mode} clean...`);
     await cleaner.execute(profile.mode, profile.platform, (step, status) => {
@@ -422,47 +384,79 @@ async function startServices(
     emit("");
   }
 
-  await yieldToRenderer();
-  // Start Metro — kill stale process first if port is occupied
+  // 4. Clear watchman for this project to prevent recrawl warnings
+  emit("\u23f3 Clearing watchman...");
+  try {
+    await execShellAsync(`watchman watch-del '${effectiveRoot}'`, {
+      timeout: 15000,
+    });
+    emit("\u2714 Watchman watch cleared for project");
+  } catch {
+    emit("\u2139 Watchman not available or timed out");
+  }
+
+  // 5. Check port and kill stale process if needed
   const metro = new MetroManager(artifactStore);
   const worktreeKey = artifactStore.worktreeHash(profile.worktree);
   const port = profile.metroPort;
 
+  emit(`\u23f3 Checking port ${port}...`);
   const portFree = await metro.isPortFree(port);
   if (!portFree) {
-    emit(`⚠ Port ${port} is in use. Killing stale process...`);
+    emit(`\u26a0 Port ${port} is in use. Killing stale process...`);
     const killed = await metro.killProcessOnPort(port);
     if (killed) {
-      emit(`  ✔ Killed process on port ${port}`);
+      emit(`  \u2714 Killed process on port ${port}`);
       await new Promise((resolve) => setTimeout(resolve, 1000));
     } else {
-      emit(`  ✖ Could not kill process on port ${port}. Trying anyway...`);
+      emit(`  \u2716 Could not kill process on port ${port}. Trying anyway...`);
     }
-  }
-  await yieldToRenderer();
-  // Always reset watchman for this project to prevent recrawl warnings
-  try {
-    const effectiveRoot = profile.worktree ?? projectRoot;
-    execSync(`watchman watch-del '${effectiveRoot}'`, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    emit(`✔ Watchman watch cleared for project`);
-  } catch {
-    // Watchman may not be installed or no watch exists — that's fine
+  } else {
+    emit(`\u2714 Port ${port} is free`);
   }
 
+  // 6. Boot simulator if needed
+  if (profile.platform === "ios" || profile.platform === "both") {
+    const deviceId = profile.devices?.ios;
+    if (deviceId) {
+      emit("\u23f3 Checking simulator status...");
+      try {
+        const { listDevices: listDev, bootDevice } = await import("../core/device.js");
+        const devices = await listDev("ios");
+        const device = devices.find((d) => d.id === deviceId);
+        if (device && device.status === "shutdown") {
+          emit(`\u23f3 Booting simulator ${device.name}...`);
+          const booted = await bootDevice(device);
+          if (booted) {
+            emit("  \u2714 Simulator booted");
+          } else {
+            emit("  \u26a0 Could not boot simulator \u2014 may already be booting");
+          }
+        } else if (device && device.status === "booted") {
+          emit(`  \u2714 Simulator ${device.name} already booted`);
+        } else {
+          emit(`  \u26a0 Device ${deviceId} not found in simulator list`);
+        }
+      } catch (err: any) {
+        emit(`  \u26a0 Simulator check failed: ${(err.message ?? "").slice(0, 80)}`);
+      }
+    }
+  }
+
+  // 7. Start Metro
   emit(`\u23f3 Starting Metro on port ${port}...`);
   metro.start({
     worktreeKey,
-    projectRoot: profile.worktree ?? projectRoot,
+    projectRoot: effectiveRoot,
     port: profile.metroPort,
     resetCache: profile.mode !== "dirty",
     verbose: true,
     env: profile.env,
   });
+  serviceBus.setMetro(metro);
+  serviceBus.setWorktreeKey(worktreeKey);
 
-  // Start file watcher if on-save actions configured
+  // 8. Start file watcher if on-save actions configured
   let watcher: FileWatcher | null = null;
   if (profile.onSave.length > 0) {
     emit("\u23f3 Starting file watcher...");
@@ -471,39 +465,40 @@ async function startServices(
       actions: profile.onSave,
     });
     watcher.start();
+    serviceBus.setWatcher(watcher);
   }
 
-  // Start IPC server
+  // 9. Start IPC server
   const ipc = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
   await ipc.start();
 
-  // Boot device if needed (iOS simulator)
-  if (profile.platform === "ios" || profile.platform === "both") {
-    const deviceId = profile.devices?.ios;
-    if (deviceId) {
-      const { listDevices: listDev, bootDevice } = await import("../core/device.js");
-      const devices = listDev("ios");
-      const device = devices.find((d) => d.id === deviceId);
-      if (device && device.status === "shutdown") {
-        emit(`\u23f3 Booting simulator ${device.name}...`);
-        const booted = bootDevice(device);
-        if (booted) {
-          emit(`  ✔ Simulator booted`);
-        } else {
-          emit(`  ⚠ Could not boot simulator \u2014 may already be booting`);
-        }
-      } else if (device && device.status === "booted") {
-        emit(`  ✔ Simulator ${device.name} already booted`);
-      }
-    }
-  }
-
-  emit(`✔ All services started`);
-  emit("");
-
-  // Create builder — caller triggers build after TUI renders so output streams live
+  // 10. Create builder
   const { Builder } = await import("../core/builder.js");
   const builder = new Builder();
+  serviceBus.setBuilder(builder);
 
-  return { metro, watcher, ipc, worktreeKey, startupLog, builder };
+  emit("\u2714 All services started");
+  emit("");
+
+  return { metro, watcher, ipc, worktreeKey, builder };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: start services (used by wizard onComplete flow)
+// ---------------------------------------------------------------------------
+
+async function startServices(
+  profile: Profile,
+  projectRoot: string,
+  artifactStore: ArtifactStore
+): Promise<{
+  metro: MetroManager;
+  watcher: FileWatcher | null;
+  ipc: IpcServer;
+  worktreeKey: string;
+  startupLog: string[];
+  builder: import("../core/builder.js").Builder;
+}> {
+  const result = await startServicesAsync(profile, projectRoot, artifactStore);
+  return { ...result, startupLog: [] };
 }

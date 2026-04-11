@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { basename } from "path";
 import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
@@ -33,8 +33,20 @@ export function WorktreeStep({
   const theme = useTheme();
   const [creatingNew, setCreatingNew] = useState(false);
   const [newBranch, setNewBranch] = useState("");
+  const [worktrees, setWorktrees] = useState<Awaited<ReturnType<typeof getWorktrees>>>([]);
+  const [loading, setLoading] = useState(true);
 
-  const worktrees = useMemo(() => getWorktrees(projectRoot), [projectRoot]);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    getWorktrees(projectRoot).then((result) => {
+      if (!cancelled) {
+        setWorktrees(result);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [projectRoot]);
 
   const items: WorktreeItem[] = useMemo(() => {
     const list: WorktreeItem[] = [
@@ -86,6 +98,14 @@ export function WorktreeStep({
       [onBack, creatingNew]
     )
   );
+
+  if (loading) {
+    return (
+      <box flexDirection="column">
+        <text color={theme.muted}>Loading worktrees...</text>
+      </box>
+    );
+  }
 
   if (creatingNew) {
     function handleSubmit(value: string): void {

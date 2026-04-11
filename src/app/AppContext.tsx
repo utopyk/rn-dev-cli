@@ -3,6 +3,7 @@ import type { Profile } from "../core/types.js";
 import type { MetroManager } from "../core/metro.js";
 import type { FileWatcher } from "../core/watcher.js";
 import type { Builder } from "../core/builder.js";
+import { execShellAsync } from "../core/exec-async.js";
 import { serviceBus } from "./service-bus.js";
 
 // ---------------------------------------------------------------------------
@@ -209,22 +210,21 @@ export function AppProvider({
   const runCommand = useCallback(
     (label: string, cmd: string) => {
       appendToolOutput(`\u25b6 ${label}...`);
-      try {
-        const output = execSync(cmd, {
-          cwd: profile.projectRoot,
-          encoding: "utf-8",
-          timeout: 60000,
-          stdio: ["pipe", "pipe", "pipe"],
+      execShellAsync(cmd, {
+        cwd: profile.projectRoot,
+        timeout: 60000,
+      })
+        .then((output) => {
+          const lines = output.split("\n").filter((l: string) => l.length > 0);
+          appendToolOutput(...lines, `\u2713 ${label} complete`, "");
+        })
+        .catch((err: unknown) => {
+          const error = err as { stdout?: string; stderr?: string; message?: string };
+          const output = (error.stdout ?? error.stderr ?? error.message ?? "Unknown error")
+            .split("\n")
+            .filter((l: string) => l.length > 0);
+          appendToolOutput(...output, `\u2717 ${label} failed`, "");
         });
-        const lines = output.split("\n").filter((l: string) => l.length > 0);
-        appendToolOutput(...lines, `\u2713 ${label} complete`, "");
-      } catch (err: unknown) {
-        const error = err as { stdout?: string; stderr?: string; message?: string };
-        const output = (error.stdout ?? error.stderr ?? error.message ?? "Unknown error")
-          .split("\n")
-          .filter((l: string) => l.length > 0);
-        appendToolOutput(...output, `\u2717 ${label} failed`, "");
-      }
     },
     [profile.projectRoot, appendToolOutput]
   );

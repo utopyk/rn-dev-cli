@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
-import { execSync } from "child_process";
+import { execAsync } from "./exec-async.js";
 
 // ---------------------------------------------------------------------------
 // detectProjectRoot
@@ -52,14 +52,13 @@ export function detectProjectRoot(fromDir: string): string | null {
  * Returns true if `dir` is inside a git repository (uses
  * `git rev-parse --is-inside-work-tree`).
  */
-export function isGitRepo(dir: string): boolean {
+export async function isGitRepo(dir: string): Promise<boolean> {
   try {
-    const result = execSync("git rev-parse --is-inside-work-tree", {
+    const result = await execAsync("git rev-parse --is-inside-work-tree", {
       cwd: dir,
-      stdio: ["pipe", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
-    return result === "true";
+      timeout: 15000,
+    });
+    return result.trim() === "true";
   } catch {
     return false;
   }
@@ -73,13 +72,13 @@ export function isGitRepo(dir: string): boolean {
  * Returns the current git branch name, or null if not in a git repo or in
  * a detached HEAD state.
  */
-export function getCurrentBranch(dir: string): string | null {
+export async function getCurrentBranch(dir: string): Promise<string | null> {
   try {
-    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+    const result = await execAsync("git rev-parse --abbrev-ref HEAD", {
       cwd: dir,
-      stdio: ["pipe", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
+      timeout: 15000,
+    });
+    const branch = result.trim();
 
     // "HEAD" is returned for detached HEAD state
     return branch.length > 0 && branch !== "HEAD" ? branch : null;
@@ -102,12 +101,11 @@ interface Worktree {
  * Parse `git worktree list --porcelain` output and return a structured list
  * of worktrees. Returns an empty array if not in a git repo.
  */
-export function getWorktrees(dir: string): Worktree[] {
+export async function getWorktrees(dir: string): Promise<Worktree[]> {
   try {
-    const output = execSync("git worktree list --porcelain", {
+    const output = await execAsync("git worktree list --porcelain", {
       cwd: dir,
-      stdio: ["pipe", "pipe", "pipe"],
-      encoding: "utf-8",
+      timeout: 15000,
     });
 
     const worktrees: Worktree[] = [];

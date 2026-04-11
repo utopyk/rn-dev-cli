@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execAsync, execShellAsync } from "./exec-async.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -133,30 +133,28 @@ export function parseSimctlDevices(jsonOutput: string): Device[] {
  * Discover connected/available devices by calling the real platform tools.
  * Catches errors gracefully if `adb` or `xcrun` are not installed.
  */
-export function listDevices(platform: "ios" | "android" | "both"): Device[] {
+export async function listDevices(platform: "ios" | "android" | "both"): Promise<Device[]> {
   const devices: Device[] = [];
 
   if (platform === "android" || platform === "both") {
     try {
-      const output = execSync("adb devices", {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
+      const output = await execAsync("adb devices", {
+        timeout: 15000, // 15s max
       });
       devices.push(...parseAdbDevices(output));
     } catch {
-      // adb not available or failed — return no Android devices
+      // adb not available, timed out, or failed
     }
   }
 
   if (platform === "ios" || platform === "both") {
     try {
-      const output = execSync("xcrun simctl list devices --json", {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
+      const output = await execAsync("xcrun simctl list devices --json", {
+        timeout: 30000, // 30s max — simctl can be very slow after Xcode updates
       });
       devices.push(...parseSimctlDevices(output));
     } catch {
-      // xcrun not available or failed — return no iOS devices
+      // xcrun not available, timed out, or failed
     }
   }
 
@@ -171,14 +169,14 @@ export function listDevices(platform: "ios" | "android" | "both"): Device[] {
  * Boot an iOS simulator. Returns true on success, false on failure.
  * Currently only iOS simulators are supported.
  */
-export function bootDevice(device: Device): boolean {
+export async function bootDevice(device: Device): Promise<boolean> {
   if (device.type !== "ios") {
     return false;
   }
 
   try {
-    execSync(`xcrun simctl boot ${device.id}`, {
-      stdio: ["pipe", "pipe", "pipe"],
+    await execShellAsync(`xcrun simctl boot ${device.id}`, {
+      timeout: 30000,
     });
     return true;
   } catch {

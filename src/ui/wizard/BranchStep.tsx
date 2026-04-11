@@ -1,9 +1,9 @@
-import React, { useMemo, useCallback } from "react";
-import { execSync } from "child_process";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 import { SearchableList } from "../components/index.js";
 import { getCurrentBranch } from "../../core/project.js";
+import { execAsync } from "../../core/exec-async.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,14 +25,13 @@ interface BranchItem extends Record<string, unknown> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getRecentBranches(dir: string): string[] {
+async function getRecentBranches(dir: string): Promise<string[]> {
   try {
-    const output = execSync(
+    const output = await execAsync(
       "git branch --sort=-committerdate --format=%(refname:short)",
       {
         cwd: dir,
-        stdio: ["pipe", "pipe", "pipe"],
-        encoding: "utf-8",
+        timeout: 15000,
       }
     );
     return output
@@ -60,8 +59,25 @@ export function BranchStep({
   // Use worktree path if available, otherwise project root
   const dir = worktree ?? projectRoot;
 
-  const currentBranch = useMemo(() => getCurrentBranch(dir), [dir]);
-  const recentBranches = useMemo(() => getRecentBranches(dir), [dir]);
+  const [currentBranch, setCurrentBranch] = useState<string | null>(null);
+  const [recentBranches, setRecentBranches] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      getCurrentBranch(dir),
+      getRecentBranches(dir),
+    ]).then(([branch, branches]) => {
+      if (!cancelled) {
+        setCurrentBranch(branch);
+        setRecentBranches(branches);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [dir]);
 
   const items: BranchItem[] = useMemo(() => {
     const seen = new Set<string>();
@@ -101,6 +117,14 @@ export function BranchStep({
       [onBack]
     )
   );
+
+  if (loading) {
+    return (
+      <box flexDirection="column">
+        <text color={theme.muted}>Loading branches...</text>
+      </box>
+    );
+  }
 
   return (
     <box flexDirection="column">

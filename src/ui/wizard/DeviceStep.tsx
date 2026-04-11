@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../theme-provider.js";
 import { SearchableList } from "../components/index.js";
@@ -51,8 +51,20 @@ export function DeviceStep({
 
   // We use a two-phase selection when platform is "both"
   const [iosDeviceId, setIosDeviceId] = React.useState<string | null | undefined>(undefined);
+  const [devices, setDevices] = useState<Awaited<ReturnType<typeof listDevices>>>([]);
+  const [loading, setLoading] = useState(true);
 
-  const devices = useMemo(() => listDevices(platform), [platform]);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    listDevices(platform).then((result) => {
+      if (!cancelled) {
+        setDevices(result);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [platform]);
 
   const iosDevices = useMemo(
     () => devices.filter((d) => d.type === "ios"),
@@ -125,6 +137,14 @@ export function DeviceStep({
       [selectingAndroid, needsIos, onBack]
     )
   );
+
+  if (loading) {
+    return (
+      <box flexDirection="column">
+        <text color={theme.muted}>Scanning for devices...</text>
+      </box>
+    );
+  }
 
   if (selectingIos) {
     const items = buildIosItems();

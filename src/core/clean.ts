@@ -1,4 +1,3 @@
-import { execSync } from "child_process";
 import {
   existsSync,
   rmSync,
@@ -7,6 +6,7 @@ import {
 } from "fs";
 import { join, resolve } from "path";
 import { homedir, tmpdir } from "os";
+import { execShellAsync, execAsyncSafe } from "./exec-async.js";
 import type { Platform, RunMode } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -32,15 +32,14 @@ export interface CleanResult {
 // Helper: run a shell command safely
 // ---------------------------------------------------------------------------
 
-function run(
+async function run(
   cmd: string,
   options: { cwd?: string; ignoreFailure?: boolean } = {}
-): { success: boolean; output: string } {
+): Promise<{ success: boolean; output: string }> {
   try {
-    const output = execSync(cmd, {
+    const output = await execShellAsync(cmd, {
       cwd: options.cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000,
     });
     return { success: true, output: (output ?? "").trim() };
   } catch (err: unknown) {
@@ -163,13 +162,12 @@ export function readBundleId(
 // Xcode process utilities
 // ---------------------------------------------------------------------------
 
-export function isXcodeRunning(): boolean {
+export async function isXcodeRunning(): Promise<boolean> {
   try {
-    const output = execSync("pgrep -x Xcode", {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
+    const result = await execAsyncSafe("pgrep -x Xcode", {
+      timeout: 15000,
     });
-    return (output ?? "").trim().length > 0;
+    return (result.stdout ?? "").trim().length > 0 && result.exitCode === 0;
   } catch {
     return false;
   }
@@ -177,19 +175,18 @@ export function isXcodeRunning(): boolean {
 
 export async function killXcode(): Promise<boolean> {
   try {
-    execSync("killall Xcode", {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
+    await execShellAsync("killall Xcode", {
+      timeout: 15000,
     });
     // Poll up to 5 seconds for Xcode to exit
     const deadline = Date.now() + 5000;
     const sleep = (ms: number) =>
       new Promise<void>((resolve) => setTimeout(resolve, ms));
     while (Date.now() < deadline) {
-      if (!isXcodeRunning()) return true;
+      if (!(await isXcodeRunning())) return true;
       await sleep(100);
     }
-    return !isXcodeRunning();
+    return !(await isXcodeRunning());
   } catch {
     return false;
   }
