@@ -261,10 +261,19 @@ export function AppProvider({
           break;
         case "w":
           if (liveWatcher) {
-            const enabled = liveWatcher.toggle();
-            appendToolOutput(`\u2713 Watcher ${enabled ? "enabled" : "disabled"}`, "");
+            if (liveWatcher.isRunning()) {
+              liveWatcher.stop();
+              appendToolOutput("\u2713 Watcher disabled", "");
+            } else {
+              appendToolOutput("⏳ Starting watcher (scanning project)...", "");
+              // Start in next tick so the UI message renders first
+              setTimeout(() => {
+                liveWatcher.start();
+                appendToolOutput("\u2713 Watcher enabled", "");
+              }, 50);
+            }
           } else {
-            appendToolOutput("\u2717 No watcher configured", "");
+            appendToolOutput("\u2717 No on-save actions configured", "");
           }
           break;
         case "q":

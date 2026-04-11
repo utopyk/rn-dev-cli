@@ -456,16 +456,17 @@ async function startServicesAsync(
   serviceBus.setMetro(metro);
   serviceBus.setWorktreeKey(worktreeKey);
 
-  // 8. Start file watcher if on-save actions configured
+  // 8. File watcher — create but DON'T start yet (chokidar's initial scan
+  // blocks the event loop for minutes on large projects). User can toggle
+  // with 'w' shortcut when ready.
   let watcher: FileWatcher | null = null;
   if (profile.onSave.length > 0) {
-    emit("\u23f3 Starting file watcher...");
     watcher = new FileWatcher({
       projectRoot,
       actions: profile.onSave,
     });
-    watcher.start();
     serviceBus.setWatcher(watcher);
+    emit("ℹ File watcher ready — press [w] to enable");
   }
 
   // 9. Start IPC server
