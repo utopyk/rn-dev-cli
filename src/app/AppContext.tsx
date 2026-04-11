@@ -276,6 +276,24 @@ export function AppProvider({
             appendToolOutput("\u2717 No on-save actions configured", "");
           }
           break;
+        case "o": {
+          // Dump logs to files for easy copying/inspection
+          const fs = require("fs");
+          const logDir = "/tmp/rn-dev-logs";
+          try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
+          const toolFile = `${logDir}/tool-output.log`;
+          const metroFile = `${logDir}/metro.log`;
+          fs.writeFileSync(toolFile, toolOutputLines.join("\n") + "\n");
+          fs.writeFileSync(metroFile, metroLines.join("\n") + "\n");
+          appendToolOutput(
+            `✔ Logs dumped to:`,
+            `  ${toolFile}`,
+            `  ${metroFile}`,
+            `  Open with: cat ${toolFile}`,
+            ""
+          );
+          break;
+        }
         case "q":
           // Kill Metro, disable mouse, restore terminal, exit
           if (liveMetro) liveMetro.stopAll();
@@ -301,6 +319,7 @@ export function AppProvider({
     { key: "t", label: "Type Check", action: () => runShortcut("t") },
     { key: "c", label: "Clean", action: () => runShortcut("c") },
     { key: "w", label: "Toggle Watcher", action: () => runShortcut("w") },
+    { key: "o", label: "Dump Logs", action: () => runShortcut("o") },
     { key: "q", label: "Quit", action: () => runShortcut("q") },
   ];
 

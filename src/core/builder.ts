@@ -84,6 +84,11 @@ export class Builder extends EventEmitter {
 
     this.rawOutput = "";
 
+    // Always write build output to a file for debugging
+    const buildLogPath = `/tmp/rn-dev-logs/build-${platform}.log`;
+    try { require("fs").mkdirSync("/tmp/rn-dev-logs", { recursive: true }); } catch {}
+    try { require("fs").writeFileSync(buildLogPath, `Build started: ${new Date().toISOString()}\n${cmd} ${[...cmdPrefix, ...args].join(" ")}\n\n`); } catch {}
+
     let proc: Subprocess;
     try {
       proc = Bun.spawn([cmd, ...cmdPrefix, ...args], {
@@ -118,6 +123,7 @@ export class Builder extends EventEmitter {
           if (done) break;
           const text = stripAnsi(decoder.decode(value, { stream: true }));
           this.rawOutput += text;
+          try { require("fs").appendFileSync(buildLogPath, text); } catch {}
 
           // Detect xcresult bundle path
           const xcresultMatch = text.match(/(?:Writing|Wrote)\s+(?:error\s+)?result\s+bundle\s+to\s+(.+?\.xcresult)/i);
