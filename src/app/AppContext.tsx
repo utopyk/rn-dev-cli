@@ -284,13 +284,20 @@ export function AppProvider({
           }
           break;
         case "y": {
-          // Copy tool output to system clipboard via pbcopy/xclip
-          const text = toolOutputLines.join("\n");
+          // Copy last error block (after last ❌) or full output to clipboard
+          let linesToCopy = toolOutputLines;
+          const lastErrorIdx = toolOutputLines.findLastIndex(l => l.includes("❌") || l.includes("\u274c"));
+          if (lastErrorIdx >= 0) {
+            linesToCopy = toolOutputLines.slice(lastErrorIdx);
+          }
+          const text = linesToCopy.join("\n");
           try {
             const proc = Bun.spawn(["pbcopy"], { stdin: "pipe" });
             proc.stdin.write(text);
             proc.stdin.end();
-            appendToolOutput("✔ Tool output copied to clipboard (" + toolOutputLines.length + " lines)");
+            appendToolOutput(lastErrorIdx >= 0
+              ? "✔ Error block copied to clipboard (" + linesToCopy.length + " lines)"
+              : "✔ Full output copied to clipboard (" + linesToCopy.length + " lines)");
           } catch {
             try {
               const proc = Bun.spawn(["xclip", "-selection", "clipboard"], { stdin: "pipe" });
