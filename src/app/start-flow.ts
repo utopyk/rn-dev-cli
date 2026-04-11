@@ -228,21 +228,24 @@ export async function startFlow(options: StartOptions): Promise<void> {
       worktreeKey = result.worktreeKey;
       builder = result.builder;
 
-      // Trigger build after services are ready
-      const platformsToBuild: Array<"ios" | "android"> =
-        profile.platform === "both" ? ["ios", "android"] : [profile.platform];
+      // Trigger build after a short delay so React's useEffect has time
+      // to subscribe to builder events before they start firing
+      setTimeout(() => {
+        const platformsToBuild: Array<"ios" | "android"> =
+          profile.platform === "both" ? ["ios", "android"] : [profile.platform];
 
-      for (const plat of platformsToBuild) {
-        const devId = plat === "ios" ? profile.devices?.ios : profile.devices?.android;
-        result.builder.build({
-          projectRoot: profile.worktree ?? projectRoot,
-          platform: plat,
-          deviceId: devId ?? undefined,
-          port: profile.metroPort,
-          variant: profile.buildVariant,
-          env: profile.env,
-        });
-      }
+        for (const plat of platformsToBuild) {
+          const devId = plat === "ios" ? profile.devices?.ios : profile.devices?.android;
+          result.builder.build({
+            projectRoot: profile.worktree ?? projectRoot,
+            platform: plat,
+            deviceId: devId ?? undefined,
+            port: profile.metroPort,
+            variant: profile.buildVariant,
+            env: profile.env,
+          });
+        }
+      }, 200);
     }).catch((err) => {
       serviceBus.log(`\u2716 Service startup error: ${err instanceof Error ? err.message : String(err)}`);
     });
