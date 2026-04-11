@@ -149,7 +149,16 @@ export class Builder extends EventEmitter {
               trimmed.startsWith("warn ") ||
               trimmed.includes("FAILURE:") ||
               /^\s*error:/.test(trimmed) ||
-              /^\/.+:\d+:\d+: (error|fatal error):/.test(trimmed);
+              /^\/.+:\d+:\d+: (error|fatal error):/.test(trimmed) ||
+              // xcbeautify emoji-prefixed errors and warnings
+              trimmed.startsWith("❌") ||
+              trimmed.startsWith("⚠️") ||
+              trimmed.includes("ld: symbol(s) not found") ||
+              trimmed.includes("ld: Could not find") ||
+              trimmed.includes("linker command failed") ||
+              trimmed.includes("clang: error") ||
+              trimmed.includes("not found for architecture") ||
+              trimmed.includes("framework not found");
 
             if (trimmed.includes("Compiling") || trimmed.includes("CompileC")) {
               this.emit("progress", { phase: "Compiling" });

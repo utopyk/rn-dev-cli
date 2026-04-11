@@ -107,6 +107,10 @@ const SUGGESTION_MAP: Array<[string, string]> = [
   ["no development team", "Set DEVELOPMENT_TEAM in Xcode signing settings"],
   ["provisioning profile", "Fix provisioning profile in Xcode signing settings"],
   ["command phasescriptexecution failed", "A build phase script failed. Check Pods or custom scripts"],
+  ["symbol(s) not found for architecture", "Linker error — try: pod deintegrate && pod install, or clean build"],
+  ["could not find or use auto-linked framework", "Missing framework — try: pod install or check Podfile for missing deps"],
+  ["linker command failed", "Linker error — check build log for missing symbols or frameworks"],
+  ["cannot link directly with", "Incompatible framework — may need Xcode or SDK update"],
 ];
 
 function findSuggestion(text: string): string | undefined {
@@ -218,6 +222,36 @@ export function parseXcodebuildErrors(output: string): BuildError[] {
         rawOutput: line,
         suggestion,
       });
+      continue;
+    }
+
+    // xcbeautify emoji-prefixed errors: ❌  ld: symbol(s) not found...
+    if (line.startsWith("❌") || line.startsWith("\u274c")) {
+      const message = line.replace(/^❌\s*/, "").replace(/^\u274c\s*/, "").trim();
+      if (message) {
+        const suggestion = findSuggestion(message);
+        errors.push({
+          source: "xcodebuild",
+          summary: message,
+          rawOutput: line,
+          suggestion,
+        });
+      }
+      continue;
+    }
+
+    // xcbeautify emoji-prefixed warnings: ⚠️  ld: Could not find...
+    if (line.startsWith("⚠️") || line.startsWith("\u26a0")) {
+      const message = line.replace(/^⚠️\s*/, "").replace(/^\u26a0\ufe0f?\s*/, "").trim();
+      if (message && (message.includes("not found") || message.includes("Could not"))) {
+        const suggestion = findSuggestion(message);
+        errors.push({
+          source: "xcodebuild",
+          summary: message,
+          rawOutput: line,
+          suggestion,
+        });
+      }
       continue;
     }
 
