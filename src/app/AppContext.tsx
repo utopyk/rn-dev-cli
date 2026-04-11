@@ -176,7 +176,7 @@ export function AppProvider({
         return copy.slice(-500);
       });
     };
-    const onDone = ({ success, errors }: { success: boolean; errors: Array<{ summary: string; reason?: string; suggestion?: string }> }) => {
+    const onDone = ({ success, errors, platform }: { success: boolean; errors: Array<{ summary: string; reason?: string; suggestion?: string }>; platform?: string }) => {
       setBuildPhase(null);
       if (success) {
         setToolOutputLines((prev) => [...prev, "\u2705 Build complete!", ""].slice(-500));
@@ -187,6 +187,10 @@ export function AppProvider({
           if (err.reason) lines.push(`    Reason: ${err.reason}`);
           if (err.suggestion) lines.push(`    Fix: ${err.suggestion}`);
         }
+        lines.push("");
+        const plat = platform ?? "ios";
+        lines.push(`  Full build log: /tmp/rn-dev-logs/build-${plat}.log`);
+        lines.push("  Press [o] to dump all logs");
         lines.push("");
         setToolOutputLines((prev) => [...prev, ...lines].slice(-500));
       }

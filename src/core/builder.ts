@@ -101,6 +101,7 @@ export class Builder extends EventEmitter {
     } catch (err: any) {
       this.emit("done", {
         success: false,
+        platform,
         errors: [{
           source: platform === "ios" ? "xcodebuild" : "gradle",
           summary: `Failed to spawn build process: ${err.message}`,
@@ -253,7 +254,7 @@ export class Builder extends EventEmitter {
         }
       }
 
-      this.emit("done", { success, errors });
+      this.emit("done", { success, errors, platform });
       this.process = null;
     });
   }
