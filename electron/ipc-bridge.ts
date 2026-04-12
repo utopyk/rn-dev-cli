@@ -106,8 +106,49 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     return Array.from(instances.values()).map(toSummary);
   });
 
-  ipcMain.handle('instances:create', async (_, profileData) => {
+  // ── Profile IPC Handlers ──
+
+  ipcMain.handle('profiles:list', async () => {
+    if (!projectRoot) return [];
+    const profileStore = new ProfileStore(path.join(projectRoot, '.rn-dev', 'profiles'));
+    return profileStore.list().map(p => ({
+      name: p.name,
+      branch: p.branch,
+      platform: p.platform,
+      mode: p.mode,
+      isDefault: p.isDefault,
+      deviceId: p.devices?.ios ?? p.devices?.android ?? null,
+    }));
+  });
+
+  ipcMain.handle('profiles:setDefault', async (_, name: string) => {
+    if (!projectRoot) return { ok: false };
+    const profileStore = new ProfileStore(path.join(projectRoot, '.rn-dev', 'profiles'));
+    const profile = profileStore.load(name);
+    if (!profile) return { ok: false };
+    profileStore.setDefault(name, profile.worktree, profile.branch);
+    return { ok: true };
+  });
+
+  ipcMain.handle('profiles:delete', async (_, name: string) => {
+    if (!projectRoot) return { ok: false };
+    const profileStore = new ProfileStore(path.join(projectRoot, '.rn-dev', 'profiles'));
+    return { ok: profileStore.delete(name) };
+  });
+
+  ipcMain.handle('instances:create', async (_, data) => {
     if (!projectRoot) return { ok: false, error: 'No project root' };
+
+    let profileData;
+    if (typeof data === 'string') {
+      // data is a profile name — load it from disk
+      const profileStore = new ProfileStore(path.join(projectRoot, '.rn-dev', 'profiles'));
+      profileData = profileStore.load(data);
+      if (!profileData) return { ok: false, error: `Profile "${data}" not found` };
+    } else {
+      // data is raw profile object (from wizard)
+      profileData = data;
+    }
 
     const worktreePath = profileData.worktree ?? null;
     const worktreeName = worktreePath ? path.basename(worktreePath) : 'main';
@@ -629,31 +670,31 @@ export async function startRealServices(targetProjectRoot: string) {
   artifactStore = new ArtifactStore(path.join(rnDevDir, 'artifacts'));
   const profileStore = new ProfileStore(path.join(rnDevDir, 'profiles'));
 
-  // Load or create profile
+  // Load the default profile
   const branch = await getCurrentBranch(projectRoot) ?? 'main';
-  let profile = profileStore.findDefault(null, branch);
+  const defaultProfile = profileStore.findDefault(null, branch);
 
-  if (!profile) {
-    // No profile — renderer will show the wizard
-    // The wizard completion will call instances:create
+  if (!defaultProfile) {
+    // No profile — renderer will show the wizard / new-instance dialog
     return;
   }
 
-  // Create the first instance from the default profile
-  const worktreePath = profile.worktree ?? null;
+  // Create the first instance from the default profile via its name
+  // Reuse the same logic as instances:create by importing directly
+  const worktreePath = defaultProfile.worktree ?? null;
   const worktreeName = worktreePath ? path.basename(worktreePath) : 'main';
-  const port = profile.metroPort ?? 8081;
+  const port = findFreePort();
   const id = `${worktreeName}-${port}`;
 
   let deviceName = 'No device';
   let deviceIcon = '💻';
   let deviceId: string | null = null;
 
-  if (profile.devices) {
-    deviceId = profile.devices.ios ?? profile.devices.android ?? null;
+  if (defaultProfile.devices) {
+    deviceId = defaultProfile.devices.ios ?? defaultProfile.devices.android ?? null;
     if (deviceId) {
       try {
-        const deviceList = await listDevices(profile.platform);
+        const deviceList = await listDevices(defaultProfile.platform);
         const foundDevice = deviceList.find(d => d.id === deviceId);
         if (foundDevice) {
           deviceName = foundDevice.name;
@@ -667,13 +708,13 @@ export async function startRealServices(targetProjectRoot: string) {
     id,
     worktree: worktreePath,
     worktreeName,
-    branch: profile.branch,
+    branch: defaultProfile.branch,
     port,
     deviceId,
     deviceName,
     deviceIcon,
-    platform: profile.platform,
-    mode: profile.mode,
+    platform: defaultProfile.platform,
+    mode: defaultProfile.mode,
     metro: null,
     builder: null,
     serviceLog: [],
@@ -688,7 +729,7 @@ export async function startRealServices(targetProjectRoot: string) {
 
   // Start services
   await startInstanceServices(instance, {
-    ...profile,
-    devices: profile.devices,
+    ...defaultProfile,
+    devices: defaultProfile.devices,
   });
 }

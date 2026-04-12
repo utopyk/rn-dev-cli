@@ -49,7 +49,7 @@ interface WizardState {
 }
 
 interface WizardProps {
-  onComplete: () => void;
+  onComplete: (profileName: string) => void;
   onCancel: () => void;
 }
 
@@ -172,8 +172,9 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
 
   const handleFinish = async () => {
     setSaving(true);
+    const profileName = `profile-${Date.now()}`;
     const profileData = {
-      name: `profile-${Date.now()}`,
+      name: profileName,
       isDefault: true,
       worktree: state.worktree?.path ?? null,
       branch: state.branch ?? 'main',
@@ -198,7 +199,7 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
 
     await invoke('wizard:saveProfile', profileData);
     setSaving(false);
-    onComplete();
+    onComplete(profileName);
   };
 
   // Toggle helpers

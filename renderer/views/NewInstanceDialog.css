@@ -1,0 +1,188 @@
+/* ── NewInstanceDialog ── */
+.nid-root {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.nid-container {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nid-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nid-title {
+  font-size: 20px;
+  color: var(--fg);
+  font-weight: bold;
+}
+
+.nid-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── Profile list ── */
+.nid-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.nid-profile-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.nid-profile-card:last-child {
+  border-bottom: none;
+}
+
+.nid-profile-card:hover {
+  background: var(--selection);
+}
+
+.nid-profile-card.is-default {
+  border-left: 3px solid var(--accent);
+  padding-left: 13px;
+}
+
+.nid-profile-star {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.nid-profile-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nid-profile-name {
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nid-profile-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.nid-profile-meta-sep {
+  color: var(--border);
+}
+
+.nid-profile-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.nid-profile-card:hover .nid-profile-actions {
+  opacity: 1;
+}
+
+.nid-profile-action-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s ease;
+}
+
+.nid-profile-action-btn:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.nid-profile-action-btn.danger:hover {
+  color: var(--error);
+}
+
+/* ── Create new profile card ── */
+.nid-create-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 16px;
+  cursor: pointer;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: bold;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  width: 100%;
+}
+
+.nid-create-card:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--selection);
+}
+
+.nid-create-icon {
+  font-size: 16px;
+}
+
+/* ── Footer ── */
+.nid-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 8px;
+}
+
+/* ── Loading / empty states ── */
+.nid-loading,
+.nid-empty {
+  padding: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}

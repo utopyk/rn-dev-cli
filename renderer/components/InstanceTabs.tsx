@@ -17,7 +17,7 @@ interface InstanceTabsProps {
   activeId: string | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
-  onAdd: () => void;
+  onAdd: () => void;  // Opens the new-instance dialog
 }
 
 function shortenName(name: string, max: number): string {

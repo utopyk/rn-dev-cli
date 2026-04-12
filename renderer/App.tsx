@@ -10,6 +10,7 @@ import { LintTest } from './views/LintTest';
 import { MetroLogs } from './views/MetroLogs';
 import { Settings } from './views/Settings';
 import { Wizard } from './views/Wizard';
+import { NewInstanceDialog } from './views/NewInstanceDialog';
 import { useIpcOn, useIpcInvoke } from './hooks/useIpc';
 import { useSimulatedLogs } from './hooks/useSimulatedLogs';
 import './App.css';
@@ -22,6 +23,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ViewTab>('dev-space');
   const [profileVisible, setProfileVisible] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
+  const [showNewInstanceDialog, setShowNewInstanceDialog] = useState(false);
 
   // Multi-instance state
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
@@ -48,13 +50,14 @@ export function App() {
           });
         }
       } else {
-        // No instances yet — check if a profile exists
-        invoke('wizard:hasProfile').then((hasProfile: boolean) => {
-          if (!hasProfile) {
+        // No instances yet — check if any profiles exist
+        invoke('profiles:list').then((profiles: any[]) => {
+          if (!profiles || profiles.length === 0) {
+            // No profiles at all — go straight to wizard
             setShowWizard(true);
           }
-          // If profile exists, startRealServices in main will create one
-          // and we'll get it via instance:created event
+          // If profiles exist, startRealServices in main will create one
+          // from the default profile, and we'll get it via instance:created event
         });
       }
     });
@@ -245,13 +248,29 @@ export function App() {
   }, [invoke]);
 
   const handleAddInstance = useCallback(() => {
+    setShowNewInstanceDialog(true);
+  }, []);
+
+  const handleDialogSelectProfile = useCallback((profileName: string) => {
+    setShowNewInstanceDialog(false);
+    invoke('instances:create', profileName);
+    // instance:created event will add the new tab
+  }, [invoke]);
+
+  const handleDialogCreateNew = useCallback(() => {
+    setShowNewInstanceDialog(false);
     setShowWizard(true);
   }, []);
 
-  const handleWizardComplete = useCallback(() => {
-    setShowWizard(false);
-    // After wizard completes, the instance:created event will add the new tab
+  const handleDialogCancel = useCallback(() => {
+    setShowNewInstanceDialog(false);
   }, []);
+
+  const handleWizardComplete = useCallback((profileName: string) => {
+    setShowWizard(false);
+    // Create an instance from the newly saved profile
+    invoke('instances:create', profileName);
+  }, [invoke]);
 
   const handleWizardCancel = useCallback(() => {
     setShowWizard(false);
@@ -277,6 +296,32 @@ export function App() {
         return <Settings />;
     }
   };
+
+  if (showNewInstanceDialog) {
+    return (
+      <div className="app-root">
+        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} />
+        <div className="app-main">
+          {instances.length > 0 && (
+            <InstanceTabs
+              instances={instances}
+              activeId={activeId}
+              onSelect={handleSelectInstance}
+              onClose={handleCloseInstance}
+              onAdd={handleAddInstance}
+            />
+          )}
+          <div className="app-content">
+            <NewInstanceDialog
+              onSelectProfile={handleDialogSelectProfile}
+              onCreateNew={handleDialogCreateNew}
+              onCancel={handleDialogCancel}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (showWizard) {
     return (
