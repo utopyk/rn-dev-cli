@@ -10,6 +10,7 @@ import { detectProjectRoot, getCurrentBranch, getWorktrees } from '../src/core/p
 import { listDevices, bootDevice } from '../src/core/device.js';
 import { createDefaultPreflightEngine } from '../src/core/preflight.js';
 import { execShellAsync } from '../src/core/exec-async.js';
+import { CleanManager } from '../src/core/clean.js';
 import type { Profile } from '../src/core/types.js';
 
 // ── Instance State ──
@@ -565,7 +566,6 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
   // Run clean if not dirty mode
   if (instance.mode !== 'dirty') {
     emit(`⏳ Running ${instance.mode} clean...`);
-    const { CleanManager } = await import('../src/core/clean.js');
     const cleaner = new CleanManager(projectRoot);
     const results = await cleaner.execute(instance.mode as any, instance.platform, (step, status) => {
       const icon = status === 'running' ? '⏳' : '✔';
