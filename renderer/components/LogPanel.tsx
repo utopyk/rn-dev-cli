@@ -9,6 +9,12 @@ interface LogPanelProps {
   className?: string;
 }
 
+/** Strip ANSI escape codes from text */
+function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
+}
+
 function getLineClass(line: string): string {
   const trimmed = line.trimStart();
   if (trimmed.startsWith('>') && (trimmed.includes('Succeeded') || trimmed.includes('complete') || trimmed.includes('passed') || trimmed.includes('reloaded'))) return 'log-success';
@@ -38,11 +44,14 @@ export function LogPanel({ title, lines, focused = false, onFocus, className }: 
         <span className="panel-hint">click to focus</span>
       </div>
       <div className="panel-content" ref={contentRef}>
-        {lines.map((line, i) => (
-          <div key={i} className={`log-line ${getLineClass(line)}`}>
-            {line}
-          </div>
-        ))}
+        {lines.map((line, i) => {
+          const clean = stripAnsi(line);
+          return (
+            <div key={i} className={`log-line ${getLineClass(clean)}`}>
+              {clean}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
