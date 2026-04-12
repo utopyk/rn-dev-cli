@@ -66,15 +66,16 @@ async function createWindow() {
     mainWindow = null;
   });
 
-  setupIpcBridge(mainWindow);
-
-  // Detect the RN project root — use CWD or known project paths
+  // Detect the RN project root BEFORE setting up IPC so wizard handlers work
   const cwd = process.cwd();
   console.log(`[electron] CWD: ${cwd}`);
   const projectRoot = await detectProjectRoot(cwd)
     ?? await detectProjectRoot('/Users/martincouso/Documents/Projects/movie-nights-club')
     ?? cwd;
   console.log(`[electron] Project root: ${projectRoot}`);
+
+  // Pass projectRoot to IPC bridge so wizard handlers have it immediately
+  setupIpcBridge(mainWindow, projectRoot);
 
   // Start real services after renderer has loaded
   mainWindow.webContents.on('did-finish-load', () => {

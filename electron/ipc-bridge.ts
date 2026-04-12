@@ -27,8 +27,11 @@ function send(channel: string, ...args: any[]) {
   }
 }
 
-export function setupIpcBridge(window: BrowserWindow) {
+export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: string) {
   mainWindow = window;
+  if (initialProjectRoot) {
+    projectRoot = initialProjectRoot;
+  }
 
   // ── Forward service bus events to renderer ──
   serviceBus.on('log', (text: string) => send('service:log', text));
