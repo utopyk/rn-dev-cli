@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useIpcInvoke } from '../hooks/useIpc';
 import './DevToolsView.css';
 
 interface DevToolsViewProps {
@@ -12,14 +13,20 @@ export function DevToolsView({ metroPort }: DevToolsViewProps) {
   const [devtoolsUrl, setDevtoolsUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const invoke = useIpcInvoke();
 
   useEffect(() => {
     let cancelled = false;
 
     async function pollForTargets() {
       try {
-        const res = await fetch(`http://localhost:${metroPort}/json`);
-        const targets = await res.json();
+        // Use IPC to fetch from main process (avoids CORS restrictions in renderer)
+        const targets = await invoke('devtools:getTargets', metroPort);
+        if (!targets) {
+          setState('error');
+          setErrorMsg(`Cannot connect to Metro on port ${metroPort}`);
+          return;
+        }
 
         if (cancelled) return;
 

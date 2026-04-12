@@ -487,6 +487,25 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     }
   });
 
+  // DevTools: fetch Metro /json endpoint from main process (avoids CORS in renderer)
+  ipcMain.handle('devtools:getTargets', async (_, port: number) => {
+    try {
+      const http = require('http') as typeof import('http');
+      const data = await new Promise<string>((resolve, reject) => {
+        const req = http.get(`http://localhost:${port}/json`, (res: any) => {
+          let body = '';
+          res.on('data', (chunk: string) => { body += chunk; });
+          res.on('end', () => resolve(body));
+        });
+        req.on('error', reject);
+        req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
+      });
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  });
+
   ipcMain.handle('wizard:getPackageManagers', async () => {
     if (!projectRoot) return [];
     return detectAllPackageManagers(projectRoot);
