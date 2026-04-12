@@ -59,38 +59,24 @@ export function App() {
       switch (e.key) {
         case 'r':
           invoke('metro:reload');
-          addServiceLog('> Reloading app...');
-          setTimeout(() => addServiceLog('> App reloaded'), 300);
           break;
         case 'd':
           invoke('metro:devMenu');
-          addServiceLog('> Opening dev menu...');
           break;
         case 'l':
           invoke('run:lint');
-          addServiceLog('> Running ESLint...');
-          setTimeout(() => {
-            addServiceLog('  src/App.tsx: 0 errors, 2 warnings');
-            addServiceLog('> Lint complete: 0 errors, 2 warnings');
-          }, 500);
           break;
         case 't':
           invoke('run:typecheck');
-          addServiceLog('> Running tsc --noEmit...');
-          setTimeout(() => addServiceLog('> Type check passed'), 400);
           break;
         case 'c':
           invoke('run:clean');
-          addServiceLog('> Cleaning build artifacts...');
-          setTimeout(() => addServiceLog('> Clean complete'), 600);
           break;
         case 'w':
           invoke('watcher:toggle');
           break;
         case 'o':
           invoke('logs:dump');
-          addServiceLog('> Dumping logs to file...');
-          setTimeout(() => addServiceLog('> Logs written to .rn-dev/build.log'), 200);
           break;
         case 'f':
           // Focus toggle is handled inside DevSpace

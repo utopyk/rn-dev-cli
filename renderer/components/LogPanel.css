@@ -38,10 +38,14 @@
 .panel-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 6px 10px;
   font-size: 12px;
   user-select: text;
   cursor: text;
+  /* Ensure scroll works by setting explicit min/max heights */
+  min-height: 0;
+  max-height: 100%;
 }
 
 /* Log line colors */
