@@ -306,7 +306,7 @@ export class CleanManager {
       description: "Run pod install",
       platform: "ios",
       mode: ["clean", "ultra-clean"],
-      action: async () => run("pod install", { cwd: iosDir }),
+      action: async () => run("LANG=en_US.UTF-8 pod install", { cwd: iosDir, timeout: 300000 }),
     };
 
     // ------------------------------------------------------------------
@@ -319,7 +319,7 @@ export class CleanManager {
       platform: "ios",
       mode: ["ultra-clean"],
       action: async () =>
-        run("pod deintegrate", { cwd: iosDir, ignoreFailure: true }),
+        run("LANG=en_US.UTF-8 pod deintegrate", { cwd: iosDir, ignoreFailure: true }),
     };
 
     const removePods: CleanStep = {

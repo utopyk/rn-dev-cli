@@ -579,9 +579,17 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
 
     const failed = results.filter(r => !r.success);
     if (failed.length > 0) {
-      emit(`  \u26A0 ${failed.length} clean step(s) had issues`);
+      emit(`  ⚠ ${failed.length} clean step(s) had issues:`);
       for (const f of failed) {
-        emit(`    \u2716 ${f.step}: ${f.output.slice(0, 100)}`);
+        emit(`    ✖ ${f.step}:`);
+        // Show the full error output, split into lines
+        const errorLines = f.output.split('\n').filter((l: string) => l.trim());
+        for (const line of errorLines.slice(0, 10)) {
+          emit(`      ${line.trim().slice(0, 200)}`);
+        }
+        if (errorLines.length > 10) {
+          emit(`      ... (${errorLines.length - 10} more lines)`);
+        }
       }
       // Check if critical steps failed (install-dependencies, pod-install)
       const criticalFailed = failed.filter(f =>
