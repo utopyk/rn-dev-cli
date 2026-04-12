@@ -284,30 +284,17 @@ export function AppProvider({
           }
           break;
         case "y": {
-          // Copy last error block (after last ❌) or full output to clipboard
-          let linesToCopy = toolOutputLines;
-          const lastErrorIdx = toolOutputLines.findLastIndex(l => l.includes("❌") || l.includes("\u274c"));
-          if (lastErrorIdx >= 0) {
-            linesToCopy = toolOutputLines.slice(lastErrorIdx);
-          }
-          const text = linesToCopy.join("\n");
-          try {
-            const proc = Bun.spawn(["pbcopy"], { stdin: "pipe" });
-            proc.stdin.write(text);
-            proc.stdin.end();
-            appendToolOutput(lastErrorIdx >= 0
-              ? "✔ Error block copied to clipboard (" + linesToCopy.length + " lines)"
-              : "✔ Full output copied to clipboard (" + linesToCopy.length + " lines)");
-          } catch {
-            try {
-              const proc = Bun.spawn(["xclip", "-selection", "clipboard"], { stdin: "pipe" });
-              proc.stdin.write(text);
-              proc.stdin.end();
-              appendToolOutput("✔ Copied to clipboard");
-            } catch {
-              appendToolOutput("✖ Could not copy — pbcopy/xclip not available");
-            }
-          }
+          // Dump tool output to temp file and open in less for native copy
+          const fs = require("fs");
+          const logPath = "/tmp/rn-dev-logs/tool-output.log";
+          try { fs.mkdirSync("/tmp/rn-dev-logs", { recursive: true }); } catch {}
+          fs.writeFileSync(logPath, toolOutputLines.join("\n") + "\n");
+          // Suspend TUI, open less, resume TUI when less exits
+          Bun.spawnSync(["less", "+G", "-R", logPath], {
+            stdin: "inherit",
+            stdout: "inherit",
+            stderr: "inherit",
+          });
           break;
         }
         case "o": {
@@ -353,7 +340,7 @@ export function AppProvider({
     { key: "t", label: "Type Check", action: () => runShortcut("t") },
     { key: "c", label: "Clean", action: () => runShortcut("c") },
     { key: "w", label: "Toggle Watcher", action: () => runShortcut("w") },
-    { key: "y", label: "Copy Logs", action: () => runShortcut("y") },
+    { key: "y", label: "View Logs", action: () => runShortcut("y") },
     { key: "o", label: "Dump Logs", action: () => runShortcut("o") },
     { key: "q", label: "Quit", action: () => runShortcut("q") },
   ];
