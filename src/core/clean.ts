@@ -303,12 +303,18 @@ export class CleanManager {
       },
     };
 
+    // Detect if project uses Bundler and rbenv
+    const useBundle = existsSync(join(root, "Gemfile"));
+    const hasRbenv = existsSync(join(homedir(), ".rbenv", "bin", "rbenv"));
+    const rbenvInit = hasRbenv ? 'eval "$(rbenv init -)" && ' : '';
+    const podCmd = useBundle ? `${rbenvInit}bundle exec pod` : `${rbenvInit}pod`;
+
     const podInstall: CleanStep = {
       name: "pod-install",
       description: "Run pod install",
       platform: "ios",
       mode: ["clean", "ultra-clean"],
-      action: async () => run("LANG=en_US.UTF-8 pod install --repo-update", { cwd: iosDir, timeout: 600000 }),
+      action: async () => run(`LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 ${podCmd} install --repo-update`, { cwd: iosDir, timeout: 600000 }),
     };
 
     // ------------------------------------------------------------------
@@ -321,7 +327,7 @@ export class CleanManager {
       platform: "ios",
       mode: ["ultra-clean"],
       action: async () =>
-        run("LANG=en_US.UTF-8 pod deintegrate", { cwd: iosDir, ignoreFailure: true }),
+        run(`LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 ${podCmd} deintegrate`, { cwd: iosDir, ignoreFailure: true }),
     };
 
     const removePods: CleanStep = {
