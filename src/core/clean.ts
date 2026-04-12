@@ -399,7 +399,21 @@ export class CleanManager {
 
         if (existsSync(globalDerivedData)) {
           // Only remove entries that match the project name
-          const projectName = root.split("/").filter(Boolean).pop() ?? "";
+          // Get the project name from the Xcode workspace/project in ios/
+          let projectName = root.split("/").filter(Boolean).pop() ?? "";
+          try {
+            const iosEntries = readdirSync(join(root, "ios"));
+            for (const e of iosEntries) {
+              if (e.endsWith(".xcworkspace")) {
+                projectName = e.replace(".xcworkspace", "");
+                break;
+              }
+              if (e.endsWith(".xcodeproj")) {
+                projectName = e.replace(".xcodeproj", "");
+              }
+            }
+          } catch {}
+
           try {
             const entries = readdirSync(globalDerivedData);
             for (const entry of entries) {
