@@ -79,12 +79,35 @@ function removeDir(
 export function detectPackageManager(
   projectRoot: string
 ): "npm" | "yarn" | "pnpm" {
-  if (existsSync(join(projectRoot, "yarn.lock"))) {
-    return "yarn";
+  // 1. Check packageManager field in package.json (most reliable)
+  try {
+    const pkg = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8"));
+    if (typeof pkg.packageManager === "string") {
+      if (pkg.packageManager.startsWith("yarn")) return "yarn";
+      if (pkg.packageManager.startsWith("pnpm")) return "pnpm";
+      if (pkg.packageManager.startsWith("npm")) return "npm";
+    }
+  } catch {}
+
+  // 2. Check lockfiles — prefer package-lock.json over yarn.lock
+  //    (many projects have stale yarn.lock alongside package-lock.json)
+  const hasPackageLock = existsSync(join(projectRoot, "package-lock.json"));
+  const hasYarnLock = existsSync(join(projectRoot, "yarn.lock"));
+  const hasPnpmLock = existsSync(join(projectRoot, "pnpm-lock.yaml"));
+
+  if (hasPnpmLock) return "pnpm";
+  if (hasPackageLock && hasYarnLock) {
+    // Both exist — use the newer one
+    try {
+      const { statSync } = require("fs");
+      const npmTime = statSync(join(projectRoot, "package-lock.json")).mtimeMs;
+      const yarnTime = statSync(join(projectRoot, "yarn.lock")).mtimeMs;
+      return npmTime >= yarnTime ? "npm" : "yarn";
+    } catch {
+      return "npm"; // fallback to npm if we can't compare
+    }
   }
-  if (existsSync(join(projectRoot, "pnpm-lock.yaml"))) {
-    return "pnpm";
-  }
+  if (hasYarnLock) return "yarn";
   return "npm";
 }
 

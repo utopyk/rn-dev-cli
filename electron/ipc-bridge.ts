@@ -578,6 +578,19 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
       for (const f of failed) {
         emit(`    ✖ ${f.step}: ${f.output.slice(0, 100)}`);
       }
+      // Check if critical steps failed (install-dependencies, pod-install)
+      const criticalFailed = failed.filter(f =>
+        f.step === 'Install npm/yarn/pnpm dependencies' ||
+        f.step === 'Run pod install'
+      );
+      if (criticalFailed.length > 0) {
+        emit('');
+        emit('❌ Critical clean steps failed. Cannot start Metro or build.');
+        emit('  Fix the issues above and try again.');
+        instance.metroStatus = 'error';
+        send('instance:status', { instanceId: instance.id, ...toSummary(instance) });
+        return; // Abort — don't start Metro with broken deps
+      }
     } else {
       emit(`✔ ${instance.mode} clean complete`);
     }
