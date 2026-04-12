@@ -303,7 +303,6 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
                 </div>
               </div>
             ) : (
-              <>
                 <SearchableList<WorktreeOption>
                   items={worktrees}
                   labelKey="name"
@@ -312,8 +311,13 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
                     setState((s) => ({ ...s, worktree: wt }));
                     goNext();
                   }}
-                  placeholder="Search worktrees..."
+                  placeholder="Search or type to create..."
                   loading={loadingKey === 'worktrees'}
+                  onCreate={(name) => {
+                    setNewWorktreeBranch(name);
+                    setCreatingWorktree(true);
+                  }}
+                  createLabel="Create worktree"
                   renderItem={(wt, isActive) => (
                     <>
                       <span className="sl-item-label">
@@ -323,13 +327,6 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
                     </>
                   )}
                 />
-                <button
-                  className="wz-create-btn"
-                  onClick={() => setCreatingWorktree(true)}
-                >
-                  + Create new worktree
-                </button>
-              </>
             )}
           </StepContainer>
         );
@@ -349,8 +346,14 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
                 setState((s) => ({ ...s, branch: b.name }));
                 goNext();
               }}
-              placeholder="Search branches..."
+              placeholder="Search or type new branch name..."
               loading={loadingKey === 'branches'}
+              onCreate={(name) => {
+                // Use the typed name as a new branch (will be created with the worktree or checkout)
+                setState((s) => ({ ...s, branch: name }));
+                goNext();
+              }}
+              createLabel="Use branch"
             />
           </StepContainer>
         );

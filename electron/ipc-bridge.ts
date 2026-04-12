@@ -562,8 +562,39 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
     emit('');
   }
 
+  // Run clean if not dirty mode
+  if (instance.mode !== 'dirty') {
+    emit(`⏳ Running ${instance.mode} clean...`);
+    const { CleanManager } = await import('../src/core/clean.js');
+    const cleaner = new CleanManager(projectRoot);
+    const results = await cleaner.execute(instance.mode as any, instance.platform, (step, status) => {
+      const icon = status === 'running' ? '⏳' : '✔';
+      emit(`  ${icon} ${step}`);
+    });
+
+    const failed = results.filter(r => !r.success);
+    if (failed.length > 0) {
+      emit(`  ⚠ ${failed.length} clean step(s) had issues`);
+      for (const f of failed) {
+        emit(`    ✖ ${f.step}: ${f.output.slice(0, 100)}`);
+      }
+    } else {
+      emit(`✔ ${instance.mode} clean complete`);
+    }
+    emit('');
+  }
+
+  // Clear watchman
+  emit('⏳ Clearing watchman...');
+  try {
+    await execShellAsync(`watchman watch-del '${instance.worktree ?? projectRoot}'`, { timeout: 10000 });
+    emit('✔ Watchman cleared');
+  } catch {
+    emit('ℹ Watchman not available or timed out');
+  }
+
   // Check port
-  emit(`Checking port ${instance.port}...`);
+  emit(`⏳ Checking port ${instance.port}...`);
   const metroMgr = new MetroManager(artifactStore);
   const portFree = await metroMgr.isPortFree(instance.port);
   if (!portFree) {

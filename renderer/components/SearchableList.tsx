@@ -8,6 +8,9 @@ export interface SearchableListProps<T> {
   placeholder?: string;
   renderItem?: (item: T, isActive: boolean) => React.ReactNode;
   loading?: boolean;
+  /** When set, shows a "Create X" button when search has no matches */
+  onCreate?: (query: string) => void;
+  createLabel?: string;
 }
 
 export function SearchableList<T>({
@@ -18,6 +21,8 @@ export function SearchableList<T>({
   placeholder = 'Search...',
   renderItem,
   loading = false,
+  onCreate,
+  createLabel = 'Create',
 }: SearchableListProps<T>) {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -94,18 +99,39 @@ export function SearchableList<T>({
         {loading ? (
           <div className="sl-loading">Loading...</div>
         ) : filtered.length === 0 ? (
-          <div className="sl-empty">No matches</div>
+          <div className="sl-empty">
+            <span>No matches for "{query}"</span>
+            {onCreate && query.trim() && (
+              <button
+                className="sl-create-btn"
+                onClick={() => onCreate(query.trim())}
+              >
+                + {createLabel} "{query.trim()}"
+              </button>
+            )}
+          </div>
         ) : (
-          filtered.map((item, i) => (
-            <div
-              key={i}
-              className={`sl-item${i === activeIndex ? ' active' : ''}`}
-              onClick={() => onSelect(item)}
-              onMouseEnter={() => setActiveIndex(i)}
-            >
-              {(renderItem ?? defaultRenderItem)(item, i === activeIndex)}
-            </div>
-          ))
+          <>
+            {filtered.map((item, i) => (
+              <div
+                key={i}
+                className={`sl-item${i === activeIndex ? ' active' : ''}`}
+                onClick={() => onSelect(item)}
+                onMouseEnter={() => setActiveIndex(i)}
+              >
+                {(renderItem ?? defaultRenderItem)(item, i === activeIndex)}
+              </div>
+            ))}
+            {onCreate && query.trim() && !filtered.some(item => {
+              const label = String(item[labelKey]).toLowerCase();
+              return label === query.trim().toLowerCase();
+            }) && (
+              <div className="sl-item sl-create-item" onClick={() => onCreate(query.trim())}>
+                <span className="sl-create-icon">+</span>
+                <span>{createLabel} "{query.trim()}"</span>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
