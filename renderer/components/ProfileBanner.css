@@ -1,0 +1,48 @@
+.profile-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  margin: 0 12px 4px;
+  border-radius: 6px;
+  -webkit-app-region: no-drag;
+  font-size: 12px;
+}
+
+.profile-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.profile-label {
+  color: var(--muted);
+}
+
+.profile-name {
+  color: var(--accent);
+  font-weight: bold;
+}
+
+.profile-sep {
+  color: var(--muted);
+  margin: 0 4px;
+}
+
+.profile-branch {
+  color: var(--success);
+}
+
+.profile-dirty {
+  color: var(--warning);
+}
+
+.profile-toggle {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.profile-toggle:hover {
+  color: var(--accent);
+}

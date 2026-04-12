@@ -1,4 +1,6 @@
 node_modules/
 dist/
+dist-renderer/
 .rn-dev/
 .superpowers/
+renderer/node_modules/

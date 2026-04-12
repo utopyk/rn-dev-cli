@@ -11,8 +11,13 @@
   ],
   "scripts": {
     "dev": "bun run src/index.tsx",
+    "dev:renderer": "cd renderer && npx vite",
+    "dev:electron": "npx electron electron/main.ts",
+    "dev:gui": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
     "build": "bun run build.ts",
     "build:compile": "bun run build.ts compile",
+    "build:renderer": "cd renderer && npx vite build",
+    "build:electron": "npx electron-builder",
     "test": "bun test",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build"
@@ -48,6 +53,9 @@
     "@types/picomatch": "^4.0.2",
     "@types/react": "^19.2.14",
     "@types/semver": "^7.7.1",
+    "concurrently": "^9.2.1",
+    "electron": "^35.7.5",
+    "electron-builder": "^26.8.1",
     "esbuild": "^0.27.4",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

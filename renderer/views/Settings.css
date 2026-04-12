@@ -1,0 +1,69 @@
+.settings-view {
+  flex: 1;
+  padding: 20px 24px;
+  overflow-y: auto;
+  -webkit-app-region: no-drag;
+}
+
+.settings-title {
+  font-size: 18px;
+  color: var(--fg);
+  margin-bottom: 20px;
+}
+
+.settings-section {
+  margin-bottom: 24px;
+}
+
+.settings-section-title {
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.theme-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.theme-card:hover {
+  border-color: var(--accent);
+  background: var(--selection);
+}
+
+.theme-card.active {
+  border-color: var(--accent);
+  background: var(--selection);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.theme-preview {
+  display: flex;
+  gap: 6px;
+  padding: 10px 8px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.theme-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+
+.theme-name {
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--fg);
+}
