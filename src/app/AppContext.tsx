@@ -283,18 +283,39 @@ export function AppProvider({
             appendToolOutput("\u2717 No on-save actions configured", "");
           }
           break;
+        case "Y": {
+          // Shift+Y: copy focused panel content to clipboard via pbcopy
+          // Uses the focusedPanel from DevSpaceView context
+          const content = toolOutputLines.join("\n");
+          try {
+            const proc = Bun.spawn(["pbcopy"], { stdin: "pipe" });
+            proc.stdin.write(content);
+            proc.stdin.end();
+            appendToolOutput("✔ Tool output copied to clipboard (" + toolOutputLines.length + " lines)");
+          } catch {
+            appendToolOutput("✖ pbcopy not available");
+          }
+          break;
+        }
         case "y": {
-          // Dump tool output to temp file and open in less for native copy
-          const fs = require("fs");
-          const logPath = "/tmp/rn-dev-logs/tool-output.log";
-          try { fs.mkdirSync("/tmp/rn-dev-logs", { recursive: true }); } catch {}
-          fs.writeFileSync(logPath, toolOutputLines.join("\n") + "\n");
-          // Suspend TUI, open less, resume TUI when less exits
-          Bun.spawnSync(["less", "+G", "-R", logPath], {
-            stdin: "inherit",
-            stdout: "inherit",
-            stderr: "inherit",
-          });
+          // y: copy last error block to clipboard (most common use case)
+          const lastErrorIdx = toolOutputLines.findLastIndex(
+            (l: string) => l.includes("❌") || l.includes("Build failed")
+          );
+          const linesToCopy = lastErrorIdx >= 0
+            ? toolOutputLines.slice(lastErrorIdx)
+            : toolOutputLines.slice(-20); // last 20 lines if no error
+          const text = linesToCopy.join("\n");
+          try {
+            const proc = Bun.spawn(["pbcopy"], { stdin: "pipe" });
+            proc.stdin.write(text);
+            proc.stdin.end();
+            appendToolOutput(lastErrorIdx >= 0
+              ? "✔ Error copied to clipboard (" + linesToCopy.length + " lines)"
+              : "✔ Last 20 lines copied to clipboard");
+          } catch {
+            appendToolOutput("✖ pbcopy not available");
+          }
           break;
         }
         case "o": {
@@ -340,7 +361,7 @@ export function AppProvider({
     { key: "t", label: "Type Check", action: () => runShortcut("t") },
     { key: "c", label: "Clean", action: () => runShortcut("c") },
     { key: "w", label: "Toggle Watcher", action: () => runShortcut("w") },
-    { key: "y", label: "View Logs", action: () => runShortcut("y") },
+    { key: "y", label: "Copy Error", action: () => runShortcut("y") },
     { key: "o", label: "Dump Logs", action: () => runShortcut("o") },
     { key: "q", label: "Quit", action: () => runShortcut("q") },
   ];
