@@ -47,9 +47,10 @@ interface SidebarProps {
   activeTab: ViewTab;
   onTabChange: (tab: ViewTab) => void;
   onShortcut: (command: string) => void;
+  onOpenWizard?: () => void;
 }
 
-export function Sidebar({ activeTab, onTabChange, onShortcut }: SidebarProps) {
+export function Sidebar({ activeTab, onTabChange, onShortcut, onOpenWizard }: SidebarProps) {
   return (
     <div className="sidebar">
       {/* Logo */}
@@ -102,6 +103,11 @@ export function Sidebar({ activeTab, onTabChange, onShortcut }: SidebarProps) {
 
       {/* Footer */}
       <div className="sidebar-footer">
+        {onOpenWizard && (
+          <button className="sidebar-new-worktree" onClick={onOpenWizard} style={{ marginBottom: 8 }}>
+            Setup Wizard
+          </button>
+        )}
         <button className="sidebar-new-worktree">+ New Worktree</button>
       </div>
     </div>

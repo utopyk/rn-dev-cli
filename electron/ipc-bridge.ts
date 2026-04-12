@@ -135,6 +135,91 @@ export function setupIpcBridge(window: BrowserWindow) {
   ipcMain.handle('get:themes', async () => {
     return ['midnight', 'ember', 'arctic', 'neon-drive'];
   });
+
+  // ── Wizard IPC Handlers ──
+
+  ipcMain.handle('wizard:hasProfile', async () => {
+    if (!projectRoot) return false;
+    const profileStore = new ProfileStore(path.join(projectRoot, '.rn-dev', 'profiles'));
+    const branch = await getCurrentBranch(projectRoot) ?? 'main';
+    return profileStore.findDefault(null, branch) !== null;
+  });
+
+  ipcMain.handle('wizard:getWorktrees', async () => {
+    if (!projectRoot) return [];
+    const worktrees = await getWorktrees(projectRoot);
+    return worktrees.map(wt => ({
+      name: wt.isMain ? 'Default (root)' : path.basename(wt.path),
+      path: wt.path,
+      branch: wt.branch,
+      isMain: wt.isMain,
+    }));
+  });
+
+  ipcMain.handle('wizard:getBranches', async () => {
+    if (!projectRoot) return [];
+    try {
+      const output = await execShellAsync(
+        'git for-each-ref --sort=-committerdate --format="%(refname:short)" refs/heads/ | head -20',
+        { cwd: projectRoot, timeout: 5000 }
+      );
+      return output.split('\n').filter(Boolean);
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('wizard:getDevices', async (_, platform: string) => {
+    try {
+      const devices = await listDevices(platform as any);
+      return devices.map(d => ({
+        id: d.id,
+        name: d.name,
+        type: d.type,
+        status: d.status,
+        runtime: d.runtime,
+      }));
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('wizard:getTooling', async () => {
+    if (!projectRoot) return [];
+    try {
+      const { detectTooling } = await import('../src/core/tooling-detector.js');
+      return detectTooling(projectRoot);
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('wizard:getPreflightChecks', async () => {
+    return [
+      { id: 'node-version', label: 'Node.js version', platform: 'all' },
+      { id: 'ruby-version', label: 'Ruby version', platform: 'all' },
+      { id: 'xcode-cli-tools', label: 'Xcode CLI tools', platform: 'ios' },
+      { id: 'cocoapods-installed', label: 'CocoaPods', platform: 'ios' },
+      { id: 'podfile-lock-sync', label: 'Podfile.lock sync', platform: 'ios' },
+      { id: 'watchman', label: 'Watchman', platform: 'all' },
+      { id: 'node-modules-sync', label: 'node_modules sync', platform: 'all' },
+      { id: 'metro-port', label: 'Metro port available', platform: 'all' },
+      { id: 'env-file', label: '.env file', platform: 'all' },
+      { id: 'patch-package', label: 'patch-package', platform: 'all' },
+    ];
+  });
+
+  ipcMain.handle('wizard:saveProfile', async (_, profileData) => {
+    if (!projectRoot) return { ok: false, error: 'No project root' };
+    const profile = { ...profileData, projectRoot };
+    const profileStore = new ProfileStore(path.join(projectRoot, '.rn-dev', 'profiles'));
+    profileStore.save(profile);
+    currentProfile = profile;
+
+    // Restart services with new profile
+    await startRealServices(projectRoot);
+    return { ok: true };
+  });
 }
 
 /**

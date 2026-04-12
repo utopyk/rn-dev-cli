@@ -8,6 +8,7 @@ import { DevToolsView } from './views/DevToolsView';
 import { LintTest } from './views/LintTest';
 import { MetroLogs } from './views/MetroLogs';
 import { Settings } from './views/Settings';
+import { Wizard } from './views/Wizard';
 import { useIpcOn, useIpcInvoke } from './hooks/useIpc';
 import { useSimulatedLogs } from './hooks/useSimulatedLogs';
 import './App.css';
@@ -25,11 +26,19 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ViewTab>('dev-space');
   const [profileVisible, setProfileVisible] = useState(true);
   const [profile] = useState<ProfileInfo>(defaultProfile);
+  const [showWizard, setShowWizard] = useState(false);
 
   const [serviceLines, setServiceLines] = useState<string[]>([]);
   const [metroLines, setMetroLines] = useState<string[]>([]);
 
   const invoke = useIpcInvoke();
+
+  // Check if a profile exists on mount — show wizard if not
+  useEffect(() => {
+    invoke('wizard:hasProfile').then((hasProfile: boolean) => {
+      if (!hasProfile) setShowWizard(true);
+    });
+  }, [invoke]);
 
   // Stable callbacks for log appending
   const addServiceLog = useCallback((line: string) => {
@@ -120,9 +129,25 @@ export function App() {
     }
   };
 
+  if (showWizard) {
+    return (
+      <div className="app-root">
+        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} />
+        <div className="app-main">
+          <div className="app-content">
+            <Wizard
+              onComplete={() => setShowWizard(false)}
+              onCancel={() => setShowWizard(false)}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-root">
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} />
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} />
       <div className="app-main">
         <ProfileBanner
           profile={profile}
