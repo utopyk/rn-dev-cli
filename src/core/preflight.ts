@@ -810,6 +810,71 @@ function makePatchPackageCheck(projectRoot: string): PreflightCheck {
 }
 
 // ---------------------------------------------------------------------------
+// Code Signing Check
+// ---------------------------------------------------------------------------
+
+function makeCodeSigningCheck(projectRoot: string): PreflightCheck {
+  return {
+    id: "code-signing",
+    name: "Code signing (iOS)",
+    severity: "warning",
+    platform: "ios",
+    check: async () => {
+      const iosDir = join(projectRoot, "ios");
+      if (!existsSync(iosDir)) {
+        return { passed: true, message: "No ios directory found" };
+      }
+
+      // Find the .xcodeproj file
+      try {
+        const entries = readdirSync(iosDir);
+        for (const entry of entries) {
+          if (entry.endsWith(".xcodeproj")) {
+            const pbxproj = join(iosDir, entry, "project.pbxproj");
+            if (existsSync(pbxproj)) {
+              const content = readFileSync(pbxproj, "utf8");
+              const manualMatches = content.match(/CODE_SIGN_STYLE\s*=\s*Manual/g);
+              if (manualMatches && manualMatches.length > 0) {
+                return {
+                  passed: false,
+                  message: `Manual code signing detected (${manualMatches.length} targets). Local builds may fail without CI certificates. Run fix to switch to Automatic signing.`,
+                  details: "This is common in worktrees set up by CI. Switching to Automatic signing won't break CI — Fastlane overrides it at build time.",
+                };
+              }
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      return { passed: true, message: "Code signing is set to Automatic" };
+    },
+    fix: async () => {
+      // Switch from Manual to Automatic signing
+      const iosDir = join(projectRoot, "ios");
+      try {
+        const entries = readdirSync(iosDir);
+        for (const entry of entries) {
+          if (entry.endsWith(".xcodeproj")) {
+            const pbxproj = join(iosDir, entry, "project.pbxproj");
+            if (existsSync(pbxproj)) {
+              const content = readFileSync(pbxproj, "utf8");
+              const fixed = content.replace(/CODE_SIGN_STYLE\s*=\s*Manual/g, "CODE_SIGN_STYLE = Automatic");
+              require("fs").writeFileSync(pbxproj, fixed);
+              return true;
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+      return false;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // createDefaultPreflightEngine
 // ---------------------------------------------------------------------------
 
@@ -834,6 +899,7 @@ export function createDefaultPreflightEngine(
   engine.register(makeNodeModulesSyncCheck(projectRoot));
   engine.register(makeEnvFileCheck(projectRoot));
   engine.register(makePatchPackageCheck(projectRoot));
+  engine.register(makeCodeSigningCheck(projectRoot));
 
   return engine;
 }

@@ -498,6 +498,7 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
       { id: 'metro-port', label: 'Metro port available', platform: 'all' },
       { id: 'env-file', label: '.env file', platform: 'all' },
       { id: 'patch-package', label: 'patch-package', platform: 'all' },
+      { id: 'code-signing', label: 'Code signing (auto vs manual)', platform: 'ios' },
     ];
   });
 
@@ -584,8 +585,8 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
       }
       // Check if critical steps failed (install-dependencies, pod-install)
       const criticalFailed = failed.filter(f =>
-        f.step === 'Install npm/yarn/pnpm dependencies' ||
-        f.step === 'Run pod install'
+        f.step === 'install-dependencies' ||
+        f.step === 'pod-install'
       );
       if (criticalFailed.length > 0) {
         emit('');
