@@ -582,13 +582,29 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
       emit(`  ⚠ ${failed.length} clean step(s) had issues:`);
       for (const f of failed) {
         emit(`    ✖ ${f.step}:`);
-        // Show the full error output, split into lines
-        const errorLines = f.output.split('\n').filter((l: string) => l.trim());
-        for (const line of errorLines.slice(0, 10)) {
-          emit(`      ${line.trim().slice(0, 200)}`);
-        }
-        if (errorLines.length > 10) {
-          emit(`      ... (${errorLines.length - 10} more lines)`);
+        // Filter noise from error output: curl progress, blank lines, percentage bars
+        const errorLines = f.output.split('\n')
+          .map((l: string) => l.trim())
+          .filter((l: string) => {
+            if (!l) return false;
+            // Skip curl download progress
+            if (l.startsWith('% Total') || l.startsWith('Dload') || /^\d+\s+[\d.]+[MKG]/.test(l)) return false;
+            if (/^\d+\s+\d+\s+\d+\s+\d+/.test(l)) return false;
+            if (l.includes('--:--:--')) return false;
+            // Skip the command itself
+            if (l.startsWith('Command failed')) return false;
+            return true;
+          });
+
+        if (errorLines.length === 0) {
+          emit(`      (no error details captured — check /tmp/rn-dev-logs/ for full output)`);
+        } else {
+          for (const line of errorLines.slice(-15)) { // Show LAST 15 lines (error is usually at the end)
+            emit(`      ${line.slice(0, 200)}`);
+          }
+          if (errorLines.length > 15) {
+            emit(`      ... (${errorLines.length - 15} earlier lines omitted)`);
+          }
         }
       }
       // Check if critical steps failed (install-dependencies, pod-install)

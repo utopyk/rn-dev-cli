@@ -43,13 +43,15 @@ async function run(
     });
     return { success: true, output: (output ?? "").trim() };
   } catch (err: unknown) {
-    if (options.ignoreFailure) {
-      const msg =
-        err instanceof Error ? err.message : String(err);
-      return { success: true, output: msg };
-    }
     const msg = err instanceof Error ? err.message : String(err);
-    return { success: false, output: msg };
+    const stderr = (err as any)?.stderr ?? '';
+    const stdout = (err as any)?.stdout ?? '';
+    const fullOutput = [msg, stderr, stdout].filter(Boolean).join('\n');
+
+    if (options.ignoreFailure) {
+      return { success: true, output: fullOutput };
+    }
+    return { success: false, output: fullOutput };
   }
 }
 
