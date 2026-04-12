@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "bun run src/index.tsx",
     "dev:renderer": "cd renderer && npx vite",
-    "dev:electron": "npx electron electron/main.ts",
+    "dev:electron": "electron electron/launcher.cjs",
     "dev:gui": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
     "build": "bun run build.ts",
     "build:compile": "bun run build.ts compile",
