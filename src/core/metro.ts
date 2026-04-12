@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import path from "path";
 import fs from "fs";
 import * as net from "net";
+import { spawn, execFile } from "child_process";
 import type { ArtifactStore } from "./artifact.js";
 import type { MetroInstance } from "./types.js";
 
@@ -103,19 +104,21 @@ export class MetroManager extends EventEmitter {
    * Find the PID of any process listening on `port` using `lsof -i :PORT -t`.
    * Returns null if no process is found or lsof is unavailable.
    */
-  async findProcessOnPort(port: number): Promise<number | null> {
-    try {
-      const proc = Bun.spawn(["lsof", "-i", `:${port}`, "-t"], {
-        stdout: "pipe",
-        stderr: "ignore",
-      });
-      const text = await new Response(proc.stdout).text();
-      await proc.exited;
-      const pid = parseInt(text.trim(), 10);
-      return isNaN(pid) ? null : pid;
-    } catch {
-      return null;
-    }
+  findProcessOnPort(port: number): Promise<number | null> {
+    return new Promise((resolve) => {
+      try {
+        execFile("lsof", ["-i", `:${port}`, "-t"], (err, stdout) => {
+          if (err) {
+            resolve(null);
+            return;
+          }
+          const pid = parseInt(stdout.trim(), 10);
+          resolve(isNaN(pid) ? null : pid);
+        });
+      } catch {
+        resolve(null);
+      }
+    });
   }
 
   /**
@@ -175,13 +178,11 @@ export class MetroManager extends EventEmitter {
       args.push("--verbose");
     }
 
-    // Use Bun.spawn for proper async stream handling
+    // Use Node's child_process.spawn for compatibility with both Bun and Node/Electron
     const [cmd, ...cmdPrefix] = resolveRnBin(projectRoot);
-    const proc = Bun.spawn([cmd, ...cmdPrefix, ...args], {
+    const proc = spawn(cmd, [...cmdPrefix, ...args], {
       cwd: projectRoot,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
+      stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
         ...env,
@@ -191,7 +192,7 @@ export class MetroManager extends EventEmitter {
     const instance: MetroInstance = {
       worktree: worktreeKey,
       port,
-      pid: proc.pid,
+      pid: proc.pid ?? 0,
       status: "starting",
       startedAt: new Date(),
       projectRoot,
@@ -199,52 +200,47 @@ export class MetroManager extends EventEmitter {
 
     this.instances.set(worktreeKey, instance);
 
-    // Read stdout asynchronously — non-blocking
-    const readStream = async (stream: ReadableStream<Uint8Array> | null, streamName: "stdout" | "stderr") => {
+    // Read a Node stream line by line — non-blocking
+    const attachStream = (stream: NodeJS.ReadableStream | null, streamName: "stdout" | "stderr") => {
       if (!stream) return;
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = decoder.decode(value, { stream: true });
-          const lines = text.split("\n");
-          for (const line of lines) {
-            if (line.trim()) {
-              if (
-                streamName === "stdout" && (
-                  line.includes("Metro waiting on") ||
-                  line.includes("Metro is running") ||
-                  line.includes("Welcome to Metro") ||
-                  line.includes("Dev server ready")
-                )
-              ) {
-                instance.status = "running";
-                this.emit("status", { worktreeKey, status: "running" });
-              }
-              this.emit("log", { worktreeKey, line, stream: streamName });
+      let buffer = "";
+      stream.on("data", (chunk: Buffer | string) => {
+        buffer += chunk.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (line.trim()) {
+            if (
+              streamName === "stdout" && (
+                line.includes("Metro waiting on") ||
+                line.includes("Metro is running") ||
+                line.includes("Welcome to Metro") ||
+                line.includes("Dev server ready")
+              )
+            ) {
+              instance.status = "running";
+              this.emit("status", { worktreeKey, status: "running" });
             }
+            this.emit("log", { worktreeKey, line, stream: streamName });
           }
         }
-      } catch {
-        // Stream closed
-      }
+      });
     };
 
-    readStream(proc.stdout as ReadableStream<Uint8Array>, "stdout");
-    readStream(proc.stderr as ReadableStream<Uint8Array>, "stderr");
+    attachStream(proc.stdout, "stdout");
+    attachStream(proc.stderr, "stderr");
 
     // Handle process exit
-    proc.exited.then((code) => {
+    proc.on("exit", (code) => {
       const current = this.instances.get(worktreeKey);
       if (current) {
-        const newStatus = code === 0 ? "stopped" : "error";
+        const exitCode = code ?? 1;
+        const newStatus = exitCode === 0 ? "stopped" : "error";
         current.status = newStatus;
         const payload: { worktreeKey: string; status: string; error?: string } =
           { worktreeKey, status: newStatus };
-        if (code !== 0) {
-          payload.error = `Metro exited with code ${code}`;
+        if (exitCode !== 0) {
+          payload.error = `Metro exited with code ${exitCode}`;
         }
         this.emit("status", payload);
       }

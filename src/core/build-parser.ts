@@ -1,3 +1,4 @@
+import { spawnSync } from "child_process";
 import type { BuildError } from "./types.js";
 
 // Strip ANSI escape codes from text
@@ -18,11 +19,10 @@ export function parseXcresultErrors(xcresultPath: string): BuildError[] {
   const errors: BuildError[] = [];
 
   try {
-    const proc = Bun.spawnSync(["xcrun", "xcresulttool", "get", "build-results", "--path", xcresultPath], {
-      stdout: "pipe",
-      stderr: "pipe",
+    const proc = spawnSync("xcrun", ["xcresulttool", "get", "build-results", "--path", xcresultPath], {
+      encoding: "buffer",
     });
-    const json = proc.stdout.toString();
+    const json = proc.stdout ? proc.stdout.toString() : "";
 
     const result = JSON.parse(json);
 
@@ -59,11 +59,10 @@ export function parseXcresultErrors(xcresultPath: string): BuildError[] {
   // Fallback: try the older action log format
   if (errors.length === 0) {
     try {
-      const proc2 = Bun.spawnSync(["xcrun", "xcresulttool", "get", "log", "--type", "action", "--path", xcresultPath], {
-        stdout: "pipe",
-        stderr: "pipe",
+      const proc2 = spawnSync("xcrun", ["xcresulttool", "get", "log", "--type", "action", "--path", xcresultPath], {
+        encoding: "buffer",
       });
-      const json = proc2.stdout.toString();
+      const json = proc2.stdout ? proc2.stdout.toString() : "";
       const result = JSON.parse(json);
 
       // Walk messages looking for errors

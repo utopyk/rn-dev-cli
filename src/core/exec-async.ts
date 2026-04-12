@@ -1,12 +1,40 @@
 /**
- * Non-blocking shell execution using Bun.spawn.
- * Drop-in replacement for execSync that doesn't freeze the event loop.
+ * Non-blocking shell execution using Node's child_process.spawn.
+ * Compatible with both Bun and Node.js (Electron).
  */
+
+import { spawn } from "child_process";
 
 export interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+}
+
+/**
+ * Collect all data from a Node readable stream into a string.
+ */
+function collectStream(stream: NodeJS.ReadableStream | null): Promise<string> {
+  return new Promise((resolve) => {
+    if (!stream) {
+      resolve("");
+      return;
+    }
+    const chunks: Buffer[] = [];
+    stream.on("data", (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    stream.on("error", () => resolve(Buffer.concat(chunks).toString()));
+  });
+}
+
+/**
+ * Wait for a spawned child process to exit, returning its exit code.
+ */
+function waitForExit(proc: ReturnType<typeof spawn>): Promise<number> {
+  return new Promise((resolve) => {
+    proc.on("exit", (code) => resolve(code ?? 1));
+    proc.on("error", () => resolve(1));
+  });
 }
 
 /**
@@ -22,11 +50,9 @@ export async function execAsync(
   }
 ): Promise<string> {
   const parts = cmd.split(" ");
-  const proc = Bun.spawn(parts, {
+  const proc = spawn(parts[0], parts.slice(1), {
     cwd: options?.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+    stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...options?.env },
   });
 
@@ -40,11 +66,12 @@ export async function execAsync(
     }, options.timeout);
   }
 
-  const exitCode = await proc.exited;
+  const [exitCode, stdout, stderr] = await Promise.all([
+    waitForExit(proc),
+    collectStream(proc.stdout),
+    collectStream(proc.stderr),
+  ]);
   if (timer) clearTimeout(timer);
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
 
   if (timedOut) {
     throw new Error(`Command timed out after ${options!.timeout}ms: ${cmd}`);
@@ -74,12 +101,9 @@ export async function execAsyncSafe(
   }
 ): Promise<ExecResult> {
   const parts = cmd.split(" ");
-
-  const proc = Bun.spawn(parts, {
+  const proc = spawn(parts[0], parts.slice(1), {
     cwd: options?.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+    stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...options?.env },
   });
 
@@ -92,11 +116,12 @@ export async function execAsyncSafe(
     }, options.timeout);
   }
 
-  const exitCode = await proc.exited;
+  const [exitCode, stdout, stderr] = await Promise.all([
+    waitForExit(proc),
+    collectStream(proc.stdout),
+    collectStream(proc.stderr),
+  ]);
   if (timer) clearTimeout(timer);
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
 
   return {
     stdout,
@@ -116,11 +141,9 @@ export async function execShellAsync(
     env?: Record<string, string>;
   }
 ): Promise<string> {
-  const proc = Bun.spawn(["sh", "-c", cmd], {
+  const proc = spawn("sh", ["-c", cmd], {
     cwd: options?.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+    stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...options?.env },
   });
 
@@ -133,11 +156,12 @@ export async function execShellAsync(
     }, options.timeout);
   }
 
-  const exitCode = await proc.exited;
+  const [exitCode, stdout, stderr] = await Promise.all([
+    waitForExit(proc),
+    collectStream(proc.stdout),
+    collectStream(proc.stderr),
+  ]);
   if (timer) clearTimeout(timer);
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
 
   if (timedOut) {
     throw new Error(`Command timed out after ${options!.timeout}ms: ${cmd}`);

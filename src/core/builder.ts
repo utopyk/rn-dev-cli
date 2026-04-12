@@ -1,7 +1,7 @@
 import path from "path";
 import fs, { existsSync, rmSync } from "fs";
 import { EventEmitter } from "events";
-import { type Subprocess } from "bun";
+import { spawn, type ChildProcess } from "child_process";
 import { parseXcodebuildErrors, parseGradleErrors, parseXcresultErrors } from "./build-parser.js";
 
 function resolveRnBin(projectRoot: string): [string, ...string[]] {
@@ -48,7 +48,7 @@ export interface BuildResult {
  *   'done'     — { success: boolean, errors: BuildError[] }
  */
 export class Builder extends EventEmitter {
-  private process: Subprocess | null = null;
+  private process: ChildProcess | null = null;
   private rawOutput = "";
   private xcresultPath: string | null = null;
   private detectedXcresultPath: string | null = null;
@@ -89,13 +89,11 @@ export class Builder extends EventEmitter {
     try { require("fs").mkdirSync("/tmp/rn-dev-logs", { recursive: true }); } catch {}
     try { require("fs").writeFileSync(buildLogPath, `Build started: ${new Date().toISOString()}\n${cmd} ${[...cmdPrefix, ...args].join(" ")}\n\n`); } catch {}
 
-    let proc: Subprocess;
+    let proc: ChildProcess;
     try {
-      proc = Bun.spawn([cmd, ...cmdPrefix, ...args], {
+      proc = spawn(cmd, [...cmdPrefix, ...args], {
         cwd: projectRoot,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
+        stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, ...env },
       });
     } catch (err: any) {
@@ -113,80 +111,76 @@ export class Builder extends EventEmitter {
 
     this.process = proc;
 
-    // Async stream reader — non-blocking, yields to event loop
-    const readStream = async (stream: ReadableStream<Uint8Array> | null, streamName: "stdout" | "stderr") => {
+    // Node stream reader — non-blocking, event-driven
+    const attachStream = (stream: NodeJS.ReadableStream | null, streamName: "stdout" | "stderr") => {
       if (!stream) return;
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = stripAnsi(decoder.decode(value, { stream: true }));
-          this.rawOutput += text;
-          try { require("fs").appendFileSync(buildLogPath, text); } catch {}
+      let buffer = "";
+      stream.on("data", (chunk: Buffer | string) => {
+        const text = stripAnsi(chunk.toString());
+        this.rawOutput += text;
+        try { require("fs").appendFileSync(buildLogPath, text); } catch {}
 
-          // Detect xcresult bundle path
-          const xcresultMatch = text.match(/(?:Writing|Wrote)\s+(?:error\s+)?result\s+bundle\s+to\s+(.+?\.xcresult)/i);
-          if (xcresultMatch) {
-            this.detectedXcresultPath = xcresultMatch[1].trim();
+        // Detect xcresult bundle path
+        const xcresultMatch = text.match(/(?:Writing|Wrote)\s+(?:error\s+)?result\s+bundle\s+to\s+(.+?\.xcresult)/i);
+        if (xcresultMatch) {
+          this.detectedXcresultPath = xcresultMatch[1].trim();
+        }
+
+        buffer += text;
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          const isMilestone =
+            trimmed.startsWith("BUILD SUCCESSFUL") ||
+            trimmed.startsWith("Build Succeeded") ||
+            trimmed.includes("BUILD FAILED") ||
+            trimmed.startsWith("error ") ||
+            trimmed.startsWith("info Found") ||
+            trimmed.startsWith("info Building") ||
+            trimmed.startsWith("info Installing") ||
+            trimmed.startsWith("info Launching") ||
+            trimmed.startsWith("success ") ||
+            trimmed.startsWith("warn ") ||
+            trimmed.includes("FAILURE:") ||
+            /^\s*error:/.test(trimmed) ||
+            /^\/.+:\d+:\d+: (error|fatal error):/.test(trimmed) ||
+            // xcbeautify emoji-prefixed errors and warnings
+            trimmed.startsWith("❌") ||
+            trimmed.startsWith("⚠️") ||
+            trimmed.includes("ld: symbol(s) not found") ||
+            trimmed.includes("ld: Could not find") ||
+            trimmed.includes("linker command failed") ||
+            trimmed.includes("clang: error") ||
+            trimmed.includes("not found for architecture") ||
+            trimmed.includes("framework not found");
+
+          if (trimmed.includes("Compiling") || trimmed.includes("CompileC")) {
+            this.emit("progress", { phase: "Compiling" });
+          } else if (trimmed.includes("Linking") || trimmed.includes("Ld ")) {
+            this.emit("progress", { phase: "Linking" });
+          } else if (trimmed.startsWith("info Installing")) {
+            this.emit("progress", { phase: "Installing" });
+          } else if (trimmed.startsWith("info Launching")) {
+            this.emit("progress", { phase: "Launching" });
           }
 
-          const lines = text.split("\n");
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-
-            const isMilestone =
-              trimmed.startsWith("BUILD SUCCESSFUL") ||
-              trimmed.startsWith("Build Succeeded") ||
-              trimmed.includes("BUILD FAILED") ||
-              trimmed.startsWith("error ") ||
-              trimmed.startsWith("info Found") ||
-              trimmed.startsWith("info Building") ||
-              trimmed.startsWith("info Installing") ||
-              trimmed.startsWith("info Launching") ||
-              trimmed.startsWith("success ") ||
-              trimmed.startsWith("warn ") ||
-              trimmed.includes("FAILURE:") ||
-              /^\s*error:/.test(trimmed) ||
-              /^\/.+:\d+:\d+: (error|fatal error):/.test(trimmed) ||
-              // xcbeautify emoji-prefixed errors and warnings
-              trimmed.startsWith("❌") ||
-              trimmed.startsWith("⚠️") ||
-              trimmed.includes("ld: symbol(s) not found") ||
-              trimmed.includes("ld: Could not find") ||
-              trimmed.includes("linker command failed") ||
-              trimmed.includes("clang: error") ||
-              trimmed.includes("not found for architecture") ||
-              trimmed.includes("framework not found");
-
-            if (trimmed.includes("Compiling") || trimmed.includes("CompileC")) {
-              this.emit("progress", { phase: "Compiling" });
-            } else if (trimmed.includes("Linking") || trimmed.includes("Ld ")) {
-              this.emit("progress", { phase: "Linking" });
-            } else if (trimmed.startsWith("info Installing")) {
-              this.emit("progress", { phase: "Installing" });
-            } else if (trimmed.startsWith("info Launching")) {
-              this.emit("progress", { phase: "Launching" });
-            }
-
-            if (isMilestone) {
-              this.emit("line", { text: trimmed, stream: streamName, replace: false });
-            } else {
-              this.emit("line", { text: `  ${trimmed.slice(0, 100)}`, stream: streamName, replace: true });
-            }
+          if (isMilestone) {
+            this.emit("line", { text: trimmed, stream: streamName, replace: false });
+          } else {
+            this.emit("line", { text: `  ${trimmed.slice(0, 100)}`, stream: streamName, replace: true });
           }
         }
-      } catch {
-        // Stream closed
-      }
+      });
     };
 
-    readStream(proc.stdout as ReadableStream<Uint8Array>, "stdout");
-    readStream(proc.stderr as ReadableStream<Uint8Array>, "stderr");
+    attachStream(proc.stdout, "stdout");
+    attachStream(proc.stderr, "stderr");
 
-    proc.exited.then((code) => {
+    proc.on("exit", (code) => {
       const success = code === 0;
       let errors: BuildError[] = [];
 
@@ -261,11 +255,12 @@ export class Builder extends EventEmitter {
 
   cancel(): void {
     if (this.process) {
+      const pid = this.process.pid;
       try {
-        process.kill(-this.process.pid, "SIGKILL");
+        if (pid != null) process.kill(-pid, "SIGKILL");
       } catch {
         try {
-          this.process.kill();
+          this.process.kill("SIGKILL");
         } catch {}
       }
       this.process = null;
