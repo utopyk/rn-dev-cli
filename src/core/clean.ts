@@ -308,7 +308,7 @@ export class CleanManager {
       description: "Run pod install",
       platform: "ios",
       mode: ["clean", "ultra-clean"],
-      action: async () => run("LANG=en_US.UTF-8 pod install", { cwd: iosDir, timeout: 300000 }),
+      action: async () => run("LANG=en_US.UTF-8 pod install --repo-update", { cwd: iosDir, timeout: 600000 }),
     };
 
     // ------------------------------------------------------------------

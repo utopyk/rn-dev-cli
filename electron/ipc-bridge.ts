@@ -571,7 +571,9 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
   if (instance.mode !== 'dirty') {
     send('instance:section:start', { instanceId: instance.id, id: 'clean', title: `${instance.mode} Clean`, icon: '\u23F3' });
     emit(`Running ${instance.mode} clean...`);
-    const cleaner = new CleanManager(projectRoot);
+    // Use the worktree path if available, otherwise the main project root
+    const effectiveRoot = instance.worktree ?? projectRoot;
+    const cleaner = new CleanManager(effectiveRoot);
     const results = await cleaner.execute(instance.mode as any, instance.platform, (step, status) => {
       const icon = status === 'running' ? '\u23F3' : '\u2714';
       emit(`  ${icon} ${step}`);
