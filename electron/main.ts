@@ -7,23 +7,33 @@ const isDev = !app.isPackaged;
 
 let mainWindow: BrowserWindow | null = null;
 
-/** Try ports 5173-5180 to find the running Vite dev server */
-async function findVitePort(): Promise<number> {
+/** Wait for Vite dev server to be ready, trying ports 5173-5180, with retries */
+async function waitForVite(maxRetries = 30): Promise<number> {
   const http = require('http') as typeof import('http');
-  for (let port = 5173; port <= 5180; port++) {
-    try {
-      const ok = await new Promise<boolean>((resolve) => {
-        const req = http.get(`http://localhost:${port}`, (res: any) => {
-          res.destroy();
-          resolve(res.statusCode === 200);
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    for (let port = 5173; port <= 5180; port++) {
+      try {
+        const ok = await new Promise<boolean>((resolve) => {
+          const req = http.get(`http://localhost:${port}`, (res: any) => {
+            res.destroy();
+            resolve(res.statusCode === 200);
+          });
+          req.on('error', () => resolve(false));
+          req.setTimeout(300, () => { req.destroy(); resolve(false); });
         });
-        req.on('error', () => resolve(false));
-        req.setTimeout(500, () => { req.destroy(); resolve(false); });
-      });
-      if (ok) return port;
-    } catch {}
+        if (ok) return port;
+      } catch {}
+    }
+    // Wait 500ms before retrying
+    await new Promise(r => setTimeout(r, 500));
+    if (attempt % 5 === 4) {
+      console.log(`[electron] Waiting for Vite dev server... (attempt ${attempt + 1})`);
+    }
   }
-  return 5173; // fallback
+
+  console.log('[electron] Vite not found, falling back to port 5173');
+  return 5173;
 }
 
 async function createWindow() {
@@ -44,8 +54,8 @@ async function createWindow() {
   });
 
   if (isDev) {
-    // Try common Vite ports — 5173 may be taken
-    const vitePort = await findVitePort();
+    // Wait for Vite to be ready before loading
+    const vitePort = await waitForVite();
     console.log(`[electron] Loading Vite dev server on port ${vitePort}`);
     mainWindow.loadURL(`http://localhost:${vitePort}`);
   } else {
