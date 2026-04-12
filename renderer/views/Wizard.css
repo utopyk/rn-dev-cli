@@ -199,9 +199,35 @@
 }
 
 .sl-device-dot.booted { background: var(--success); }
+.sl-device-dot.available { background: var(--success); }
 .sl-device-dot.shutdown { background: var(--muted); }
 .sl-device-dot.connected { background: var(--success); }
 .sl-device-dot.disconnected { background: var(--error); }
+
+.sl-device-badge {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.sl-device-type {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.sl-device-type.physical {
+  color: var(--success);
+  background: rgba(158, 206, 106, 0.15);
+  border: 1px solid rgba(158, 206, 106, 0.3);
+}
+
+.sl-device-type.simulator {
+  color: var(--muted);
+  background: rgba(86, 95, 137, 0.15);
+  border: 1px solid rgba(86, 95, 137, 0.3);
+}
 
 /* ── Radio group ── */
 .wz-radio-group {

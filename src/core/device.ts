@@ -10,6 +10,7 @@ export interface Device {
   type: "ios" | "android";
   status: "available" | "booted" | "shutdown" | "unauthorized";
   runtime?: string; // iOS only, e.g. "iOS-17-2"
+  isPhysical?: boolean; // true for real devices, false/undefined for simulators
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +221,7 @@ export function parseXctraceDevices(output: string): Device[] {
         type: "ios",
         status: inOfflineSection ? "shutdown" : "available",
         runtime: `iOS-${version.replace(/\./g, "-")}`,
+        isPhysical: true,
       });
     }
   }

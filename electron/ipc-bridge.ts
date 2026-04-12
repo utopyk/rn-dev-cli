@@ -183,6 +183,7 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
         type: d.type,
         status: d.status,
         runtime: d.runtime,
+        isPhysical: d.isPhysical ?? false,
       }));
     } catch (err: any) {
       console.error(`[ipc] wizard:getDevices error:`, err.message);

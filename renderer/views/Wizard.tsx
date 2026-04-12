@@ -18,6 +18,7 @@ interface DeviceOption {
   type: string;
   status: string;
   runtime?: string;
+  isPhysical?: boolean;
 }
 
 interface PreflightCheck {
@@ -335,8 +336,14 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
               renderItem={(d, isActive) => (
                 <>
                   <span className={`sl-device-dot ${d.status}`} />
+                  <span className={`sl-device-badge ${d.isPhysical ? 'physical' : 'simulator'}`}>
+                    {d.isPhysical ? '📱' : '💻'}
+                  </span>
                   <span className="sl-item-label">{d.name}</span>
-                  <span className="sl-item-meta">{d.runtime ?? d.type}</span>
+                  <span className={`sl-device-type ${d.isPhysical ? 'physical' : 'simulator'}`}>
+                    {d.isPhysical ? 'Device' : 'Simulator'}
+                  </span>
+                  {d.runtime && <span className="sl-item-meta">{d.runtime.replace(/iOS-/,'').replace(/-/g,'.')}</span>}
                 </>
               )}
             />
