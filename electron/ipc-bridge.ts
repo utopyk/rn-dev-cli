@@ -111,7 +111,8 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
 
     const worktreePath = profileData.worktree ?? null;
     const worktreeName = worktreePath ? path.basename(worktreePath) : 'main';
-    const port = profileData.metroPort ?? findFreePort();
+    // Always auto-allocate a free port to avoid conflicts between instances
+    const port = findFreePort();
     const id = `${worktreeName}-${port}`;
 
     // Don't create duplicates
@@ -441,67 +442,6 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     const profile = { ...profileData, projectRoot };
     const profileStore = new ProfileStore(path.join(projectRoot, '.rn-dev', 'profiles'));
     profileStore.save(profile);
-
-    // Create an instance from the saved profile
-    const port = profileData.metroPort ?? findFreePort();
-    const createResult = await ipcMain.emit('instances:create', profileData);
-
-    // Invoke the instances:create handler directly
-    const worktreePath = profileData.worktree ?? null;
-    const worktreeName = worktreePath ? path.basename(worktreePath) : 'main';
-    const id = `${worktreeName}-${port}`;
-
-    if (!instances.has(id)) {
-      // Use the instances:create path
-      const branch = profileData.branch ?? await getCurrentBranch(projectRoot) ?? 'main';
-
-      let deviceName = 'No device';
-      let deviceIcon = '💻';
-      let deviceId: string | null = null;
-
-      if (profileData.devices) {
-        deviceId = profileData.devices.ios ?? profileData.devices.android ?? null;
-        if (deviceId) {
-          try {
-            const deviceList = await listDevices(profileData.platform ?? 'ios');
-            const foundDevice = deviceList.find((d: any) => d.id === deviceId);
-            if (foundDevice) {
-              deviceName = foundDevice.name;
-              deviceIcon = foundDevice.isPhysical ? '📱' : '💻';
-            }
-          } catch { /* keep defaults */ }
-        }
-      }
-
-      const instance: InstanceState = {
-        id,
-        worktree: worktreePath,
-        worktreeName,
-        branch,
-        port,
-        deviceId,
-        deviceName,
-        deviceIcon,
-        platform: profileData.platform ?? 'ios',
-        mode: profileData.mode ?? 'dirty',
-        metro: null,
-        builder: null,
-        serviceLog: [],
-        metroLog: [],
-        metroStatus: 'starting',
-      };
-
-      instances.set(id, instance);
-      activeInstanceId = id;
-
-      send('instance:created', toSummary(instance));
-
-      startInstanceServices(instance, profileData).catch(err => {
-        appendLog(instance, 'service', `ERROR Failed to start: ${err.message}`);
-        send('instance:log', { instanceId: id, text: `Failed to start: ${err.message}` });
-      });
-    }
-
     return { ok: true };
   });
 }

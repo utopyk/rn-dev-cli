@@ -34,12 +34,12 @@ export interface CleanResult {
 
 async function run(
   cmd: string,
-  options: { cwd?: string; ignoreFailure?: boolean } = {}
+  options: { cwd?: string; ignoreFailure?: boolean; timeout?: number } = {}
 ): Promise<{ success: boolean; output: string }> {
   try {
     const output = await execShellAsync(cmd, {
       cwd: options.cwd,
-      timeout: 15000,
+      timeout: options.timeout ?? 120000, // 2 minutes default
     });
     return { success: true, output: (output ?? "").trim() };
   } catch (err: unknown) {
@@ -414,22 +414,25 @@ export class CleanManager {
     };
 
     return [
-      // Clean steps (shared)
+      // 1. Kill watchers first
       killWatchman,
-      removeNodeModules,
-      clearMetroCache,
-      installDependencies,
-      // Clean steps (iOS)
-      podInstall,
-      // Ultra-clean steps (iOS)
+      // 2. Ultra-clean: uninstall apps from devices BEFORE cleaning
+      uninstallIosApp,
+      uninstallAndroidApp,
+      // 3. Ultra-clean: deintegrate pods BEFORE removing them
       podDeintegrate,
       removePods,
+      // 4. Ultra-clean: remove DerivedData and Gradle caches
       removeDerivedData,
-      uninstallIosApp,
-      // Ultra-clean steps (Android)
       gradleStop,
       cleanGradleCaches,
-      uninstallAndroidApp,
+      // 5. Clean + Ultra: remove node_modules and metro cache
+      removeNodeModules,
+      clearMetroCache,
+      // 6. Clean + Ultra: reinstall everything
+      installDependencies,
+      // 7. Clean + Ultra: pod install (after node_modules are back)
+      podInstall,
     ];
   }
 
@@ -469,7 +472,7 @@ export class CleanManager {
     const results: CleanResult[] = [];
 
     for (const step of steps) {
-      onProgress?.(step.name, "running");
+      onProgress?.(step.description, "running");
 
       let result: CleanResult;
       try {
