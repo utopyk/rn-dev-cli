@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>rn-dev</title>
+  <style>
+    :root {
+      --bg: #1a1b26;
+      --fg: #c0caf5;
+      --border: #565f89;
+      --accent: #7aa2f7;
+      --success: #9ece6a;
+      --warning: #e0af68;
+      --error: #f7768e;
+      --muted: #565f89;
+      --highlight: #bb9af7;
+      --selection: #283457;
+      --panel-focus: #1e2030;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      -webkit-app-region: drag;
+      user-select: text;
+    }
+
+    /* ── Tab Bar ── */
+    .tab-bar {
+      display: flex;
+      gap: 8px;
+      padding: 8px 12px;
+      -webkit-app-region: drag;
+      padding-left: 80px; /* space for traffic lights */
+    }
+
+    .tab {
+      padding: 4px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+      transition: all 0.15s ease;
+    }
+
+    .tab:hover {
+      border-color: var(--accent);
+      background: var(--selection);
+    }
+
+    .tab.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: bold;
+      background: var(--selection);
+    }
+
+    /* ── Profile Banner ── */
+    .profile-banner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      margin: 0 12px 4px;
+      border-radius: 6px;
+      -webkit-app-region: no-drag;
+    }
+
+    .profile-banner .label { color: var(--muted); }
+    .profile-banner .name { color: var(--accent); font-weight: bold; }
+    .profile-banner .sep { color: var(--muted); margin: 0 6px; }
+    .profile-banner .branch { color: var(--success); }
+    .profile-banner .mode-dirty { color: var(--warning); }
+    .profile-banner .toggle { color: var(--muted); font-size: 11px; cursor: pointer; }
+
+    /* ── Main Content ── */
+    .main-content {
+      flex: 1;
+      display: flex;
+      gap: 4px;
+      padding: 4px 12px;
+      min-height: 0;
+      -webkit-app-region: no-drag;
+    }
+
+    /* ── Shortcuts Panel ── */
+    .shortcuts-panel {
+      width: 260px;
+      min-width: 220px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .logo {
+      font-weight: bold;
+      margin-bottom: 8px;
+      line-height: 1.2;
+    }
+    .logo .l1 { color: var(--error); }
+    .logo .l2 { color: var(--highlight); }
+    .logo .l3 { color: var(--accent); }
+
+    .shortcut-item {
+      display: flex;
+      gap: 8px;
+      padding: 2px 0;
+    }
+    .shortcut-key {
+      color: var(--accent);
+      font-weight: bold;
+      min-width: 28px;
+    }
+    .shortcut-label { color: var(--fg); }
+
+    .shortcut-feedback {
+      margin-top: auto;
+      padding-top: 8px;
+      color: var(--success);
+      font-weight: bold;
+      min-height: 20px;
+    }
+
+    /* ── Right Panels ── */
+    .right-panels {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .panel {
+      flex: 1;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
+    }
+
+    .panel.focused {
+      border-color: var(--accent);
+      background-color: var(--panel-focus);
+    }
+
+    .panel-header {
+      padding: 4px 10px;
+      font-size: 11px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .panel.focused .panel-header {
+      color: var(--accent);
+      font-weight: bold;
+      border-bottom-color: var(--accent);
+    }
+
+    .panel-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 10px;
+      font-size: 12px;
+      user-select: text;
+      cursor: text;
+    }
+
+    /* Custom scrollbar */
+    .panel-content::-webkit-scrollbar {
+      width: 6px;
+    }
+    .panel-content::-webkit-scrollbar-track {
+      background: var(--bg);
+    }
+    .panel-content::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+    .panel-content::-webkit-scrollbar-thumb:hover {
+      background: var(--accent);
+    }
+
+    /* Log line colors */
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-success { color: var(--success); }
+    .log-warning { color: var(--warning); }
+    .log-error { color: var(--error); }
+    .log-info { color: var(--accent); }
+    .log-muted { color: var(--muted); }
+    .log-default { color: var(--fg); }
+
+    /* ── Bottom Bar ── */
+    .bottom-bar {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 14px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      -webkit-app-region: no-drag;
+    }
+
+    .shortcuts-bar {
+      display: flex;
+      gap: 12px;
+    }
+
+    .shortcuts-bar span {
+      color: var(--fg);
+    }
+    .shortcuts-bar .key {
+      color: var(--accent);
+      font-weight: bold;
+    }
+
+    .status-bar {
+      display: flex;
+      gap: 8px;
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .status-dot.running { background: var(--success); }
+    .status-dot.starting { background: var(--warning); }
+    .status-dot.error { background: var(--error); }
+    .status-dot.stopped { background: var(--muted); }
+  </style>
+</head>
+<body>
+  <!-- Tab Bar -->
+  <div class="tab-bar" id="tabBar">
+    <div class="tab active" data-tab="dev-space">🚀 Dev Space</div>
+    <div class="tab" data-tab="lint-test">🧪 Lint & Test</div>
+    <div class="tab" data-tab="metro-logs">📡 Metro Logs</div>
+    <div class="tab" data-tab="settings">⚙ Settings</div>
+  </div>
+
+  <!-- Profile Banner -->
+  <div class="profile-banner" id="profileBanner">
+    <div>
+      <span class="label">▼ </span>
+      <span class="name">⚙ my-profile</span>
+      <span class="sep">│</span>
+      <span class="branch">main</span>
+      <span class="sep">│</span>
+      <span>ios</span>
+      <span class="sep">│</span>
+      <span class="mode-dirty">dirty</span>
+      <span class="sep">│</span>
+      <span>:8081</span>
+      <span class="sep">│</span>
+      <span>debug</span>
+    </div>
+    <span class="toggle">[p] toggle</span>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main-content" id="devSpace">
+    <!-- Shortcuts Panel -->
+    <div class="shortcuts-panel">
+      <div class="logo">
+        <div class="l1">╦═╗╔╗╗  ╦═╗╔═╗╦  ╦</div>
+        <div class="l2">╠╦╝║║║  ║ ║╠═  ║║</div>
+        <div class="l3">╩╚═╝╚╝  ╩═╝╚═╝ ╚╝</div>
+      </div>
+      <div class="shortcut-item"><span class="shortcut-key">[r]</span><span class="shortcut-label">Reload</span></div>
+      <div class="shortcut-item"><span class="shortcut-key">[d]</span><span class="shortcut-label">Dev Menu</span></div>
+      <div class="shortcut-item"><span class="shortcut-key">[l]</span><span class="shortcut-label">Lint</span></div>
+      <div class="shortcut-item"><span class="shortcut-key">[t]</span><span class="shortcut-label">Type Check</span></div>
+      <div class="shortcut-item"><span class="shortcut-key">[c]</span><span class="shortcut-label">Clean</span></div>
+      <div class="shortcut-item"><span class="shortcut-key">[w]</span><span class="shortcut-label">Toggle Watcher</span></div>
+      <div class="shortcut-item"><span class="shortcut-key">[o]</span><span class="shortcut-label">Dump Logs</span></div>
+      <div class="shortcut-item"><span class="shortcut-key">[q]</span><span class="shortcut-label">Quit</span></div>
+      <div style="margin-top: 12px; color: var(--muted); font-size: 11px;">
+        [f] focus [Tab] switch tab<br>[p] toggle profile
+      </div>
+      <div class="shortcut-feedback" id="feedback"></div>
+    </div>
+
+    <!-- Right Side: Tool Output + Metro -->
+    <div class="right-panels">
+      <div class="panel focused" id="toolPanel" onclick="focusPanel('tool')">
+        <div class="panel-header">
+          <span>Tool Output ◀</span>
+          <span style="font-size: 10px; color: var(--muted)">click to focus • scroll enabled</span>
+        </div>
+        <div class="panel-content" id="toolOutput"></div>
+      </div>
+      <div class="panel" id="metroPanel" onclick="focusPanel('metro')">
+        <div class="panel-header">
+          <span>Metro Output</span>
+          <span style="font-size: 10px; color: var(--muted)">click to focus</span>
+        </div>
+        <div class="panel-content" id="metroOutput"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Bar -->
+  <div class="bottom-bar">
+    <div class="shortcuts-bar">
+      <span><span class="key">[r]</span> Reload</span>
+      <span><span class="key">[d]</span> DevMenu</span>
+      <span><span class="key">[l]</span> Lint</span>
+      <span><span class="key">[t]</span> TypeChk</span>
+      <span><span class="key">[c]</span> Clean</span>
+      <span><span class="key">[f]</span> Focus</span>
+      <span><span class="key">[q]</span> Quit</span>
+    </div>
+    <div class="status-bar">
+      <span>Metro: <span class="status-dot running"></span>Running :8081</span>
+      <span class="sep">│</span>
+      <span>Watcher: <span style="color: var(--success); font-weight: bold;">ON</span></span>
+      <span class="sep">│</span>
+      <span>Module: <span style="color: var(--accent);">Dev Space</span></span>
+    </div>
+  </div>
+
+  <script>
+    // ── State ──
+    let focusedPanel = "tool";
+    let activeTab = "dev-space";
+
+    // ── Log generation ──
+    function getLineClass(line) {
+      if (line.startsWith("✔") || line.startsWith("✅") || line.includes("Succeeded")) return "log-success";
+      if (line.startsWith("⏳") || line.startsWith("▶")) return "log-warning";
+      if (line.startsWith("  ✖") || line.includes("error") || line.startsWith("❌")) return "log-error";
+      if (line.startsWith("  ⚠") || line.startsWith("WARN")) return "log-warning";
+      if (line.startsWith("  [")) return "log-muted";
+      if (line.startsWith("INFO")) return "log-info";
+      return "log-default";
+    }
+
+    function addLogLine(panelId, text) {
+      const el = document.getElementById(panelId);
+      const div = document.createElement("div");
+      div.className = "log-line " + getLineClass(text);
+      div.textContent = text;
+      el.appendChild(div);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    // ── Tab switching ──
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        tab.classList.add("active");
+        activeTab = tab.dataset.tab;
+      });
+    });
+
+    // ── Panel focus ──
+    function focusPanel(panel) {
+      focusedPanel = panel;
+      document.getElementById("toolPanel").classList.toggle("focused", panel === "tool");
+      document.getElementById("metroPanel").classList.toggle("focused", panel === "metro");
+
+      // Update header indicators
+      document.querySelector("#toolPanel .panel-header span:first-child").textContent =
+        panel === "tool" ? "Tool Output ◀" : "Tool Output";
+      document.querySelector("#metroPanel .panel-header span:first-child").textContent =
+        panel === "metro" ? "Metro Output ◀" : "Metro Output";
+    }
+
+    // ── Keyboard shortcuts ──
+    function showFeedback(msg) {
+      const el = document.getElementById("feedback");
+      el.textContent = "→ " + msg;
+      setTimeout(() => { el.textContent = ""; }, 2000);
+    }
+
+    document.addEventListener("keydown", (e) => {
+      // Don't capture if user is selecting text
+      if (window.getSelection().toString().length > 0) return;
+
+      switch(e.key) {
+        case "f":
+          focusPanel(focusedPanel === "tool" ? "metro" : "tool");
+          showFeedback("Focused: " + (focusedPanel === "tool" ? "Tool Output" : "Metro Output"));
+          break;
+        case "Tab":
+          e.preventDefault();
+          const tabs = ["dev-space", "lint-test", "metro-logs", "settings"];
+          const idx = tabs.indexOf(activeTab);
+          const next = tabs[(idx + 1) % tabs.length];
+          document.querySelector(`.tab[data-tab="${next}"]`).click();
+          break;
+        case "r":
+          showFeedback("Reloading app...");
+          addLogLine("toolOutput", "▶ Reloading app...");
+          setTimeout(() => addLogLine("toolOutput", "✔ App reloaded"), 300);
+          break;
+        case "d":
+          showFeedback("Opening dev menu...");
+          addLogLine("toolOutput", "▶ Opening dev menu...");
+          break;
+        case "l":
+          showFeedback("Running lint...");
+          addLogLine("toolOutput", "▶ Running ESLint...");
+          setTimeout(() => {
+            addLogLine("toolOutput", "  src/App.tsx: 0 errors, 2 warnings");
+            addLogLine("toolOutput", "✔ Lint complete: 0 errors, 2 warnings");
+          }, 500);
+          break;
+        case "t":
+          showFeedback("Type checking...");
+          addLogLine("toolOutput", "▶ Running tsc --noEmit...");
+          setTimeout(() => addLogLine("toolOutput", "✔ Type check passed"), 400);
+          break;
+        case "q":
+          window.close();
+          break;
+        case "p":
+          const banner = document.getElementById("profileBanner");
+          banner.style.display = banner.style.display === "none" ? "flex" : "none";
+          break;
+      }
+    });
+
+    // ── Simulate startup logs ──
+    const startupLines = [
+      "⏳ Running preflight checks...",
+      "  ✔ node-version: v22.16.0",
+      "  ✔ ruby-version: 3.2.2",
+      "  ✔ xcode-cli-tools: found",
+      "  ✔ cocoapods-installed: 1.16.2",
+      "  ✔ podfile-lock-sync: OK",
+      "  ✔ watchman: installed",
+      "  ✔ node-modules-sync: OK",
+      "  ✔ metro-port: 8081 free",
+      "",
+      "✔ Watchman watch cleared",
+      "⏳ Starting Metro on port 8081...",
+      "✔ Simulator iPhone 16 Pro already booted",
+      "✔ All services started",
+      "",
+      "⏳ Building for ios...",
+      "  npx react-native run-ios --port 8081 --verbose --udid 3BB933F3...",
+      "  info Found Xcode workspace \"MovieNightsClub.xcworkspace\"",
+      "  info Building (using xcodebuild -workspace ...)",
+    ];
+
+    const buildLines = [];
+    for (let i = 1; i <= 40; i++) {
+      if (i % 12 === 0) buildLines.push(`  ⚠ ld: warning: object file libPods-${i}.a built for newer version`);
+      else if (i % 18 === 0) buildLines.push(`  ✖ error: Module 'React_${i}' not found`);
+      else buildLines.push(`  [${i}/111] CompileC Module${i}.swift`);
+    }
+    buildLines.push("  ✔ Build Succeeded");
+    buildLines.push("  ✔ Installing on iPhone 16 Pro...");
+    buildLines.push("  ✔ Launching com.movienightsclub.app");
+    buildLines.push("✅ Build complete!");
+
+    const metroLines = [
+      "Welcome to React Native v0.84",
+      "Starting dev server on http://localhost:8081",
+      "",
+      "    Welcome to Metro v0.83.5",
+      "    Fast – Scalable – Integrated",
+      "",
+      "INFO  Dev server ready. Press Ctrl+C to exit.",
+      "",
+    ];
+    for (let i = 1; i <= 30; i++) {
+      metroLines.push(i % 8 === 0
+        ? `WARN  Require cycle: A.tsx -> B.tsx -> A.tsx`
+        : `LOG   Running "MovieNightsClub" with {"rootTag":${i + 10}}`);
+    }
+
+    // Stream logs with delays to simulate real output
+    let delay = 0;
+    startupLines.forEach((line, i) => {
+      delay += 50 + Math.random() * 30;
+      setTimeout(() => addLogLine("toolOutput", line), delay);
+    });
+
+    delay += 200;
+    buildLines.forEach((line, i) => {
+      delay += 20 + Math.random() * 15;
+      setTimeout(() => addLogLine("toolOutput", line), delay);
+    });
+
+    metroLines.forEach((line, i) => {
+      setTimeout(() => addLogLine("metroOutput", line), 200 + i * 40);
+    });
+  </script>
+</body>
+</html>
