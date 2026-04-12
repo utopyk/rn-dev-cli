@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import type { ViewTab, ProfileInfo, InstanceInfo, InstanceLogs } from './types';
+import type { ViewTab, ProfileInfo, InstanceInfo, InstanceLogs, LogSection, SectionStartEvent, SectionEndEvent } from './types';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { ProfileBanner } from './components/ProfileBanner';
@@ -13,10 +13,11 @@ import { Wizard } from './views/Wizard';
 import { NewInstanceDialog } from './views/NewInstanceDialog';
 import { useIpcOn, useIpcInvoke } from './hooks/useIpc';
 import { useSimulatedLogs } from './hooks/useSimulatedLogs';
+import type { SimulatedSectionEvent } from './hooks/useSimulatedLogs';
 import './App.css';
 
 function makeEmptyLogs(): InstanceLogs {
-  return { serviceLines: [], metroLines: [] };
+  return { serviceLines: [], metroLines: [], sections: [] };
 }
 
 export function App() {
@@ -69,6 +70,15 @@ export function App() {
     const arr = type === 'service' ? logs.serviceLines : logs.metroLines;
     arr.push(text);
     if (arr.length > 1000) arr.splice(0, arr.length - 1000);
+
+    // Also route service lines into the currently-running section
+    if (type === 'service' && logs.sections.length > 0) {
+      const activeSection = logs.sections.find(s => s.status === 'running');
+      if (activeSection) {
+        activeSection.lines.push(text);
+      }
+    }
+
     instanceLogsRef.current.set(instanceId, logs);
     setLogVersion(v => v + 1);
   }, []);
@@ -119,6 +129,36 @@ export function App() {
     // Build done is informational; logs are already appended via instance:log
   }, []));
 
+  // Section start/end IPC events
+  useIpcOn('instance:section:start', useCallback((data: SectionStartEvent) => {
+    const logs = instanceLogsRef.current.get(data.instanceId);
+    if (!logs) return;
+    // Don't add duplicate sections
+    if (logs.sections.find(s => s.id === data.id)) return;
+    logs.sections.push({
+      id: data.id,
+      title: data.title,
+      icon: data.icon,
+      lines: [],
+      status: 'running',
+      collapsed: false,
+    });
+    setLogVersion(v => v + 1);
+  }, []));
+
+  useIpcOn('instance:section:end', useCallback((data: SectionEndEvent) => {
+    const logs = instanceLogsRef.current.get(data.instanceId);
+    if (!logs) return;
+    const section = logs.sections.find(s => s.id === data.id);
+    if (!section) return;
+    section.status = data.status;
+    // Auto-collapse completed sections (not errors — keep errors visible)
+    if (data.status === 'ok' || data.status === 'warning') {
+      section.collapsed = true;
+    }
+    setLogVersion(v => v + 1);
+  }, []));
+
   // Legacy IPC listeners (for backward compat / browser-only mode)
   const addServiceLogLegacy = useCallback((line: string) => {
     if (activeId) {
@@ -136,6 +176,43 @@ export function App() {
   useIpcOn('metro:log', addMetroLogLegacy);
   useIpcOn('build:line', addServiceLogLegacy);
 
+  // Section toggle handler
+  const handleToggleSection = useCallback((instanceId: string, sectionId: string) => {
+    const logs = instanceLogsRef.current.get(instanceId);
+    if (!logs) return;
+    const section = logs.sections.find(s => s.id === sectionId);
+    if (section) {
+      section.collapsed = !section.collapsed;
+      setLogVersion(v => v + 1);
+    }
+  }, []);
+
+  // Helper to handle section events from simulated logs
+  const handleSimulatedSectionEvent = useCallback((event: SimulatedSectionEvent) => {
+    const logs = instanceLogsRef.current.get('main-8081');
+    if (!logs) return;
+    if (event.type === 'section:start') {
+      if (logs.sections.find(s => s.id === event.id)) return;
+      logs.sections.push({
+        id: event.id,
+        title: event.title ?? event.id,
+        icon: event.icon ?? '\u23F3',
+        lines: [],
+        status: 'running',
+        collapsed: false,
+      });
+    } else if (event.type === 'section:end') {
+      const section = logs.sections.find(s => s.id === event.id);
+      if (section) {
+        section.status = event.status ?? 'ok';
+        if (event.status === 'ok' || event.status === 'warning') {
+          section.collapsed = true;
+        }
+      }
+    }
+    setLogVersion(v => v + 1);
+  }, []);
+
   // Simulated logs (browser-only mode)
   useSimulatedLogs(
     useCallback((line: string) => {
@@ -147,7 +224,7 @@ export function App() {
           branch: 'main',
           port: 8081,
           deviceName: 'iPhone 16 Pro',
-          deviceIcon: '💻',
+          deviceIcon: '\uD83D\uDCBB',
           platform: 'ios',
           metroStatus: 'running',
         };
@@ -163,6 +240,7 @@ export function App() {
     useCallback((line: string) => {
       appendInstanceLog('main-8081', 'service', line);
     }, [appendInstanceLog]),
+    handleSimulatedSectionEvent,
   );
 
   // Get the current active instance and its logs
@@ -283,7 +361,9 @@ export function App() {
           <DevSpace
             serviceLines={activeLogs.serviceLines}
             metroLines={activeLogs.metroLines}
+            sections={activeLogs.sections}
             instanceId={activeId ?? ''}
+            onToggleSection={(sectionId) => handleToggleSection(activeId ?? '', sectionId)}
           />
         );
       case 'devtools':

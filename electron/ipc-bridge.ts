@@ -544,6 +544,7 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
 
   // Run preflights
   if (profile.preflight.checks.length > 0) {
+    send('instance:section:start', { instanceId: instance.id, id: 'preflight', title: 'Preflight Checks', icon: '\u23F3' });
     emit('Running preflight checks...');
     const engine = createDefaultPreflightEngine(projectRoot);
     const results = await engine.runAll(profile.platform, profile.preflight);
@@ -557,26 +558,29 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
 
     if (hasErrors) {
       emit('  Some preflight checks failed. Continuing anyway...');
+      send('instance:section:end', { instanceId: instance.id, id: 'preflight', status: 'warning' });
     } else {
       emit('  All preflight checks passed');
+      send('instance:section:end', { instanceId: instance.id, id: 'preflight', status: 'ok' });
     }
     emit('');
   }
 
   // Run clean if not dirty mode
   if (instance.mode !== 'dirty') {
-    emit(`⏳ Running ${instance.mode} clean...`);
+    send('instance:section:start', { instanceId: instance.id, id: 'clean', title: `${instance.mode} Clean`, icon: '\u23F3' });
+    emit(`Running ${instance.mode} clean...`);
     const cleaner = new CleanManager(projectRoot);
     const results = await cleaner.execute(instance.mode as any, instance.platform, (step, status) => {
-      const icon = status === 'running' ? '⏳' : '✔';
+      const icon = status === 'running' ? '\u23F3' : '\u2714';
       emit(`  ${icon} ${step}`);
     });
 
     const failed = results.filter(r => !r.success);
     if (failed.length > 0) {
-      emit(`  ⚠ ${failed.length} clean step(s) had issues`);
+      emit(`  \u26A0 ${failed.length} clean step(s) had issues`);
       for (const f of failed) {
-        emit(`    ✖ ${f.step}: ${f.output.slice(0, 100)}`);
+        emit(`    \u2716 ${f.step}: ${f.output.slice(0, 100)}`);
       }
       // Check if critical steps failed (install-dependencies, pod-install)
       const criticalFailed = failed.filter(f =>
@@ -585,36 +589,40 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
       );
       if (criticalFailed.length > 0) {
         emit('');
-        emit('❌ Critical clean steps failed. Cannot start Metro or build.');
+        emit('Critical clean steps failed. Cannot start Metro or build.');
         emit('  Fix the issues above and try again.');
         instance.metroStatus = 'error';
         send('instance:status', { instanceId: instance.id, ...toSummary(instance) });
-        return; // Abort — don't start Metro with broken deps
+        send('instance:section:end', { instanceId: instance.id, id: 'clean', status: 'error' });
+        return; // Abort
       }
+      send('instance:section:end', { instanceId: instance.id, id: 'clean', status: 'warning' });
     } else {
-      emit(`✔ ${instance.mode} clean complete`);
+      emit(`${instance.mode} clean complete`);
+      send('instance:section:end', { instanceId: instance.id, id: 'clean', status: 'ok' });
     }
     emit('');
   }
 
-  // Clear watchman — clear both project root and worktree path
-  emit('⏳ Clearing watchman...');
+  // Clear watchman
+  send('instance:section:start', { instanceId: instance.id, id: 'watchman', title: 'Watchman Clear', icon: '\u23F3' });
+  emit('Clearing watchman...');
   try {
-    // Clear the project root
     await execShellAsync(`watchman watch-del '${projectRoot}'`, { timeout: 10000 }).catch(() => {});
-    // Clear the worktree path if different from project root
     if (instance.worktree && instance.worktree !== projectRoot) {
       await execShellAsync(`watchman watch-del '${instance.worktree}'`, { timeout: 10000 }).catch(() => {});
     }
-    // Also clear watchman's internal state to prevent recrawl warnings
     await execShellAsync('watchman watch-del-all', { timeout: 10000 }).catch(() => {});
-    emit('✔ Watchman cleared');
+    emit('Watchman cleared');
+    send('instance:section:end', { instanceId: instance.id, id: 'watchman', status: 'ok' });
   } catch {
-    emit('ℹ Watchman not available or timed out');
+    emit('Watchman not available or timed out');
+    send('instance:section:end', { instanceId: instance.id, id: 'watchman', status: 'warning' });
   }
 
-  // Check port
-  emit(`⏳ Checking port ${instance.port}...`);
+  // Check port & start Metro
+  send('instance:section:start', { instanceId: instance.id, id: 'metro', title: 'Metro Start', icon: '\u23F3' });
+  emit(`Checking port ${instance.port}...`);
   const metroMgr = new MetroManager(artifactStore);
   const portFree = await metroMgr.isPortFree(instance.port);
   if (!portFree) {
@@ -646,8 +654,7 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
           }
           instance.deviceId = device.id;
           instance.deviceName = device.name;
-          instance.deviceIcon = device.isPhysical ? '📱' : '💻';
-          // Update renderer with device info
+          instance.deviceIcon = device.isPhysical ? '\uD83D\uDCF1' : '\uD83D\uDCBB';
           send('instance:status', { instanceId: instance.id, ...toSummary(instance) });
         }
       }
@@ -656,7 +663,6 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
     }
   }
 
-  // Start Metro
   emit(`Starting Metro on port ${instance.port}...`);
   instance.metroStatus = 'starting';
   send('instance:status', { instanceId: instance.id, ...toSummary(instance) });
@@ -670,7 +676,6 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
   });
   instance.metro = metroMgr;
 
-  // Forward metro logs
   metroMgr.on('log', ({ line }: { worktreeKey: string; line: string }) => {
     appendLog(instance, 'metro', line);
     send('instance:metro', { instanceId: instance.id, text: line });
@@ -681,6 +686,7 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
     send('instance:status', { instanceId: instance.id, ...toSummary(instance) });
     if (status === 'running') {
       emit('Metro is running');
+      send('instance:section:end', { instanceId: instance.id, id: 'metro', status: 'ok' });
     }
   });
 
@@ -691,6 +697,8 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
   setTimeout(() => {
     const b = new Builder();
     instance.builder = b;
+
+    send('instance:section:start', { instanceId: instance.id, id: 'build', title: `Build for ${instance.platform}`, icon: '\u23F3' });
 
     b.on('line', ({ text }: { text: string }) => {
       appendLog(instance, 'service', text);
@@ -705,12 +713,14 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
       send('instance:build:done', { instanceId: instance.id, success, errors, platform });
       if (success) {
         emit('Build complete!');
+        send('instance:section:end', { instanceId: instance.id, id: 'build', status: 'ok' });
       } else {
         emit('Build failed');
         for (const err of errors ?? []) {
           emit(`  ${err.summary}`);
           if (err.suggestion) emit(`    Fix: ${err.suggestion}`);
         }
+        send('instance:section:end', { instanceId: instance.id, id: 'build', status: 'error' });
       }
     });
 

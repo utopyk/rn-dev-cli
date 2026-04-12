@@ -56,4 +56,39 @@ export interface InstanceInfo {
 export interface InstanceLogs {
   serviceLines: string[];
   metroLines: string[];
+  sections: LogSection[];
+}
+
+/** A collapsible section in the tool output log */
+export interface LogSection {
+  id: string;
+  title: string;
+  icon: string;
+  lines: string[];
+  status: 'running' | 'ok' | 'warning' | 'error';
+  collapsed: boolean;
+}
+
+/** IPC event for starting a log section */
+export interface SectionStartEvent {
+  instanceId: string;
+  id: string;
+  title: string;
+  icon: string;
+}
+
+/** IPC event for ending a log section */
+export interface SectionEndEvent {
+  instanceId: string;
+  id: string;
+  status: 'ok' | 'warning' | 'error';
+}
+
+/** A parsed build error for the ErrorSummary */
+export interface BuildError {
+  message: string;
+  file?: string;
+  line?: number;
+  suggestion?: string;
+  count?: number;
 }
