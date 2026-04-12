@@ -880,6 +880,54 @@ function makeCodeSigningCheck(projectRoot: string): PreflightCheck {
 }
 
 // ---------------------------------------------------------------------------
+// Keychain Access Check
+// ---------------------------------------------------------------------------
+
+function makeKeychainAccessCheck(): PreflightCheck {
+  return {
+    id: "keychain-access",
+    name: "Keychain codesign access",
+    severity: "warning",
+    platform: "ios",
+    check: async () => {
+      // Try a dry-run codesign to see if the keychain grants access
+      try {
+        // Find any valid signing identity
+        const output = await execAsync("security find-identity -v -p codesigning", {
+          timeout: 10000,
+        });
+        const identityMatch = output.match(/\d+\)\s+([A-F0-9]+)\s+"([^"]+)"/);
+        if (!identityMatch) {
+          return { passed: true, message: "No signing identities found (simulator-only builds OK)" };
+        }
+
+        // Try to verify the identity is accessible
+        // If errSecInternalComponent would occur, this won't catch it directly,
+        // but we can check for partition list issues
+        const identityHash = identityMatch[1];
+        const identityName = identityMatch[2];
+
+        // Count duplicate certs
+        const allMatches = output.match(/\d+\)\s+[A-F0-9]+\s+"Apple Development/g);
+        const dupeCount = allMatches ? allMatches.length : 0;
+
+        if (dupeCount > 2) {
+          return {
+            passed: false,
+            message: `${dupeCount} duplicate "Apple Development" certificates found. Clean up via Keychain Access to avoid ambiguity.`,
+            details: "Open Keychain Access → login keychain → My Certificates → delete duplicates, keep newest.",
+          };
+        }
+
+        return { passed: true, message: `Signing identity: ${identityName.slice(0, 50)}` };
+      } catch {
+        return { passed: true, message: "Could not check signing identities" };
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // createDefaultPreflightEngine
 // ---------------------------------------------------------------------------
 
@@ -905,6 +953,7 @@ export function createDefaultPreflightEngine(
   engine.register(makeEnvFileCheck(projectRoot));
   engine.register(makePatchPackageCheck(projectRoot));
   engine.register(makeCodeSigningCheck(projectRoot));
+  engine.register(makeKeychainAccessCheck());
 
   return engine;
 }

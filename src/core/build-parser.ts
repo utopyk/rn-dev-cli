@@ -110,6 +110,10 @@ const SUGGESTION_MAP: Array<[string, string]> = [
   ["could not find or use auto-linked framework", "Missing framework — try: pod install or check Podfile for missing deps"],
   ["linker command failed", "Linker error — check build log for missing symbols or frameworks"],
   ["cannot link directly with", "Incompatible framework — may need Xcode or SDK update"],
+  ["errsecInternalcomponent", "Keychain access denied. Run: security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k \"<password>\" ~/Library/Keychains/login.keychain-db"],
+  ["errsecinternalcomponent", "Keychain access denied. Run: security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k \"<password>\" ~/Library/Keychains/login.keychain-db"],
+  ["has been manually specified", "Set CODE_SIGN_IDENTITY to \"Apple Development\" (generic) instead of a specific cert"],
+  ["conflicting provisioning settings", "Reset signing: CODE_SIGN_STYLE=Automatic, CODE_SIGN_IDENTITY=\"Apple Development\""],
 ];
 
 function findSuggestion(text: string): string | undefined {
