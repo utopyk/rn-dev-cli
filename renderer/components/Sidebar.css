@@ -4,10 +4,22 @@
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  padding: 12px 0;
+  padding: 0 0 12px;
   -webkit-app-region: no-drag;
   overflow-y: auto;
 }
+
+/* Logo */
+.sidebar-logo {
+  padding: 14px 14px 8px;
+  line-height: 1.2;
+  font-weight: bold;
+  font-size: 11px;
+  -webkit-app-region: drag;
+}
+.logo-l1 { color: var(--error); }
+.logo-l2 { color: var(--highlight); }
+.logo-l3 { color: var(--accent); }
 
 .sidebar-section {
   margin-bottom: 16px;
@@ -63,6 +75,39 @@
 .status-dot.starting { background: var(--warning); }
 .status-dot.error { background: var(--error); }
 .status-dot.stopped { background: var(--muted); }
+
+/* Shortcuts section */
+.sidebar-shortcuts {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.sidebar-shortcut {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 14px;
+  font-size: 11px;
+  color: var(--fg);
+  width: 100%;
+  text-align: left;
+  transition: all 0.12s ease;
+}
+
+.sidebar-shortcut:hover {
+  background: var(--selection);
+}
+
+.sidebar-shortcut .shortcut-key {
+  color: var(--accent);
+  font-weight: bold;
+  min-width: 24px;
+  font-size: 10px;
+}
+
+.sidebar-shortcut .shortcut-label {
+  color: var(--fg);
+}
 
 .sidebar-footer {
   margin-top: auto;

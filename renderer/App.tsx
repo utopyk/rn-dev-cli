@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { ProfileBanner } from './components/ProfileBanner';
 import { DevSpace } from './views/DevSpace';
+import { DevToolsView } from './views/DevToolsView';
 import { LintTest } from './views/LintTest';
 import { MetroLogs } from './views/MetroLogs';
 import { Settings } from './views/Settings';
@@ -102,7 +103,7 @@ export function App() {
           break;
         case 'Tab':
           e.preventDefault();
-          const tabs: ViewTab[] = ['dev-space', 'lint-test', 'metro-logs', 'settings'];
+          const tabs: ViewTab[] = ['dev-space', 'devtools', 'lint-test', 'metro-logs', 'settings'];
           const idx = tabs.indexOf(activeTab);
           setActiveTab(tabs[(idx + 1) % tabs.length]);
           break;
@@ -113,10 +114,17 @@ export function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [activeTab, invoke, addServiceLog]);
 
+  const handleShortcut = useCallback((command: string) => {
+    invoke(command);
+    addServiceLog(`▶ ${command}...`);
+  }, [invoke, addServiceLog]);
+
   const renderView = () => {
     switch (activeTab) {
       case 'dev-space':
         return <DevSpace serviceLines={serviceLines} metroLines={metroLines} />;
+      case 'devtools':
+        return <DevToolsView metroPort={profile.port} />;
       case 'lint-test':
         return <LintTest />;
       case 'metro-logs':
@@ -128,7 +136,7 @@ export function App() {
 
   return (
     <div className="app-root">
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} />
       <div className="app-main">
         <ProfileBanner
           profile={profile}

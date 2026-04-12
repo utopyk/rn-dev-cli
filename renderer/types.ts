@@ -30,7 +30,7 @@ declare global {
   }
 }
 
-export type ViewTab = 'dev-space' | 'lint-test' | 'metro-logs' | 'settings';
+export type ViewTab = 'dev-space' | 'devtools' | 'lint-test' | 'metro-logs' | 'settings';
 
 export interface ProfileInfo {
   name: string;

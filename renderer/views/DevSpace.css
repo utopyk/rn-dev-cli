@@ -1,70 +1,8 @@
 .dev-space {
   flex: 1;
   display: flex;
+  flex-direction: column;
   gap: 4px;
   padding: 4px 12px;
   min-height: 0;
-  -webkit-app-region: no-drag;
-}
-
-.shortcuts-panel {
-  width: 260px;
-  min-width: 220px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.logo {
-  font-weight: bold;
-  margin-bottom: 8px;
-  line-height: 1.2;
-}
-.logo .l1 { color: var(--error); }
-.logo .l2 { color: var(--highlight); }
-.logo .l3 { color: var(--accent); }
-
-.shortcut-item {
-  display: flex;
-  gap: 8px;
-  padding: 2px 0;
-  text-align: left;
-}
-.shortcut-item:hover .shortcut-label {
-  color: var(--accent);
-}
-.shortcut-key {
-  color: var(--accent);
-  font-weight: bold;
-  min-width: 28px;
-}
-.shortcut-label {
-  color: var(--fg);
-  transition: color 0.1s ease;
-}
-
-.shortcut-meta {
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.6;
-}
-
-.shortcut-feedback {
-  margin-top: auto;
-  padding-top: 8px;
-  color: var(--success);
-  font-weight: bold;
-  min-height: 20px;
-}
-
-.right-panels {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
 }

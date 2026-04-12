@@ -1,0 +1,81 @@
+.devtools-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.devtools-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.devtools-toolbar-title {
+  color: var(--accent);
+  font-weight: bold;
+}
+
+.devtools-toolbar-port {
+  color: var(--muted);
+}
+
+.devtools-toolbar-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.devtools-toolbar-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--selection);
+}
+
+.devtools-webview {
+  flex: 1;
+  border: none;
+}
+
+/* Placeholder states */
+.devtools-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.devtools-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.devtools-title {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--fg);
+}
+
+.devtools-subtitle {
+  font-size: 13px;
+  text-align: center;
+  max-width: 400px;
+  line-height: 1.5;
+}
+
+.devtools-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+}
