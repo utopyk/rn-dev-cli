@@ -489,3 +489,62 @@
 .wz-btn-ghost:hover {
   color: var(--fg);
 }
+
+/* ── Create worktree ── */
+.wz-create-worktree {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.wz-label {
+  font-size: 13px;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.wz-input {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.wz-input:focus {
+  border-color: var(--accent);
+}
+
+.wz-error {
+  color: var(--error);
+  font-size: 12px;
+}
+
+.wz-button-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.wz-create-btn {
+  margin-top: 8px;
+  padding: 8px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  text-align: center;
+}
+
+.wz-create-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--selection);
+}

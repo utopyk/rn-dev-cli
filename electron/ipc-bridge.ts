@@ -434,6 +434,28 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     }
   });
 
+  ipcMain.handle('wizard:createWorktree', async (_, branchName: string) => {
+    if (!projectRoot) return { ok: false, error: 'No project root' };
+    try {
+      const worktreePath = path.join(projectRoot, '.worktrees', branchName.replace(/\//g, '-'));
+      await execShellAsync(`git worktree add "${worktreePath}" -b "${branchName}" 2>&1 || git worktree add "${worktreePath}" "${branchName}" 2>&1`, {
+        cwd: projectRoot,
+        timeout: 30000,
+      });
+      return {
+        ok: true,
+        worktree: {
+          name: branchName.replace(/\//g, '-'),
+          path: worktreePath,
+          branch: branchName,
+          isMain: false,
+        },
+      };
+    } catch (err: any) {
+      return { ok: false, error: err.message?.slice(0, 200) ?? 'Failed to create worktree' };
+    }
+  });
+
   ipcMain.handle('wizard:getDevices', async (_, platform: string) => {
     console.log(`[ipc] wizard:getDevices called with platform: ${platform}`);
     try {

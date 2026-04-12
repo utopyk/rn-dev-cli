@@ -66,6 +66,32 @@ const MODE_DESCRIPTIONS: Record<Mode, string> = {
 export function Wizard({ onComplete, onCancel }: WizardProps) {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
+  const [creatingWorktree, setCreatingWorktree] = useState(false);
+  const [newWorktreeBranch, setNewWorktreeBranch] = useState('');
+  const [creatingWorktreeError, setCreatingWorktreeError] = useState('');
+
+  const handleCreateWorktree = async () => {
+    if (!newWorktreeBranch.trim()) return;
+    setLoadingKey('create-worktree');
+    setCreatingWorktreeError('');
+    try {
+      const result = await invoke('wizard:createWorktree', newWorktreeBranch.trim());
+      if (result?.ok && result.worktree) {
+        // Add the new worktree to the list and select it
+        const newWt: WorktreeOption = result.worktree;
+        setWorktrees(prev => [...prev, newWt]);
+        setState(s => ({ ...s, worktree: newWt }));
+        setCreatingWorktree(false);
+        setNewWorktreeBranch('');
+        goNext();
+      } else {
+        setCreatingWorktreeError(result?.error ?? 'Failed to create worktree');
+      }
+    } catch (err: any) {
+      setCreatingWorktreeError(err.message ?? 'Failed to create worktree');
+    }
+    setLoadingKey(null);
+  };
   const invoke = useIpcInvoke();
 
   // Cached data from IPC
@@ -147,7 +173,7 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
   // Navigation
   const canGoNext = useCallback((): boolean => {
     switch (step) {
-      case 1: return state.worktree !== null;
+      case 1: return true; // worktree is optional (null = root repo)
       case 2: return state.branch !== null;
       case 3: return true;
       case 4: return true;
@@ -173,9 +199,14 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
   const handleFinish = async () => {
     setSaving(true);
     const profileName = `profile-${Date.now()}`;
+    // Check if any profiles exist — only set default if this is the first one
+    let existingProfiles: any[] = [];
+    try { existingProfiles = await invoke('profiles:list'); } catch {}
+    const isFirstProfile = !existingProfiles || existingProfiles.length === 0;
+
     const profileData = {
       name: profileName,
-      isDefault: true,
+      isDefault: isFirstProfile,
       worktree: state.worktree?.path ?? null,
       branch: state.branch ?? 'main',
       platform: state.platform,
@@ -236,27 +267,70 @@ export function Wizard({ onComplete, onCancel }: WizardProps) {
         return (
           <StepContainer
             title="Select Worktree"
-            subtitle="Choose the git worktree for this profile."
+            subtitle="Choose an existing worktree or create a new one."
           >
-            <SearchableList<WorktreeOption>
-              items={worktrees}
-              labelKey="name"
-              searchKeys={['name', 'branch', 'path']}
-              onSelect={(wt) => {
-                setState((s) => ({ ...s, worktree: wt }));
-                goNext();
-              }}
-              placeholder="Search worktrees..."
-              loading={loadingKey === 'worktrees'}
-              renderItem={(wt, isActive) => (
-                <>
-                  <span className="sl-item-label">
-                    {wt.isMain ? '* ' : ''}{wt.name}
-                  </span>
-                  <span className="sl-item-meta">{wt.branch}</span>
-                </>
-              )}
-            />
+            {creatingWorktree ? (
+              <div className="wz-create-worktree">
+                <label className="wz-label">New worktree branch name:</label>
+                <input
+                  className="wz-input"
+                  type="text"
+                  placeholder="feature/my-branch"
+                  value={newWorktreeBranch}
+                  onChange={(e) => setNewWorktreeBranch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newWorktreeBranch.trim()) {
+                      handleCreateWorktree();
+                    }
+                    if (e.key === 'Escape') {
+                      setCreatingWorktree(false);
+                    }
+                  }}
+                  autoFocus
+                />
+                {creatingWorktreeError && (
+                  <div className="wz-error">{creatingWorktreeError}</div>
+                )}
+                <div className="wz-button-row">
+                  <button className="wz-btn" onClick={() => setCreatingWorktree(false)}>Cancel</button>
+                  <button
+                    className="wz-btn wz-btn-primary"
+                    disabled={!newWorktreeBranch.trim() || loadingKey === 'create-worktree'}
+                    onClick={handleCreateWorktree}
+                  >
+                    {loadingKey === 'create-worktree' ? 'Creating...' : 'Create Worktree'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <SearchableList<WorktreeOption>
+                  items={worktrees}
+                  labelKey="name"
+                  searchKeys={['name', 'branch', 'path']}
+                  onSelect={(wt) => {
+                    setState((s) => ({ ...s, worktree: wt }));
+                    goNext();
+                  }}
+                  placeholder="Search worktrees..."
+                  loading={loadingKey === 'worktrees'}
+                  renderItem={(wt, isActive) => (
+                    <>
+                      <span className="sl-item-label">
+                        {wt.isMain ? '📁 ' : '🌿 '}{wt.name}
+                      </span>
+                      <span className="sl-item-meta">{wt.branch}</span>
+                    </>
+                  )}
+                />
+                <button
+                  className="wz-create-btn"
+                  onClick={() => setCreatingWorktree(true)}
+                >
+                  + Create new worktree
+                </button>
+              </>
+            )}
           </StepContainer>
         );
 
