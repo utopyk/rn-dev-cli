@@ -148,13 +148,79 @@ export async function listDevices(platform: "ios" | "android" | "both"): Promise
   }
 
   if (platform === "ios" || platform === "both") {
+    // Physical devices via xctrace
+    try {
+      const output = await execAsync("xcrun xctrace list devices", {
+        timeout: 15000,
+      });
+      devices.push(...parseXctraceDevices(output));
+    } catch {
+      // xctrace not available
+    }
+
+    // Simulators via simctl
     try {
       const output = await execAsync("xcrun simctl list devices --json", {
-        timeout: 30000, // 30s max — simctl can be very slow after Xcode updates
+        timeout: 30000,
       });
       devices.push(...parseSimctlDevices(output));
     } catch {
       // xcrun not available, timed out, or failed
+    }
+  }
+
+  return devices;
+}
+
+// ---------------------------------------------------------------------------
+// parseXctraceDevices — physical iOS devices from `xcrun xctrace list devices`
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse output of `xcrun xctrace list devices` to find physical iOS devices.
+ * Format: "Device Name (OS Version) (UDID)"
+ */
+export function parseXctraceDevices(output: string): Device[] {
+  const devices: Device[] = [];
+  const lines = output.split("\n");
+  let inDevicesSection = false;
+  let inOfflineSection = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed === "== Devices ==") {
+      inDevicesSection = true;
+      inOfflineSection = false;
+      continue;
+    }
+    if (trimmed === "== Devices Offline ==") {
+      inDevicesSection = false;
+      inOfflineSection = true;
+      continue;
+    }
+    if (trimmed === "== Simulators ==") {
+      // Stop — we get simulators from simctl instead
+      break;
+    }
+
+    if (!inDevicesSection && !inOfflineSection) continue;
+    if (!trimmed) continue;
+
+    // Match: "Device Name (OS Version) (UDID)"
+    const match = trimmed.match(/^(.+?)\s+\(([^)]+)\)\s+\(([0-9A-Fa-f-]+)\)$/);
+    if (match) {
+      const [, name, version, udid] = match;
+      // Skip Macs and Apple Watches
+      if (name.includes("MacBook") || name.includes("Mac ") || name.includes("Apple Watch")) continue;
+
+      devices.push({
+        id: udid,
+        name: name.trim(),
+        type: "ios",
+        status: inOfflineSection ? "shutdown" : "available",
+        runtime: `iOS-${version.replace(/\./g, "-")}`,
+      });
     }
   }
 

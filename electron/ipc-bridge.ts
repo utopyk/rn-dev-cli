@@ -173,8 +173,10 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
   });
 
   ipcMain.handle('wizard:getDevices', async (_, platform: string) => {
+    console.log(`[ipc] wizard:getDevices called with platform: ${platform}`);
     try {
-      const devices = await listDevices(platform as any);
+      const devices = await listDevices((platform ?? 'both') as any);
+      console.log(`[ipc] Found ${devices.length} devices`);
       return devices.map(d => ({
         id: d.id,
         name: d.name,
@@ -182,7 +184,8 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
         status: d.status,
         runtime: d.runtime,
       }));
-    } catch {
+    } catch (err: any) {
+      console.error(`[ipc] wizard:getDevices error:`, err.message);
       return [];
     }
   });
