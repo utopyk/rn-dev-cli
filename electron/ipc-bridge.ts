@@ -597,10 +597,17 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
     emit('');
   }
 
-  // Clear watchman
+  // Clear watchman — clear both project root and worktree path
   emit('⏳ Clearing watchman...');
   try {
-    await execShellAsync(`watchman watch-del '${instance.worktree ?? projectRoot}'`, { timeout: 10000 });
+    // Clear the project root
+    await execShellAsync(`watchman watch-del '${projectRoot}'`, { timeout: 10000 }).catch(() => {});
+    // Clear the worktree path if different from project root
+    if (instance.worktree && instance.worktree !== projectRoot) {
+      await execShellAsync(`watchman watch-del '${instance.worktree}'`, { timeout: 10000 }).catch(() => {});
+    }
+    // Also clear watchman's internal state to prevent recrawl warnings
+    await execShellAsync('watchman watch-del-all', { timeout: 10000 }).catch(() => {});
     emit('✔ Watchman cleared');
   } catch {
     emit('ℹ Watchman not available or timed out');
