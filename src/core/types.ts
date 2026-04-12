@@ -11,6 +11,7 @@ export interface Profile {
   preflight: PreflightConfig;
   onSave: OnSaveAction[];
   env: Record<string, string>;
+  packageManager?: "npm" | "yarn" | "pnpm"; // override auto-detection
   projectRoot: string;
 }
 

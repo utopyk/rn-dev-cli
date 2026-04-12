@@ -10,7 +10,7 @@ import { detectProjectRoot, getCurrentBranch, getWorktrees } from '../src/core/p
 import { listDevices, bootDevice } from '../src/core/device.js';
 import { createDefaultPreflightEngine } from '../src/core/preflight.js';
 import { execShellAsync } from '../src/core/exec-async.js';
-import { CleanManager } from '../src/core/clean.js';
+import { CleanManager, detectAllPackageManagers } from '../src/core/clean.js';
 import type { Profile } from '../src/core/types.js';
 
 // ── Instance State ──
@@ -486,6 +486,11 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     }
   });
 
+  ipcMain.handle('wizard:getPackageManagers', async () => {
+    if (!projectRoot) return [];
+    return detectAllPackageManagers(projectRoot);
+  });
+
   ipcMain.handle('wizard:getPreflightChecks', async () => {
     return [
       { id: 'node-version', label: 'Node.js version', platform: 'all' },
@@ -573,7 +578,7 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
     emit(`Running ${instance.mode} clean...`);
     // Use the worktree path if available, otherwise the main project root
     const effectiveRoot = instance.worktree ?? projectRoot;
-    const cleaner = new CleanManager(effectiveRoot);
+    const cleaner = new CleanManager(effectiveRoot, profileData.packageManager);
     const results = await cleaner.execute(instance.mode as any, instance.platform, (step, status) => {
       const icon = status === 'running' ? '\u23F3' : '\u2714';
       emit(`  ${icon} ${step}`);

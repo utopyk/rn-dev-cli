@@ -91,26 +91,64 @@ export function detectPackageManager(
     }
   } catch {}
 
-  // 2. Check lockfiles — prefer package-lock.json over yarn.lock
-  //    (many projects have stale yarn.lock alongside package-lock.json)
   const hasPackageLock = existsSync(join(projectRoot, "package-lock.json"));
   const hasYarnLock = existsSync(join(projectRoot, "yarn.lock"));
   const hasPnpmLock = existsSync(join(projectRoot, "pnpm-lock.yaml"));
 
-  if (hasPnpmLock) return "pnpm";
+  // 2. Only one lockfile — easy
+  if (hasPnpmLock && !hasYarnLock && !hasPackageLock) return "pnpm";
+  if (hasYarnLock && !hasPackageLock) return "yarn";
+  if (hasPackageLock && !hasYarnLock) return "npm";
+
+  // 3. Both package-lock.json and yarn.lock exist — need heuristics
   if (hasPackageLock && hasYarnLock) {
-    // Both exist — use the newer one
+    // Check for npm's internal lockfile inside node_modules (npm creates this, yarn doesn't)
+    if (existsSync(join(projectRoot, "node_modules", ".package-lock.json"))) {
+      return "npm";
+    }
+    // Check for yarn's integrity file (yarn creates this, npm doesn't)
+    if (existsSync(join(projectRoot, "node_modules", ".yarn-integrity"))) {
+      return "yarn";
+    }
+    // Check which lockfile is newer
     try {
       const { statSync } = require("fs");
       const npmTime = statSync(join(projectRoot, "package-lock.json")).mtimeMs;
       const yarnTime = statSync(join(projectRoot, "yarn.lock")).mtimeMs;
-      return npmTime >= yarnTime ? "npm" : "yarn";
-    } catch {
-      return "npm"; // fallback to npm if we can't compare
-    }
+      if (npmTime !== yarnTime) {
+        return npmTime > yarnTime ? "npm" : "yarn";
+      }
+    } catch {}
+    // Same timestamp (e.g., git checkout) — default to npm (more common in RN projects)
+    return "npm";
   }
-  if (hasYarnLock) return "yarn";
+
   return "npm";
+}
+
+/**
+ * Returns all detected package managers for the project.
+ * Useful for showing a selection to the user when ambiguous.
+ */
+export function detectAllPackageManagers(
+  projectRoot: string
+): Array<{ name: "npm" | "yarn" | "pnpm"; detected: boolean; reason: string }> {
+  const result: Array<{ name: "npm" | "yarn" | "pnpm"; detected: boolean; reason: string }> = [];
+
+  if (existsSync(join(projectRoot, "package-lock.json"))) {
+    result.push({ name: "npm", detected: true, reason: "package-lock.json found" });
+  }
+  if (existsSync(join(projectRoot, "yarn.lock"))) {
+    result.push({ name: "yarn", detected: true, reason: "yarn.lock found" });
+  }
+  if (existsSync(join(projectRoot, "pnpm-lock.yaml"))) {
+    result.push({ name: "pnpm", detected: true, reason: "pnpm-lock.yaml found" });
+  }
+  if (result.length === 0) {
+    result.push({ name: "npm", detected: false, reason: "default (no lockfile found)" });
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +260,11 @@ export async function killXcode(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 export class CleanManager {
-  constructor(private projectRoot: string) {}
+  private packageManagerOverride?: "npm" | "yarn" | "pnpm";
+
+  constructor(private projectRoot: string, packageManager?: "npm" | "yarn" | "pnpm") {
+    this.packageManagerOverride = packageManager;
+  }
 
   // -------------------------------------------------------------------------
   // Step definitions
@@ -292,14 +334,14 @@ export class CleanManager {
       platform: "all",
       mode: ["clean", "ultra-clean"],
       action: async () => {
-        const pm = detectPackageManager(root);
+        const pm = this.packageManagerOverride ?? detectPackageManager(root);
         const cmd =
           pm === "yarn"
             ? "yarn install"
             : pm === "pnpm"
             ? "pnpm install"
             : "npm install";
-        return run(cmd, { cwd: root });
+        return run(cmd, { cwd: root, timeout: 300000 });
       },
     };
 
