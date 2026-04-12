@@ -847,9 +847,22 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
               });
 
               if (signingResponse === 'fix') {
-                const fixed = content.replace(/CODE_SIGN_STYLE\s*=\s*Manual/g, 'CODE_SIGN_STYLE = Automatic');
+                let fixed = content
+                  // Switch to automatic signing
+                  .replace(/CODE_SIGN_STYLE\s*=\s*Manual/g, 'CODE_SIGN_STYLE = Automatic')
+                  // Reset CODE_SIGN_IDENTITY to generic "Apple Development" (not a specific cert)
+                  .replace(/CODE_SIGN_IDENTITY\s*=\s*"[^"]*"/g, 'CODE_SIGN_IDENTITY = "Apple Development"')
+                  .replace(/CODE_SIGN_IDENTITY\s*=\s*[^;]+;/g, 'CODE_SIGN_IDENTITY = "Apple Development";')
+                  // Remove PROVISIONING_PROFILE_SPECIFIER (let Xcode auto-manage)
+                  .replace(/PROVISIONING_PROFILE_SPECIFIER\s*=\s*"[^"]*"/g, 'PROVISIONING_PROFILE_SPECIFIER = ""')
+                  .replace(/PROVISIONING_PROFILE_SPECIFIER\s*=\s*[^;]+;/g, 'PROVISIONING_PROFILE_SPECIFIER = "";')
+                  // Remove specific DEVELOPMENT_TEAM if it's a Match/CI team
+                  // (keep it if present — Automatic signing needs a team)
+                ;
                 require('fs').writeFileSync(pbxproj, fixed);
                 emit(`  ✔ Switched to Automatic signing`);
+                emit(`  ✔ Reset CODE_SIGN_IDENTITY to "Apple Development"`);
+                emit(`  ✔ Cleared PROVISIONING_PROFILE_SPECIFIER`);
               } else {
                 emit(`  ℹ Keeping Manual signing`);
               }

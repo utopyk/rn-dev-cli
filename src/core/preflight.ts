@@ -860,7 +860,12 @@ function makeCodeSigningCheck(projectRoot: string): PreflightCheck {
             const pbxproj = join(iosDir, entry, "project.pbxproj");
             if (existsSync(pbxproj)) {
               const content = readFileSync(pbxproj, "utf8");
-              const fixed = content.replace(/CODE_SIGN_STYLE\s*=\s*Manual/g, "CODE_SIGN_STYLE = Automatic");
+              const fixed = content
+                .replace(/CODE_SIGN_STYLE\s*=\s*Manual/g, "CODE_SIGN_STYLE = Automatic")
+                .replace(/CODE_SIGN_IDENTITY\s*=\s*"[^"]*"/g, 'CODE_SIGN_IDENTITY = "Apple Development"')
+                .replace(/CODE_SIGN_IDENTITY\s*=\s*[^;]+;/g, 'CODE_SIGN_IDENTITY = "Apple Development";')
+                .replace(/PROVISIONING_PROFILE_SPECIFIER\s*=\s*"[^"]*"/g, 'PROVISIONING_PROFILE_SPECIFIER = ""')
+                .replace(/PROVISIONING_PROFILE_SPECIFIER\s*=\s*[^;]+;/g, 'PROVISIONING_PROFILE_SPECIFIER = "";');
               require("fs").writeFileSync(pbxproj, fixed);
               return true;
             }
