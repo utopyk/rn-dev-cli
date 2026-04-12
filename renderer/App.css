@@ -16,4 +16,72 @@
   flex: 1;
   display: flex;
   min-height: 0;
+  position: relative;
+}
+
+/* ── Prompt Modal ── */
+.prompt-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+}
+
+.prompt-modal {
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  padding: 24px 32px;
+  max-width: 480px;
+  width: 100%;
+}
+
+.prompt-title {
+  color: var(--accent);
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.prompt-message {
+  color: var(--fg);
+  font-size: 13px;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.prompt-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prompt-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.prompt-option:hover {
+  border-color: var(--accent);
+  background: var(--selection);
+}
+
+.prompt-option-label {
+  font-weight: 500;
+}
+
+.prompt-option-cleanup {
+  color: var(--warning);
+  font-size: 11px;
 }

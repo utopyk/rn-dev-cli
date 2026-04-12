@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron';
-import path from 'path';
+import path, { join } from 'path';
+import { existsSync } from 'fs';
 import { serviceBus } from '../src/app/service-bus.js';
 import { MetroManager } from '../src/core/metro.js';
 import { ArtifactStore } from '../src/core/artifact.js';
@@ -10,7 +11,7 @@ import { detectProjectRoot, getCurrentBranch, getWorktrees } from '../src/core/p
 import { listDevices, bootDevice } from '../src/core/device.js';
 import { createDefaultPreflightEngine } from '../src/core/preflight.js';
 import { execShellAsync } from '../src/core/exec-async.js';
-import { CleanManager, detectAllPackageManagers } from '../src/core/clean.js';
+import { CleanManager, detectAllPackageManagers, detectPackageManager } from '../src/core/clean.js';
 import type { Profile } from '../src/core/types.js';
 
 // ── Instance State ──
@@ -578,7 +579,92 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
     emit(`Running ${instance.mode} clean...`);
     // Use the worktree path if available, otherwise the main project root
     const effectiveRoot = instance.worktree ?? projectRoot;
-    const cleaner = new CleanManager(effectiveRoot, profileData.packageManager);
+
+    // Check for ambiguous package managers — ask user if needed
+    let pm = profileData.packageManager;
+    if (!pm) {
+      const detected = detectAllPackageManagers(effectiveRoot);
+      if (detected.filter(d => d.detected).length > 1) {
+        // Multiple lockfiles found — ask the user
+        emit(`⚠ Multiple package managers detected:`);
+        for (const d of detected) {
+          if (d.detected) emit(`    • ${d.name} (${d.reason})`);
+        }
+
+        // Send a prompt to the renderer and wait for response
+        const response = await new Promise<string>((resolve) => {
+          const promptId = `pm-${instance.id}-${Date.now()}`;
+          send('instance:prompt', {
+            instanceId: instance.id,
+            promptId,
+            title: 'Package Manager Conflict',
+            message: 'Multiple package managers detected. Which one should be used?',
+            options: detected.filter(d => d.detected).map(d => ({
+              value: d.name,
+              label: `${d.name} (${d.reason})`,
+              cleanup: d.name === 'npm' ? 'Delete yarn.lock' :
+                       d.name === 'yarn' ? 'Delete package-lock.json' :
+                       d.name === 'pnpm' ? 'Delete package-lock.json & yarn.lock' : undefined,
+            })),
+          });
+
+          // Listen for the response
+          const handler = (_: any, data: { promptId: string; value: string }) => {
+            if (data.promptId === promptId) {
+              ipcMain.removeHandler(`prompt:respond:${promptId}`);
+              resolve(data.value);
+            }
+          };
+          ipcMain.handle(`prompt:respond:${promptId}`, async (_, data) => {
+            resolve(data.value);
+            return { ok: true };
+          });
+
+          // Timeout after 60 seconds — default to auto-detected
+          setTimeout(() => {
+            const autoDetected = detectPackageManager(effectiveRoot);
+            emit(`  ⏳ No response — using auto-detected: ${autoDetected}`);
+            resolve(autoDetected);
+          }, 60000);
+        });
+
+        pm = response as "npm" | "yarn" | "pnpm";
+        emit(`  ✔ Using ${pm}`);
+
+        // Clean up the ambiguous lockfile
+        const fs = require('fs');
+        const path = require('path');
+        if (pm === 'npm' && existsSync(join(effectiveRoot, 'yarn.lock'))) {
+          fs.unlinkSync(join(effectiveRoot, 'yarn.lock'));
+          emit(`  🗑 Deleted yarn.lock`);
+        } else if (pm === 'yarn' && existsSync(join(effectiveRoot, 'package-lock.json'))) {
+          fs.unlinkSync(join(effectiveRoot, 'package-lock.json'));
+          emit(`  🗑 Deleted package-lock.json`);
+        } else if (pm === 'pnpm') {
+          if (existsSync(join(effectiveRoot, 'yarn.lock'))) {
+            fs.unlinkSync(join(effectiveRoot, 'yarn.lock'));
+            emit(`  🗑 Deleted yarn.lock`);
+          }
+          if (existsSync(join(effectiveRoot, 'package-lock.json'))) {
+            fs.unlinkSync(join(effectiveRoot, 'package-lock.json'));
+            emit(`  🗑 Deleted package-lock.json`);
+          }
+        }
+
+        // Save the choice to the profile
+        profileData.packageManager = pm;
+        const profileStore = new ProfileStore(join(projectRoot!, '.rn-dev', 'profiles'));
+        if (profileData.name) {
+          const existing = profileStore.load(profileData.name);
+          if (existing) {
+            existing.packageManager = pm;
+            profileStore.save(existing);
+          }
+        }
+      }
+    }
+
+    const cleaner = new CleanManager(effectiveRoot, pm);
     const results = await cleaner.execute(instance.mode as any, instance.platform, (step, status) => {
       const icon = status === 'running' ? '\u23F3' : '\u2714';
       emit(`  ${icon} ${step}`);

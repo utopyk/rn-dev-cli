@@ -25,6 +25,12 @@ export function App() {
   const [profileVisible, setProfileVisible] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
   const [showNewInstanceDialog, setShowNewInstanceDialog] = useState(false);
+  const [promptModal, setPromptModal] = useState<{
+    promptId: string;
+    title: string;
+    message: string;
+    options: Array<{ value: string; label: string; cleanup?: string }>;
+  } | null>(null);
 
   // Multi-instance state
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
@@ -127,6 +133,22 @@ export function App() {
 
   useIpcOn('instance:build:done', useCallback((data: { instanceId: string; success: boolean }) => {
     // Build done is informational; logs are already appended via instance:log
+  }, []));
+
+  // Handle prompts from main process (e.g., package manager selection)
+  useIpcOn('instance:prompt', useCallback((data: {
+    instanceId: string;
+    promptId: string;
+    title: string;
+    message: string;
+    options: Array<{ value: string; label: string; cleanup?: string }>;
+  }) => {
+    setPromptModal({
+      promptId: data.promptId,
+      title: data.title,
+      message: data.message,
+      options: data.options,
+    });
   }, []));
 
   // Section start/end IPC events
@@ -450,7 +472,31 @@ export function App() {
           onToggle={() => setProfileVisible((v) => !v)}
         />
         <div className="app-content">
-          {renderView()}
+          {promptModal ? (
+            <div className="prompt-overlay">
+              <div className="prompt-modal">
+                <h3 className="prompt-title">{promptModal.title}</h3>
+                <p className="prompt-message">{promptModal.message}</p>
+                <div className="prompt-options">
+                  {promptModal.options.map((opt) => (
+                    <button
+                      key={opt.value}
+                      className="prompt-option"
+                      onClick={() => {
+                        invoke(`prompt:respond:${promptModal.promptId}`, { value: opt.value });
+                        setPromptModal(null);
+                      }}
+                    >
+                      <span className="prompt-option-label">{opt.label}</span>
+                      {opt.cleanup && (
+                        <span className="prompt-option-cleanup">🗑 {opt.cleanup}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : renderView()}
         </div>
         <StatusBar
           metroStatus={(activeInstance?.metroStatus as any) ?? 'stopped'}
