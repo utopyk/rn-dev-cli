@@ -40,3 +40,20 @@ export interface ProfileInfo {
   port: number;
   buildType: string;
 }
+
+/** Multi-instance types */
+export interface InstanceInfo {
+  id: string;
+  worktreeName: string;
+  branch: string;
+  port: number;
+  deviceName: string;
+  deviceIcon: string;
+  platform: string;
+  metroStatus: string;
+}
+
+export interface InstanceLogs {
+  serviceLines: string[];
+  metroLines: string[];
+}

@@ -2,11 +2,6 @@ import React from 'react';
 import type { ViewTab } from '../types';
 import './Sidebar.css';
 
-interface WorktreeItem {
-  name: string;
-  status: 'running' | 'starting' | 'stopped' | 'error';
-}
-
 interface ModuleItem {
   id: ViewTab;
   icon: string;
@@ -18,12 +13,6 @@ interface ShortcutItem {
   label: string;
   command: string | null;
 }
-
-const worktrees: WorktreeItem[] = [
-  { name: 'main', status: 'running' },
-  { name: 'feature/auth', status: 'stopped' },
-  { name: 'fix/crash-on-boot', status: 'error' },
-];
 
 const modules: ModuleItem[] = [
   { id: 'dev-space', icon: '🚀', label: 'Dev Space' },
@@ -60,17 +49,6 @@ export function Sidebar({ activeTab, onTabChange, onShortcut, onOpenWizard }: Si
         <div className="logo-l3">╩╚═╝╚╝  ╩═╝╚═╝ ╚╝</div>
       </div>
 
-      {/* Worktrees */}
-      <div className="sidebar-section">
-        <div className="sidebar-section-title">WORKTREES</div>
-        {worktrees.map((wt) => (
-          <div key={wt.name} className="sidebar-item">
-            <span className={`status-dot ${wt.status}`} />
-            <span className="sidebar-item-label">{wt.name}</span>
-          </div>
-        ))}
-      </div>
-
       {/* Modules */}
       <div className="sidebar-section">
         <div className="sidebar-section-title">MODULES</div>
@@ -104,11 +82,10 @@ export function Sidebar({ activeTab, onTabChange, onShortcut, onOpenWizard }: Si
       {/* Footer */}
       <div className="sidebar-footer">
         {onOpenWizard && (
-          <button className="sidebar-new-worktree" onClick={onOpenWizard} style={{ marginBottom: 8 }}>
+          <button className="sidebar-new-worktree" onClick={onOpenWizard}>
             Setup Wizard
           </button>
         )}
-        <button className="sidebar-new-worktree">+ New Worktree</button>
       </div>
     </div>
   );

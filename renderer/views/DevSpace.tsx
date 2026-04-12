@@ -5,9 +5,10 @@ import './DevSpace.css';
 interface DevSpaceProps {
   serviceLines: string[];
   metroLines: string[];
+  instanceId: string;
 }
 
-export function DevSpace({ serviceLines, metroLines }: DevSpaceProps) {
+export function DevSpace({ serviceLines, metroLines, instanceId }: DevSpaceProps) {
   const [focusedPanel, setFocusedPanel] = useState<'tool' | 'metro'>('tool');
 
   return (

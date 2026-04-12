@@ -1,0 +1,173 @@
+.instance-tabs {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+}
+
+.instance-tabs-scroll {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 4px;
+  gap: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.instance-tabs-scroll::-webkit-scrollbar {
+  height: 3px;
+}
+
+.instance-tabs-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.instance-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  position: relative;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+}
+
+.instance-tab:hover {
+  color: var(--fg);
+  background: var(--selection);
+}
+
+.instance-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  background: var(--selection);
+}
+
+.instance-tab-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.instance-tab-name {
+  font-weight: bold;
+  color: inherit;
+}
+
+.instance-tab-device {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.instance-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.instance-dot.running {
+  background: var(--success);
+}
+
+.instance-dot.starting {
+  background: var(--warning);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+.instance-dot.error {
+  background: var(--error);
+}
+
+.instance-dot.stopped {
+  background: var(--muted);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.instance-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.instance-tab:hover .instance-tab-close {
+  opacity: 1;
+}
+
+.instance-tab-close:hover {
+  background: var(--error);
+  color: var(--fg);
+}
+
+.instance-tab-close.confirming {
+  opacity: 1;
+  background: var(--warning);
+  color: var(--bg);
+  font-weight: bold;
+  font-size: 10px;
+}
+
+.instance-tab-confirm {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--warning);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: bold;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+  animation: fade-in-confirm 0.15s ease;
+}
+
+@keyframes fade-in-confirm {
+  from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.instance-tab-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  margin: 3px 4px;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+}
+
+.instance-tab-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--selection);
+}

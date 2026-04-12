@@ -11,6 +11,7 @@ interface StatusBarProps {
 
 const tabLabels: Record<ViewTab, string> = {
   'dev-space': 'Dev Space',
+  'devtools': 'DevTools',
   'lint-test': 'Lint & Test',
   'metro-logs': 'Metro Logs',
   'settings': 'Settings',

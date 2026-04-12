@@ -12,19 +12,83 @@ import { createDefaultPreflightEngine } from '../src/core/preflight.js';
 import { execShellAsync } from '../src/core/exec-async.js';
 import type { Profile } from '../src/core/types.js';
 
+// ── Instance State ──
+
+interface InstanceState {
+  id: string;
+  worktree: string | null;
+  worktreeName: string;
+  branch: string;
+  port: number;
+  deviceId: string | null;
+  deviceName: string;
+  deviceIcon: string;
+  platform: 'ios' | 'android' | 'both';
+  mode: string;
+  metro: MetroManager | null;
+  builder: Builder | null;
+  serviceLog: string[];
+  metroLog: string[];
+  metroStatus: string;
+}
+
+interface InstanceSummary {
+  id: string;
+  worktreeName: string;
+  branch: string;
+  port: number;
+  deviceName: string;
+  deviceIcon: string;
+  platform: string;
+  metroStatus: string;
+}
+
+const instances = new Map<string, InstanceState>();
+let activeInstanceId: string | null = null;
+
 let mainWindow: BrowserWindow | null = null;
-let metro: MetroManager | null = null;
-let builder: Builder | null = null;
 let watcher: FileWatcher | null = null;
-let currentProfile: Profile | null = null;
-let worktreeKey: string | null = null;
 let projectRoot: string | null = null;
 let artifactStore: ArtifactStore | null = null;
+
+const MAX_LOG_LINES = 1000;
 
 function send(channel: string, ...args: any[]) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, ...args);
   }
+}
+
+function appendLog(instance: InstanceState, type: 'service' | 'metro', line: string) {
+  const buf = type === 'service' ? instance.serviceLog : instance.metroLog;
+  buf.push(line);
+  if (buf.length > MAX_LOG_LINES) {
+    buf.splice(0, buf.length - MAX_LOG_LINES);
+  }
+}
+
+function toSummary(inst: InstanceState): InstanceSummary {
+  return {
+    id: inst.id,
+    worktreeName: inst.worktreeName,
+    branch: inst.branch,
+    port: inst.port,
+    deviceName: inst.deviceName,
+    deviceIcon: inst.deviceIcon,
+    platform: inst.platform,
+    metroStatus: inst.metroStatus,
+  };
+}
+
+function findFreePort(): number {
+  const usedPorts = new Set<number>();
+  for (const inst of instances.values()) {
+    usedPorts.add(inst.port);
+  }
+  for (let port = 8081; port <= 8099; port++) {
+    if (!usedPorts.has(port)) return port;
+  }
+  return 8100; // fallback
 }
 
 export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: string) {
@@ -33,89 +97,244 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     projectRoot = initialProjectRoot;
   }
 
-  // ── Forward service bus events to renderer ──
+  // ── Forward service bus events to renderer (legacy, for global logs) ──
   serviceBus.on('log', (text: string) => send('service:log', text));
 
-  // ── IPC Handlers ──
+  // ── Instance IPC Handlers ──
+
+  ipcMain.handle('instances:list', async () => {
+    return Array.from(instances.values()).map(toSummary);
+  });
+
+  ipcMain.handle('instances:create', async (_, profileData) => {
+    if (!projectRoot) return { ok: false, error: 'No project root' };
+
+    const worktreePath = profileData.worktree ?? null;
+    const worktreeName = worktreePath ? path.basename(worktreePath) : 'main';
+    const port = profileData.metroPort ?? findFreePort();
+    const id = `${worktreeName}-${port}`;
+
+    // Don't create duplicates
+    if (instances.has(id)) {
+      return { ok: false, error: `Instance ${id} already exists` };
+    }
+
+    const branch = profileData.branch ?? await getCurrentBranch(projectRoot) ?? 'main';
+
+    // Determine device info
+    let deviceName = 'No device';
+    let deviceIcon = '💻';
+    let deviceId: string | null = null;
+
+    if (profileData.devices) {
+      const iosDeviceId = profileData.devices.ios;
+      const androidDeviceId = profileData.devices.android;
+      deviceId = iosDeviceId ?? androidDeviceId ?? null;
+
+      if (deviceId) {
+        try {
+          const platform = profileData.platform ?? 'ios';
+          const deviceList = await listDevices(platform);
+          const foundDevice = deviceList.find(d => d.id === deviceId);
+          if (foundDevice) {
+            deviceName = foundDevice.name;
+            deviceIcon = foundDevice.isPhysical ? '📱' : '💻';
+          }
+        } catch {
+          // Keep defaults
+        }
+      }
+    }
+
+    const instance: InstanceState = {
+      id,
+      worktree: worktreePath,
+      worktreeName,
+      branch,
+      port,
+      deviceId,
+      deviceName,
+      deviceIcon,
+      platform: profileData.platform ?? 'ios',
+      mode: profileData.mode ?? 'dirty',
+      metro: null,
+      builder: null,
+      serviceLog: [],
+      metroLog: [],
+      metroStatus: 'starting',
+    };
+
+    instances.set(id, instance);
+    activeInstanceId = id;
+
+    // Notify renderer of the new instance
+    send('instance:created', toSummary(instance));
+
+    // Start services for this instance in the background
+    startInstanceServices(instance, profileData).catch(err => {
+      const errMsg = `Failed to start services for ${id}: ${err.message}`;
+      appendLog(instance, 'service', `ERROR ${errMsg}`);
+      send('instance:log', { instanceId: id, text: errMsg });
+    });
+
+    return { ok: true, instance: toSummary(instance) };
+  });
+
+  ipcMain.handle('instances:remove', async (_, instanceId: string) => {
+    const instance = instances.get(instanceId);
+    if (!instance) return { ok: false, error: 'Instance not found' };
+
+    // Stop Metro
+    if (instance.metro) {
+      try {
+        const worktreeKey = artifactStore?.worktreeHash(instance.worktree) ?? instanceId;
+        instance.metro.stop(worktreeKey);
+      } catch {
+        // Best effort
+      }
+    }
+
+    instances.delete(instanceId);
+
+    // Switch active to another instance if needed
+    if (activeInstanceId === instanceId) {
+      const remaining = Array.from(instances.keys());
+      activeInstanceId = remaining.length > 0 ? remaining[0] : null;
+    }
+
+    send('instance:removed', instanceId);
+    return { ok: true, newActiveId: activeInstanceId };
+  });
+
+  ipcMain.handle('instances:setActive', async (_, instanceId: string) => {
+    if (instances.has(instanceId)) {
+      activeInstanceId = instanceId;
+      return { ok: true };
+    }
+    return { ok: false, error: 'Instance not found' };
+  });
+
+  ipcMain.handle('instances:getActive', async () => {
+    return activeInstanceId;
+  });
+
+  ipcMain.handle('instances:getLogs', async (_, instanceId: string) => {
+    const instance = instances.get(instanceId);
+    if (!instance) return { serviceLines: [], metroLines: [] };
+    return {
+      serviceLines: [...instance.serviceLog],
+      metroLines: [...instance.metroLog],
+    };
+  });
+
+  // ── Legacy IPC Handlers (operate on the active instance) ──
 
   ipcMain.handle('metro:reload', async () => {
-    if (metro && worktreeKey) {
-      metro.reload(worktreeKey);
-      send('service:log', '✔ Reload signal sent');
+    const instance = activeInstanceId ? instances.get(activeInstanceId) : null;
+    if (instance?.metro) {
+      const worktreeKey = artifactStore?.worktreeHash(instance.worktree) ?? instance.id;
+      instance.metro.reload(worktreeKey);
+      const msg = 'Reload signal sent';
+      appendLog(instance, 'service', msg);
+      send('instance:log', { instanceId: instance.id, text: msg });
     } else {
-      send('service:log', '✖ Metro not running');
+      send('service:log', 'Metro not running');
     }
   });
 
   ipcMain.handle('metro:devMenu', async () => {
-    if (metro && worktreeKey) {
-      metro.devMenu(worktreeKey);
-      send('service:log', '✔ Dev menu signal sent');
+    const instance = activeInstanceId ? instances.get(activeInstanceId) : null;
+    if (instance?.metro) {
+      const worktreeKey = artifactStore?.worktreeHash(instance.worktree) ?? instance.id;
+      instance.metro.devMenu(worktreeKey);
+      const msg = 'Dev menu signal sent';
+      appendLog(instance, 'service', msg);
+      send('instance:log', { instanceId: instance.id, text: msg });
     } else {
-      send('service:log', '✖ Metro not running');
+      send('service:log', 'Metro not running');
     }
   });
 
   ipcMain.handle('metro:port', async () => {
-    return currentProfile?.metroPort ?? 8081;
+    const instance = activeInstanceId ? instances.get(activeInstanceId) : null;
+    return instance?.port ?? 8081;
   });
 
   ipcMain.handle('run:lint', async () => {
     if (!projectRoot) return;
-    send('service:log', '▶ Running ESLint...');
+    const instance = activeInstanceId ? instances.get(activeInstanceId) : null;
+    const emitLog = (text: string) => {
+      if (instance) {
+        appendLog(instance, 'service', text);
+        send('instance:log', { instanceId: instance.id, text });
+      } else {
+        send('service:log', text);
+      }
+    };
+    emitLog('Running ESLint...');
     try {
+      const cwd = instance?.worktree ?? projectRoot;
       const output = await execShellAsync('npx eslint . --max-warnings=0 2>&1 || true', {
-        cwd: projectRoot,
+        cwd,
         timeout: 60000,
       });
       const lines = output.split('\n').filter(Boolean);
-      for (const line of lines) send('service:log', `  ${line}`);
-      send('service:log', '✔ Lint complete');
+      for (const line of lines) emitLog(`  ${line}`);
+      emitLog('Lint complete');
     } catch (err: any) {
-      send('service:log', `✖ Lint failed: ${err.message?.slice(0, 100)}`);
+      emitLog(`Lint failed: ${err.message?.slice(0, 100)}`);
     }
   });
 
   ipcMain.handle('run:typecheck', async () => {
     if (!projectRoot) return;
-    send('service:log', '▶ Running tsc --noEmit...');
+    const instance = activeInstanceId ? instances.get(activeInstanceId) : null;
+    const emitLog = (text: string) => {
+      if (instance) {
+        appendLog(instance, 'service', text);
+        send('instance:log', { instanceId: instance.id, text });
+      } else {
+        send('service:log', text);
+      }
+    };
+    emitLog('Running tsc --noEmit...');
     try {
+      const cwd = instance?.worktree ?? projectRoot;
       const output = await execShellAsync('npx tsc --noEmit 2>&1 || true', {
-        cwd: projectRoot,
+        cwd,
         timeout: 120000,
       });
       const lines = output.split('\n').filter(Boolean);
-      for (const line of lines) send('service:log', `  ${line}`);
-      send('service:log', '✔ Type check complete');
+      for (const line of lines) emitLog(`  ${line}`);
+      emitLog('Type check complete');
     } catch (err: any) {
-      send('service:log', `✖ Type check failed: ${err.message?.slice(0, 100)}`);
+      emitLog(`Type check failed: ${err.message?.slice(0, 100)}`);
     }
   });
 
   ipcMain.handle('run:clean', async () => {
-    send('service:log', '▶ Clean requires selecting a mode. Use Settings → Clean.');
+    send('service:log', 'Clean requires selecting a mode. Use Settings > Clean.');
   });
 
   ipcMain.handle('watcher:toggle', async () => {
     if (!watcher) {
-      send('service:log', '✖ No on-save actions configured');
+      send('service:log', 'No on-save actions configured');
       return;
     }
     if (watcher.isRunning()) {
       watcher.stop();
-      send('service:log', '✔ Watcher disabled');
+      send('service:log', 'Watcher disabled');
     } else {
-      send('service:log', '⏳ Starting watcher...');
+      send('service:log', 'Starting watcher...');
       watcher.start();
-      send('service:log', '✔ Watcher enabled');
+      send('service:log', 'Watcher enabled');
     }
   });
 
   ipcMain.handle('logs:dump', async () => {
     const fs = require('fs');
     try { fs.mkdirSync('/tmp/rn-dev-logs', { recursive: true }); } catch {}
-    // Dump what we have to files
-    send('service:log', '✔ Logs dumped to /tmp/rn-dev-logs/');
+    send('service:log', 'Logs dumped to /tmp/rn-dev-logs/');
   });
 
   ipcMain.handle('worktrees:list', async () => {
@@ -124,14 +343,15 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
   });
 
   ipcMain.handle('get:profile', async () => {
-    if (!currentProfile) return null;
+    const instance = activeInstanceId ? instances.get(activeInstanceId) : null;
+    if (!instance) return null;
     return {
-      name: currentProfile.name,
-      branch: currentProfile.branch,
-      platform: currentProfile.platform,
-      dirty: currentProfile.mode === 'dirty',
-      port: currentProfile.metroPort,
-      buildType: currentProfile.buildVariant,
+      name: instance.id,
+      branch: instance.branch,
+      platform: instance.platform,
+      dirty: instance.mode === 'dirty',
+      port: instance.port,
+      buildType: 'debug',
     };
   });
 
@@ -221,17 +441,246 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     const profile = { ...profileData, projectRoot };
     const profileStore = new ProfileStore(path.join(projectRoot, '.rn-dev', 'profiles'));
     profileStore.save(profile);
-    currentProfile = profile;
 
-    // Restart services with new profile
-    await startRealServices(projectRoot);
+    // Create an instance from the saved profile
+    const port = profileData.metroPort ?? findFreePort();
+    const createResult = await ipcMain.emit('instances:create', profileData);
+
+    // Invoke the instances:create handler directly
+    const worktreePath = profileData.worktree ?? null;
+    const worktreeName = worktreePath ? path.basename(worktreePath) : 'main';
+    const id = `${worktreeName}-${port}`;
+
+    if (!instances.has(id)) {
+      // Use the instances:create path
+      const branch = profileData.branch ?? await getCurrentBranch(projectRoot) ?? 'main';
+
+      let deviceName = 'No device';
+      let deviceIcon = '💻';
+      let deviceId: string | null = null;
+
+      if (profileData.devices) {
+        deviceId = profileData.devices.ios ?? profileData.devices.android ?? null;
+        if (deviceId) {
+          try {
+            const deviceList = await listDevices(profileData.platform ?? 'ios');
+            const foundDevice = deviceList.find((d: any) => d.id === deviceId);
+            if (foundDevice) {
+              deviceName = foundDevice.name;
+              deviceIcon = foundDevice.isPhysical ? '📱' : '💻';
+            }
+          } catch { /* keep defaults */ }
+        }
+      }
+
+      const instance: InstanceState = {
+        id,
+        worktree: worktreePath,
+        worktreeName,
+        branch,
+        port,
+        deviceId,
+        deviceName,
+        deviceIcon,
+        platform: profileData.platform ?? 'ios',
+        mode: profileData.mode ?? 'dirty',
+        metro: null,
+        builder: null,
+        serviceLog: [],
+        metroLog: [],
+        metroStatus: 'starting',
+      };
+
+      instances.set(id, instance);
+      activeInstanceId = id;
+
+      send('instance:created', toSummary(instance));
+
+      startInstanceServices(instance, profileData).catch(err => {
+        appendLog(instance, 'service', `ERROR Failed to start: ${err.message}`);
+        send('instance:log', { instanceId: id, text: `Failed to start: ${err.message}` });
+      });
+    }
+
     return { ok: true };
   });
+}
+
+// ── Start services for a single instance ──
+
+async function startInstanceServices(instance: InstanceState, profileData: any) {
+  if (!projectRoot || !artifactStore) return;
+
+  const emit = (text: string) => {
+    appendLog(instance, 'service', text);
+    send('instance:log', { instanceId: instance.id, text });
+  };
+
+  const rnDevDir = path.join(projectRoot, '.rn-dev');
+  const profileStore = new ProfileStore(path.join(rnDevDir, 'profiles'));
+
+  // Build a profile object
+  const profile: Profile = {
+    name: profileData.name ?? instance.id,
+    isDefault: profileData.isDefault ?? true,
+    worktree: instance.worktree,
+    branch: instance.branch,
+    platform: instance.platform,
+    mode: instance.mode,
+    metroPort: instance.port,
+    devices: profileData.devices ?? {},
+    buildVariant: profileData.buildVariant ?? 'debug',
+    preflight: profileData.preflight ?? { checks: [], frequency: 'once' },
+    onSave: profileData.onSave ?? [],
+    env: profileData.env ?? {},
+    projectRoot,
+  };
+
+  const worktreeKey = artifactStore.worktreeHash(instance.worktree);
+
+  // Run preflights
+  if (profile.preflight.checks.length > 0) {
+    emit('Running preflight checks...');
+    const engine = createDefaultPreflightEngine(projectRoot);
+    const results = await engine.runAll(profile.platform, profile.preflight);
+
+    let hasErrors = false;
+    for (const [id, result] of results) {
+      const icon = result.passed ? '  OK' : '  FAIL';
+      emit(`${icon} ${id}: ${result.message}`);
+      if (!result.passed) hasErrors = true;
+    }
+
+    if (hasErrors) {
+      emit('  Some preflight checks failed. Continuing anyway...');
+    } else {
+      emit('  All preflight checks passed');
+    }
+    emit('');
+  }
+
+  // Check port
+  emit(`Checking port ${instance.port}...`);
+  const metroMgr = new MetroManager(artifactStore);
+  const portFree = await metroMgr.isPortFree(instance.port);
+  if (!portFree) {
+    emit(`Port ${instance.port} in use. Killing stale process...`);
+    await metroMgr.killProcessOnPort(instance.port);
+    await new Promise(r => setTimeout(r, 1000));
+    emit(`  Killed process on port ${instance.port}`);
+  } else {
+    emit(`Port ${instance.port} is free`);
+  }
+
+  // Boot simulator if needed
+  if (instance.platform === 'ios' || instance.platform === 'both') {
+    emit('Checking simulator...');
+    try {
+      const devices = await listDevices('ios');
+      if (devices.length > 0) {
+        const deviceId = profile.devices?.ios;
+        const device = deviceId
+          ? devices.find(d => d.id === deviceId)
+          : devices.find(d => d.status === 'booted') ?? devices[0];
+        if (device) {
+          if (device.status === 'shutdown') {
+            emit(`Booting simulator ${device.name}...`);
+            await bootDevice(device);
+            emit('  Simulator booted');
+          } else {
+            emit(`  Simulator ${device.name} already booted`);
+          }
+          instance.deviceId = device.id;
+          instance.deviceName = device.name;
+          instance.deviceIcon = device.isPhysical ? '📱' : '💻';
+          // Update renderer with device info
+          send('instance:status', { instanceId: instance.id, ...toSummary(instance) });
+        }
+      }
+    } catch (err: any) {
+      emit(`  Simulator check failed: ${err.message?.slice(0, 80)}`);
+    }
+  }
+
+  // Start Metro
+  emit(`Starting Metro on port ${instance.port}...`);
+  instance.metroStatus = 'starting';
+  send('instance:status', { instanceId: instance.id, ...toSummary(instance) });
+
+  metroMgr.start({
+    worktreeKey,
+    projectRoot: instance.worktree ?? projectRoot,
+    port: instance.port,
+    resetCache: instance.mode !== 'dirty',
+    env: profile.env,
+  });
+  instance.metro = metroMgr;
+
+  // Forward metro logs
+  metroMgr.on('log', ({ line }: { worktreeKey: string; line: string }) => {
+    appendLog(instance, 'metro', line);
+    send('instance:metro', { instanceId: instance.id, text: line });
+  });
+
+  metroMgr.on('status', ({ status }: { worktreeKey: string; status: string }) => {
+    instance.metroStatus = status;
+    send('instance:status', { instanceId: instance.id, ...toSummary(instance) });
+    if (status === 'running') {
+      emit('Metro is running');
+    }
+  });
+
+  emit('All services started');
+  emit('');
+
+  // Trigger build
+  setTimeout(() => {
+    const b = new Builder();
+    instance.builder = b;
+
+    b.on('line', ({ text }: { text: string }) => {
+      appendLog(instance, 'service', text);
+      send('instance:build:line', { instanceId: instance.id, text });
+    });
+
+    b.on('progress', ({ phase }: { phase: string }) => {
+      send('instance:build:progress', { instanceId: instance.id, phase });
+    });
+
+    b.on('done', ({ success, errors, platform }: any) => {
+      send('instance:build:done', { instanceId: instance.id, success, errors, platform });
+      if (success) {
+        emit('Build complete!');
+      } else {
+        emit('Build failed');
+        for (const err of errors ?? []) {
+          emit(`  ${err.summary}`);
+          if (err.suggestion) emit(`    Fix: ${err.suggestion}`);
+        }
+      }
+    });
+
+    const platformsToBuild: Array<'ios' | 'android'> =
+      profile.platform === 'both' ? ['ios', 'android'] : [profile.platform];
+
+    for (const plat of platformsToBuild) {
+      const devId = plat === 'ios' ? profile.devices?.ios : profile.devices?.android;
+      b.build({
+        projectRoot: instance.worktree ?? projectRoot!,
+        platform: plat,
+        deviceId: devId ?? undefined,
+        port: instance.port,
+        variant: profile.buildVariant,
+        env: profile.env,
+      });
+    }
+  }, 500);
 }
 
 /**
  * Start real core services for a project.
  * Called from main.ts after the window is ready.
+ * Creates the first instance automatically from the default profile (or triggers wizard).
  */
 export async function startRealServices(targetProjectRoot: string) {
   projectRoot = targetProjectRoot;
@@ -240,192 +689,66 @@ export async function startRealServices(targetProjectRoot: string) {
   artifactStore = new ArtifactStore(path.join(rnDevDir, 'artifacts'));
   const profileStore = new ProfileStore(path.join(rnDevDir, 'profiles'));
 
-  const emit = (text: string) => {
-    serviceBus.log(text);
-  };
-
   // Load or create profile
   const branch = await getCurrentBranch(projectRoot) ?? 'main';
   let profile = profileStore.findDefault(null, branch);
 
   if (!profile) {
-    // Create a default profile
-    profile = {
-      name: `profile-${Date.now()}`,
-      isDefault: true,
-      worktree: null,
-      branch,
-      platform: 'ios',
-      mode: 'dirty',
-      metroPort: 8081,
-      devices: {},
-      buildVariant: 'debug',
-      preflight: { checks: ['node-version', 'xcode-cli-tools', 'cocoapods-installed', 'metro-port', 'watchman'], frequency: 'once' },
-      onSave: [],
-      env: {},
-      projectRoot,
-    };
-    profileStore.save(profile);
-    emit(`ℹ Created default profile: ${profile.name}`);
+    // No profile — renderer will show the wizard
+    // The wizard completion will call instances:create
+    return;
   }
 
-  currentProfile = profile;
-  worktreeKey = artifactStore.worktreeHash(profile.worktree);
+  // Create the first instance from the default profile
+  const worktreePath = profile.worktree ?? null;
+  const worktreeName = worktreePath ? path.basename(worktreePath) : 'main';
+  const port = profile.metroPort ?? 8081;
+  const id = `${worktreeName}-${port}`;
 
-  // Send profile to renderer
-  send('profile:update', {
-    name: profile.name,
+  let deviceName = 'No device';
+  let deviceIcon = '💻';
+  let deviceId: string | null = null;
+
+  if (profile.devices) {
+    deviceId = profile.devices.ios ?? profile.devices.android ?? null;
+    if (deviceId) {
+      try {
+        const deviceList = await listDevices(profile.platform);
+        const foundDevice = deviceList.find(d => d.id === deviceId);
+        if (foundDevice) {
+          deviceName = foundDevice.name;
+          deviceIcon = foundDevice.isPhysical ? '📱' : '💻';
+        }
+      } catch { /* keep defaults */ }
+    }
+  }
+
+  const instance: InstanceState = {
+    id,
+    worktree: worktreePath,
+    worktreeName,
     branch: profile.branch,
+    port,
+    deviceId,
+    deviceName,
+    deviceIcon,
     platform: profile.platform,
-    dirty: profile.mode === 'dirty',
-    port: profile.metroPort,
-    buildType: profile.buildVariant,
+    mode: profile.mode,
+    metro: null,
+    builder: null,
+    serviceLog: [],
+    metroLog: [],
+    metroStatus: 'starting',
+  };
+
+  instances.set(id, instance);
+  activeInstanceId = id;
+
+  send('instance:created', toSummary(instance));
+
+  // Start services
+  await startInstanceServices(instance, {
+    ...profile,
+    devices: profile.devices,
   });
-
-  // Run preflights
-  if (profile.preflight.checks.length > 0) {
-    emit('⏳ Running preflight checks...');
-    const engine = createDefaultPreflightEngine(projectRoot);
-    const results = await engine.runAll(profile.platform, profile.preflight);
-
-    let hasErrors = false;
-    for (const [id, result] of results) {
-      const icon = result.passed ? '✔' : '✖';
-      emit(`  ${icon} ${id}: ${result.message}`);
-      if (!result.passed) hasErrors = true;
-    }
-
-    if (hasErrors) {
-      emit('  ⚠ Some preflight checks failed. Continuing anyway...');
-    } else {
-      emit('  ✔ All preflight checks passed');
-    }
-    emit('');
-  }
-
-  // Clear watchman
-  emit('⏳ Clearing watchman...');
-  try {
-    await execShellAsync(`watchman watch-del '${projectRoot}'`, { timeout: 10000 });
-    emit('✔ Watchman watch cleared');
-  } catch {
-    emit('ℹ Watchman not available or timed out');
-  }
-
-  // Check port
-  emit(`⏳ Checking port ${profile.metroPort}...`);
-  const metroMgr = new MetroManager(artifactStore);
-  const portFree = await metroMgr.isPortFree(profile.metroPort);
-  if (!portFree) {
-    emit(`⚠ Port ${profile.metroPort} in use. Killing stale process...`);
-    await metroMgr.killProcessOnPort(profile.metroPort);
-    await new Promise(r => setTimeout(r, 1000));
-    emit(`  ✔ Killed process on port ${profile.metroPort}`);
-  } else {
-    emit(`✔ Port ${profile.metroPort} is free`);
-  }
-
-  // Boot simulator
-  if (profile.platform === 'ios' || profile.platform === 'both') {
-    emit('⏳ Checking simulator...');
-    try {
-      const devices = await listDevices('ios');
-      if (devices.length > 0) {
-        const deviceId = profile.devices?.ios;
-        const device = deviceId ? devices.find(d => d.id === deviceId) : devices.find(d => d.status === 'booted') ?? devices[0];
-        if (device) {
-          if (device.status === 'shutdown') {
-            emit(`⏳ Booting simulator ${device.name}...`);
-            await bootDevice(device);
-            emit('  ✔ Simulator booted');
-          } else {
-            emit(`  ✔ Simulator ${device.name} already booted`);
-          }
-          // Set the device ID in profile if not set
-          if (!profile.devices.ios) {
-            profile.devices.ios = device.id;
-          }
-        }
-      }
-    } catch (err: any) {
-      emit(`  ⚠ Simulator check failed: ${err.message?.slice(0, 80)}`);
-    }
-  }
-
-  // Start Metro
-  emit(`⏳ Starting Metro on port ${profile.metroPort}...`);
-  metroMgr.start({
-    worktreeKey,
-    projectRoot: profile.worktree ?? projectRoot,
-    port: profile.metroPort,
-    resetCache: profile.mode !== 'dirty',
-    env: profile.env,
-  });
-  metro = metroMgr;
-
-  // Forward metro logs to renderer
-  metroMgr.on('log', ({ line }: { worktreeKey: string; line: string }) => {
-    send('metro:log', line);
-  });
-
-  metroMgr.on('status', ({ status }: { worktreeKey: string; status: string }) => {
-    send('metro:status', status);
-    if (status === 'running') {
-      emit('✔ Metro is running');
-    }
-  });
-
-  emit('ℹ File watcher ready — press [w] to enable');
-
-  // Create watcher (don't start — chokidar blocks)
-  if (profile.onSave.length > 0) {
-    watcher = new FileWatcher({ projectRoot, actions: profile.onSave });
-  }
-
-  emit('✔ All services started');
-  emit('');
-
-  // Trigger build after a short delay
-  setTimeout(() => {
-    const b = new Builder();
-    builder = b;
-
-    // Forward builder events to renderer
-    b.on('line', ({ text }: { text: string }) => {
-      send('build:line', text);
-    });
-
-    b.on('progress', ({ phase }: { phase: string }) => {
-      send('build:progress', phase);
-    });
-
-    b.on('done', ({ success, errors, platform }: any) => {
-      send('build:done', { success, errors, platform });
-      if (success) {
-        emit('✅ Build complete!');
-      } else {
-        emit('❌ Build failed');
-        for (const err of errors ?? []) {
-          emit(`  ${err.summary}`);
-          if (err.suggestion) emit(`    Fix: ${err.suggestion}`);
-        }
-        emit(`  Full log: /tmp/rn-dev-logs/build-${platform ?? 'ios'}.log`);
-      }
-    });
-
-    const platformsToBuild: Array<'ios' | 'android'> =
-      profile!.platform === 'both' ? ['ios', 'android'] : [profile!.platform];
-
-    for (const plat of platformsToBuild) {
-      const devId = plat === 'ios' ? profile!.devices?.ios : profile!.devices?.android;
-      b.build({
-        projectRoot: profile!.worktree ?? projectRoot!,
-        platform: plat,
-        deviceId: devId ?? undefined,
-        port: profile!.metroPort,
-        variant: profile!.buildVariant,
-        env: profile!.env,
-      });
-    }
-  }, 500);
 }

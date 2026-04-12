@@ -1,8 +1,9 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import type { ViewTab, ProfileInfo } from './types';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import type { ViewTab, ProfileInfo, InstanceInfo, InstanceLogs } from './types';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { ProfileBanner } from './components/ProfileBanner';
+import { InstanceTabs } from './components/InstanceTabs';
 import { DevSpace } from './views/DevSpace';
 import { DevToolsView } from './views/DevToolsView';
 import { LintTest } from './views/LintTest';
@@ -13,54 +14,172 @@ import { useIpcOn, useIpcInvoke } from './hooks/useIpc';
 import { useSimulatedLogs } from './hooks/useSimulatedLogs';
 import './App.css';
 
-const defaultProfile: ProfileInfo = {
-  name: 'my-profile',
-  branch: 'main',
-  platform: 'ios',
-  dirty: true,
-  port: 8081,
-  buildType: 'debug',
-};
+function makeEmptyLogs(): InstanceLogs {
+  return { serviceLines: [], metroLines: [] };
+}
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ViewTab>('dev-space');
   const [profileVisible, setProfileVisible] = useState(true);
-  const [profile] = useState<ProfileInfo>(defaultProfile);
   const [showWizard, setShowWizard] = useState(false);
 
-  const [serviceLines, setServiceLines] = useState<string[]>([]);
-  const [metroLines, setMetroLines] = useState<string[]>([]);
+  // Multi-instance state
+  const [instances, setInstances] = useState<InstanceInfo[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const instanceLogsRef = useRef<Map<string, InstanceLogs>>(new Map());
+  const [logVersion, setLogVersion] = useState(0); // trigger re-renders for logs
 
   const invoke = useIpcInvoke();
 
-  // Check if a profile exists on mount — show wizard if not
+  // On mount: fetch existing instances; if none exist and no profile, show wizard
   useEffect(() => {
-    invoke('wizard:hasProfile').then((hasProfile: boolean) => {
-      if (!hasProfile) setShowWizard(true);
+    invoke('instances:list').then((list: InstanceInfo[]) => {
+      if (list && list.length > 0) {
+        setInstances(list);
+        setActiveId(list[0].id);
+        // Fetch logs for all instances
+        for (const inst of list) {
+          invoke('instances:getLogs', inst.id).then((logs: { serviceLines: string[]; metroLines: string[] }) => {
+            instanceLogsRef.current.set(inst.id, {
+              serviceLines: logs?.serviceLines ?? [],
+              metroLines: logs?.metroLines ?? [],
+            });
+            setLogVersion(v => v + 1);
+          });
+        }
+      } else {
+        // No instances yet — check if a profile exists
+        invoke('wizard:hasProfile').then((hasProfile: boolean) => {
+          if (!hasProfile) {
+            setShowWizard(true);
+          }
+          // If profile exists, startRealServices in main will create one
+          // and we'll get it via instance:created event
+        });
+      }
     });
   }, [invoke]);
 
-  // Stable callbacks for log appending
-  const addServiceLog = useCallback((line: string) => {
-    setServiceLines((prev) => [...prev, line]);
+  // Helper to append a line to an instance's log buffer
+  const appendInstanceLog = useCallback((instanceId: string, type: 'service' | 'metro', text: string) => {
+    const logs = instanceLogsRef.current.get(instanceId) ?? makeEmptyLogs();
+    const arr = type === 'service' ? logs.serviceLines : logs.metroLines;
+    arr.push(text);
+    if (arr.length > 1000) arr.splice(0, arr.length - 1000);
+    instanceLogsRef.current.set(instanceId, logs);
+    setLogVersion(v => v + 1);
   }, []);
 
-  const addMetroLog = useCallback((line: string) => {
-    setMetroLines((prev) => [...prev, line]);
-  }, []);
+  // IPC listeners for instance events
+  useIpcOn('instance:created', useCallback((info: InstanceInfo) => {
+    setInstances(prev => {
+      if (prev.find(i => i.id === info.id)) return prev;
+      return [...prev, info];
+    });
+    instanceLogsRef.current.set(info.id, makeEmptyLogs());
+    setActiveId(info.id);
+  }, []));
 
-  // IPC listeners (Electron mode)
-  useIpcOn('service:log', addServiceLog);
-  useIpcOn('metro:log', addMetroLog);
-  useIpcOn('build:line', addServiceLog);
+  useIpcOn('instance:removed', useCallback((instanceId: string) => {
+    setInstances(prev => prev.filter(i => i.id !== instanceId));
+    instanceLogsRef.current.delete(instanceId);
+    setActiveId(prev => {
+      if (prev === instanceId) {
+        const remaining = Array.from(instanceLogsRef.current.keys());
+        return remaining.length > 0 ? remaining[0] : null;
+      }
+      return prev;
+    });
+  }, []));
+
+  useIpcOn('instance:log', useCallback((data: { instanceId: string; text: string }) => {
+    appendInstanceLog(data.instanceId, 'service', data.text);
+  }, [appendInstanceLog]));
+
+  useIpcOn('instance:metro', useCallback((data: { instanceId: string; text: string }) => {
+    appendInstanceLog(data.instanceId, 'metro', data.text);
+  }, [appendInstanceLog]));
+
+  useIpcOn('instance:status', useCallback((data: InstanceInfo & { instanceId: string }) => {
+    setInstances(prev => prev.map(i =>
+      i.id === data.instanceId
+        ? { ...i, metroStatus: data.metroStatus, deviceName: data.deviceName, deviceIcon: data.deviceIcon }
+        : i
+    ));
+  }, []));
+
+  useIpcOn('instance:build:line', useCallback((data: { instanceId: string; text: string }) => {
+    appendInstanceLog(data.instanceId, 'service', data.text);
+  }, [appendInstanceLog]));
+
+  useIpcOn('instance:build:done', useCallback((data: { instanceId: string; success: boolean }) => {
+    // Build done is informational; logs are already appended via instance:log
+  }, []));
+
+  // Legacy IPC listeners (for backward compat / browser-only mode)
+  const addServiceLogLegacy = useCallback((line: string) => {
+    if (activeId) {
+      appendInstanceLog(activeId, 'service', line);
+    }
+  }, [activeId, appendInstanceLog]);
+
+  const addMetroLogLegacy = useCallback((line: string) => {
+    if (activeId) {
+      appendInstanceLog(activeId, 'metro', line);
+    }
+  }, [activeId, appendInstanceLog]);
+
+  useIpcOn('service:log', addServiceLogLegacy);
+  useIpcOn('metro:log', addMetroLogLegacy);
+  useIpcOn('build:line', addServiceLogLegacy);
 
   // Simulated logs (browser-only mode)
-  useSimulatedLogs(addServiceLog, addMetroLog, addServiceLog);
+  useSimulatedLogs(
+    useCallback((line: string) => {
+      // In browser mode, create a fake instance if none exist
+      if (instances.length === 0) {
+        const fakeInst: InstanceInfo = {
+          id: 'main-8081',
+          worktreeName: 'main',
+          branch: 'main',
+          port: 8081,
+          deviceName: 'iPhone 16 Pro',
+          deviceIcon: '💻',
+          platform: 'ios',
+          metroStatus: 'running',
+        };
+        setInstances([fakeInst]);
+        setActiveId('main-8081');
+        instanceLogsRef.current.set('main-8081', makeEmptyLogs());
+      }
+      appendInstanceLog('main-8081', 'service', line);
+    }, [instances.length, appendInstanceLog]),
+    useCallback((line: string) => {
+      appendInstanceLog('main-8081', 'metro', line);
+    }, [appendInstanceLog]),
+    useCallback((line: string) => {
+      appendInstanceLog('main-8081', 'service', line);
+    }, [appendInstanceLog]),
+  );
+
+  // Get the current active instance and its logs
+  const activeInstance = instances.find(i => i.id === activeId) ?? null;
+  const activeLogs = activeId ? instanceLogsRef.current.get(activeId) ?? makeEmptyLogs() : makeEmptyLogs();
+
+  const activeProfile: ProfileInfo = activeInstance
+    ? {
+        name: activeInstance.id,
+        branch: activeInstance.branch,
+        platform: activeInstance.platform,
+        dirty: true,
+        port: activeInstance.port,
+        buildType: 'debug',
+      }
+    : { name: '-', branch: '-', platform: '-', dirty: true, port: 0, buildType: '-' };
 
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Don't capture when selecting text or typing in inputs
       const sel = window.getSelection();
       if (sel && sel.toString().length > 0) return;
       if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
@@ -88,7 +207,6 @@ export function App() {
           invoke('logs:dump');
           break;
         case 'f':
-          // Focus toggle is handled inside DevSpace
           break;
         case 'p':
           setProfileVisible((v) => !v);
@@ -107,23 +225,54 @@ export function App() {
 
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [activeTab, invoke, addServiceLog]);
+  }, [activeTab, invoke]);
 
   const handleShortcut = useCallback((command: string) => {
     invoke(command);
-    addServiceLog(`▶ ${command}...`);
-  }, [invoke, addServiceLog]);
+    if (activeId) {
+      appendInstanceLog(activeId, 'service', `> ${command}...`);
+    }
+  }, [invoke, activeId, appendInstanceLog]);
+
+  // Instance tab actions
+  const handleSelectInstance = useCallback((id: string) => {
+    setActiveId(id);
+    invoke('instances:setActive', id);
+  }, [invoke]);
+
+  const handleCloseInstance = useCallback((id: string) => {
+    invoke('instances:remove', id);
+  }, [invoke]);
+
+  const handleAddInstance = useCallback(() => {
+    setShowWizard(true);
+  }, []);
+
+  const handleWizardComplete = useCallback(() => {
+    setShowWizard(false);
+    // After wizard completes, the instance:created event will add the new tab
+  }, []);
+
+  const handleWizardCancel = useCallback(() => {
+    setShowWizard(false);
+  }, []);
 
   const renderView = () => {
     switch (activeTab) {
       case 'dev-space':
-        return <DevSpace serviceLines={serviceLines} metroLines={metroLines} />;
+        return (
+          <DevSpace
+            serviceLines={activeLogs.serviceLines}
+            metroLines={activeLogs.metroLines}
+            instanceId={activeId ?? ''}
+          />
+        );
       case 'devtools':
-        return <DevToolsView metroPort={profile.port} />;
+        return <DevToolsView metroPort={activeProfile.port} />;
       case 'lint-test':
         return <LintTest />;
       case 'metro-logs':
-        return <MetroLogs lines={metroLines} />;
+        return <MetroLogs lines={activeLogs.metroLines} />;
       case 'settings':
         return <Settings />;
     }
@@ -134,10 +283,19 @@ export function App() {
       <div className="app-root">
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} />
         <div className="app-main">
+          {instances.length > 0 && (
+            <InstanceTabs
+              instances={instances}
+              activeId={activeId}
+              onSelect={handleSelectInstance}
+              onClose={handleCloseInstance}
+              onAdd={handleAddInstance}
+            />
+          )}
           <div className="app-content">
             <Wizard
-              onComplete={() => setShowWizard(false)}
-              onCancel={() => setShowWizard(false)}
+              onComplete={handleWizardComplete}
+              onCancel={handleWizardCancel}
             />
           </div>
         </div>
@@ -145,12 +303,24 @@ export function App() {
     );
   }
 
+  // If no instances exist at all (no profile, waiting), show wizard
+  if (instances.length === 0 && !window.rndev) {
+    // Browser-only mode will auto-create a simulated instance
+  }
+
   return (
     <div className="app-root">
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} />
       <div className="app-main">
+        <InstanceTabs
+          instances={instances}
+          activeId={activeId}
+          onSelect={handleSelectInstance}
+          onClose={handleCloseInstance}
+          onAdd={handleAddInstance}
+        />
         <ProfileBanner
-          profile={profile}
+          profile={activeProfile}
           visible={profileVisible}
           onToggle={() => setProfileVisible((v) => !v)}
         />
@@ -158,8 +328,8 @@ export function App() {
           {renderView()}
         </div>
         <StatusBar
-          metroStatus="running"
-          metroPort={profile.port}
+          metroStatus={(activeInstance?.metroStatus as any) ?? 'stopped'}
+          metroPort={activeProfile.port}
           watcherOn={true}
           activeTab={activeTab}
         />
