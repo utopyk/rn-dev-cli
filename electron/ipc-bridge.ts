@@ -811,6 +811,58 @@ async function startInstanceServices(instance: InstanceState, profileData: any) 
   emit('All services started');
   emit('');
 
+  // Check code signing before building (for iOS with physical devices)
+  if (instance.platform === 'ios' || instance.platform === 'both') {
+    const effectiveRootForSigning = instance.worktree ?? projectRoot;
+    const iosDir = join(effectiveRootForSigning, 'ios');
+    try {
+      const entries = require('fs').readdirSync(iosDir);
+      for (const entry of entries) {
+        if (entry.endsWith('.xcodeproj')) {
+          const pbxproj = join(iosDir, entry, 'project.pbxproj');
+          if (existsSync(pbxproj)) {
+            const content = require('fs').readFileSync(pbxproj, 'utf8');
+            const manualMatches = content.match(/CODE_SIGN_STYLE\s*=\s*Manual/g);
+            if (manualMatches && manualMatches.length > 0) {
+              emit(`⚠ Manual code signing detected (${manualMatches.length} targets)`);
+
+              // Prompt user
+              const signingResponse = await new Promise<string>((resolve) => {
+                const promptId = `signing-${instance.id}-${Date.now()}`;
+                send('instance:prompt', {
+                  instanceId: instance.id,
+                  promptId,
+                  title: 'Code Signing Conflict',
+                  message: `This project uses Manual code signing (set by CI/Fastlane). Local builds will fail without the CI certificates.\n\nSwitch to Automatic signing? This won't break CI — Fastlane overrides it at build time.`,
+                  options: [
+                    { value: 'fix', label: '✔ Switch to Automatic signing', cleanup: 'Safe — CI overrides this' },
+                    { value: 'skip', label: 'Skip — I have the certificates' },
+                  ],
+                });
+                ipcMain.handle(`prompt:respond:${promptId}`, async (_, data) => {
+                  resolve(data.value);
+                  return { ok: true };
+                });
+                setTimeout(() => resolve('skip'), 60000);
+              });
+
+              if (signingResponse === 'fix') {
+                const fixed = content.replace(/CODE_SIGN_STYLE\s*=\s*Manual/g, 'CODE_SIGN_STYLE = Automatic');
+                require('fs').writeFileSync(pbxproj, fixed);
+                emit(`  ✔ Switched to Automatic signing`);
+              } else {
+                emit(`  ℹ Keeping Manual signing`);
+              }
+            }
+          }
+          break;
+        }
+      }
+    } catch (err: any) {
+      emit(`  ⚠ Could not check code signing: ${err.message?.slice(0, 80)}`);
+    }
+  }
+
   // Trigger build
   setTimeout(() => {
     const b = new Builder();
