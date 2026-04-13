@@ -9,6 +9,7 @@ interface CollapsibleLogProps {
   focused?: boolean;
   onFocus?: () => void;
   onToggleSection?: (sectionId: string) => void;
+  onRetrySection?: (sectionId: string) => void;
 }
 
 /** Strip ANSI escape codes from text */
@@ -39,51 +40,86 @@ function statusIcon(status: LogSection['status']): string {
 
 function statusClass(status: LogSection['status']): string {
   switch (status) {
-    case 'ok': return 'section-status-ok';
-    case 'warning': return 'section-status-warning';
-    case 'error': return 'section-status-error';
-    case 'running': return 'section-status-running';
+    case 'ok': return 'status-ok';
+    case 'warning': return 'status-warning';
+    case 'error': return 'status-error';
+    case 'running': return 'status-running';
   }
 }
 
-function SectionHeader({ section, onToggle }: { section: LogSection; onToggle: () => void }) {
+interface AccordionSectionProps {
+  section: LogSection;
+  onToggle: () => void;
+  onRetry?: () => void;
+}
+
+function AccordionSection({ section, onToggle, onRetry }: AccordionSectionProps) {
   const chevron = section.collapsed ? '\u25B6' : '\u25BC';
   const icon = section.status === 'running' ? section.icon : statusIcon(section.status);
+  const isRunning = section.status === 'running';
+  const sc = statusClass(section.status);
+
+  const handleRetry = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onRetry?.();
+  }, [onRetry]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onToggle();
+    }
+  }, [onToggle]);
 
   return (
-    <div
-      className={`section-header ${statusClass(section.status)}`}
-      onClick={onToggle}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onToggle(); }}
-    >
-      <span className="section-chevron">{chevron}</span>
-      <span className={`section-icon ${section.status === 'running' ? 'icon-spin' : ''}`}>{icon}</span>
-      <span className="section-title">{section.title}</span>
-      <span className="section-line-count">({section.lines.length} lines)</span>
+    <div className={`accordion-section ${sc}`}>
+      {/* Header row */}
+      <div
+        className="accordion-header"
+        onClick={onToggle}
+        role="button"
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        aria-expanded={!section.collapsed}
+      >
+        <span className="accordion-chevron">{chevron}</span>
+        <span className={`accordion-status-icon ${sc} ${isRunning ? 'icon-pulse' : ''}`}>
+          {icon}
+        </span>
+        <span className="accordion-title">{section.title}</span>
+        <span className="accordion-count">({section.lines.length} lines)</span>
+        {!isRunning && onRetry && (
+          <button
+            className="accordion-retry"
+            onClick={handleRetry}
+            title={`Retry ${section.title}`}
+          >
+            &#x21BB; Retry
+          </button>
+        )}
+        {isRunning && (
+          <span className="accordion-running-badge">running</span>
+        )}
+      </div>
+
+      {/* Body (expanded) */}
+      {!section.collapsed && (
+        <div className="accordion-body">
+          {section.lines.map((line, i) => {
+            const clean = stripAnsi(line);
+            return (
+              <div key={i} className={`log-line ${getLineClass(clean)}`}>
+                {clean}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
-function SectionBody({ section }: { section: LogSection }) {
-  if (section.collapsed) return null;
-
-  return (
-    <div className="section-body">
-      {section.lines.map((line, i) => {
-        const clean = stripAnsi(line);
-        return (
-          <div key={i} className={`log-line ${getLineClass(clean)}`}>
-            {clean}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-export function CollapsibleLog({ sections, flatLines, focused = false, onFocus, onToggleSection }: CollapsibleLogProps) {
+export function CollapsibleLog({ sections, flatLines, focused = false, onFocus, onToggleSection, onRetrySection }: CollapsibleLogProps) {
   const contentRef = useRef<HTMLDivElement>(null);
 
   const hasSections = sections.length > 0;
@@ -103,6 +139,10 @@ export function CollapsibleLog({ sections, flatLines, focused = false, onFocus, 
     onToggleSection?.(sectionId);
   }, [onToggleSection]);
 
+  const handleRetry = useCallback((sectionId: string) => {
+    onRetrySection?.(sectionId);
+  }, [onRetrySection]);
+
   return (
     <div className={`panel${focused ? ' focused' : ''}`} onClick={onFocus}>
       <div className="panel-header">
@@ -111,15 +151,16 @@ export function CollapsibleLog({ sections, flatLines, focused = false, onFocus, 
       </div>
       <div className="panel-content collapsible-log-content" ref={contentRef}>
         {hasSections ? (
-          sections.map((section) => (
-            <div key={section.id} className="log-section">
-              <SectionHeader
+          <div className="accordion-list">
+            {sections.map((section) => (
+              <AccordionSection
+                key={section.id}
                 section={section}
                 onToggle={() => handleToggle(section.id)}
+                onRetry={onRetrySection ? () => handleRetry(section.id) : undefined}
               />
-              <SectionBody section={section} />
-            </div>
-          ))
+            ))}
+          </div>
         ) : (
           flatLines.map((line, i) => {
             const clean = stripAnsi(line);

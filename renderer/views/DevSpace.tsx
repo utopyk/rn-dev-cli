@@ -11,9 +11,10 @@ interface DevSpaceProps {
   sections: LogSection[];
   instanceId: string;
   onToggleSection?: (sectionId: string) => void;
+  onRetrySection?: (sectionId: string) => void;
 }
 
-export function DevSpace({ serviceLines, metroLines, sections, instanceId, onToggleSection }: DevSpaceProps) {
+export function DevSpace({ serviceLines, metroLines, sections, instanceId, onToggleSection, onRetrySection }: DevSpaceProps) {
   const [focusedPanel, setFocusedPanel] = useState<'tool' | 'metro'>('tool');
 
   // Extract build errors from service lines (only when there are errors)
@@ -38,6 +39,7 @@ export function DevSpace({ serviceLines, metroLines, sections, instanceId, onTog
         focused={focusedPanel === 'tool'}
         onFocus={() => setFocusedPanel('tool')}
         onToggleSection={onToggleSection}
+        onRetrySection={onRetrySection}
       />
       <LogPanel
         title="Metro Output"

@@ -1,51 +1,95 @@
 /* ── Collapsible Log Sections ── */
 
 .collapsible-log-content {
-  padding: 4px 6px;
+  padding: 6px 8px;
 }
 
-.log-section {
-  margin-bottom: 2px;
+/* ── Accordion List ── */
+
+.accordion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-/* ── Section Header ── */
+/* ── Accordion Section (card) ── */
 
-.section-header {
+.accordion-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.accordion-section.status-ok {
+  border-color: rgba(158, 206, 106, 0.3);
+}
+
+.accordion-section.status-error {
+  border-color: rgba(247, 118, 142, 0.3);
+}
+
+.accordion-section.status-warning {
+  border-color: rgba(224, 175, 104, 0.3);
+}
+
+.accordion-section.status-running {
+  border-color: var(--accent);
+}
+
+/* ── Accordion Header ── */
+
+.accordion-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 8px 12px;
   cursor: pointer;
   user-select: none;
-  font-size: 12px;
-  font-weight: bold;
-  transition: background-color 0.12s ease;
+  gap: 8px;
+  transition: background 0.1s ease;
 }
 
-.section-header:hover {
-  background-color: var(--selection);
+.accordion-header:hover {
+  background: var(--selection);
 }
 
-.section-header:focus-visible {
+.accordion-header:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
 
-.section-chevron {
+.accordion-chevron {
+  color: var(--muted);
   font-size: 10px;
   width: 12px;
-  text-align: center;
-  color: var(--muted);
   flex-shrink: 0;
+  text-align: center;
 }
 
-.section-icon {
+/* ── Status icon ── */
+
+.accordion-status-icon {
   flex-shrink: 0;
   font-size: 13px;
 }
 
-.icon-spin {
+.accordion-status-icon.status-ok {
+  color: var(--success);
+}
+
+.accordion-status-icon.status-warning {
+  color: var(--warning);
+}
+
+.accordion-status-icon.status-error {
+  color: var(--error);
+}
+
+.accordion-status-icon.status-running {
+  color: var(--accent);
+}
+
+.icon-pulse {
   display: inline-block;
   animation: icon-pulse 1.2s ease-in-out infinite;
 }
@@ -55,46 +99,62 @@
   50% { opacity: 0.4; }
 }
 
-.section-title {
+/* ── Title & count ── */
+
+.accordion-title {
   flex: 1;
+  font-size: 12px;
+  font-weight: 500;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.section-line-count {
-  font-weight: normal;
-  font-size: 10px;
+.accordion-count {
   color: var(--muted);
+  font-size: 11px;
   flex-shrink: 0;
 }
 
-/* ── Status colors on header ── */
+/* ── Retry button ── */
 
-.section-status-ok .section-icon {
-  color: var(--success);
+.accordion-retry {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  background: transparent;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+  font-family: inherit;
 }
 
-.section-status-warning .section-icon {
-  color: var(--warning);
-}
-
-.section-status-error .section-icon {
-  color: var(--error);
-}
-
-.section-status-running .section-icon {
+.accordion-retry:hover {
+  border-color: var(--accent);
   color: var(--accent);
+  background: var(--selection);
 }
 
-/* ── Section Body ── */
+/* ── Running badge ── */
 
-.section-body {
-  border-left: 2px solid var(--border);
-  margin-left: 14px;
-  padding: 2px 0 2px 10px;
-  overflow: hidden;
+.accordion-running-badge {
+  font-size: 10px;
+  color: var(--accent);
+  opacity: 0.8;
+  flex-shrink: 0;
+  font-style: italic;
+}
+
+/* ── Accordion Body ── */
+
+.accordion-body {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  max-height: 300px;
+  overflow-y: auto;
   animation: section-expand 0.15s ease-out;
 }
 
@@ -105,42 +165,23 @@
   }
   to {
     opacity: 1;
-    max-height: 2000px;
+    max-height: 300px;
   }
 }
 
-.section-status-ok + .section-body {
-  border-left-color: var(--success);
+/* status-specific body border-top tint */
+.accordion-section.status-ok .accordion-body {
+  border-top-color: rgba(158, 206, 106, 0.2);
 }
 
-.section-status-warning + .section-body {
-  border-left-color: var(--warning);
+.accordion-section.status-error .accordion-body {
+  border-top-color: rgba(247, 118, 142, 0.2);
 }
 
-.section-status-error + .section-body {
-  border-left-color: var(--error);
+.accordion-section.status-warning .accordion-body {
+  border-top-color: rgba(224, 175, 104, 0.2);
 }
 
-.section-status-running + .section-body {
-  border-left-color: var(--accent);
-}
-
-/* Note: The border color selectors above won't work as-is because
-   the header and body are siblings inside .log-section.
-   We need to use parent-based selectors instead. */
-
-.log-section:has(.section-status-ok) .section-body {
-  border-left-color: var(--success);
-}
-
-.log-section:has(.section-status-warning) .section-body {
-  border-left-color: var(--warning);
-}
-
-.log-section:has(.section-status-error) .section-body {
-  border-left-color: var(--error);
-}
-
-.log-section:has(.section-status-running) .section-body {
-  border-left-color: var(--accent);
+.accordion-section.status-running .accordion-body {
+  border-top-color: rgba(var(--accent-rgb, 100, 200, 255), 0.2);
 }

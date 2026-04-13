@@ -534,6 +534,188 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     profileStore.save(profile);
     return { ok: true };
   });
+
+  // ── Retry a specific step for an instance ──
+  ipcMain.handle('instance:retryStep', async (_, data: { instanceId: string; stepId: string }) => {
+    const { instanceId, stepId } = data;
+    const instance = instances.get(instanceId);
+    if (!instance) return { ok: false, error: 'Instance not found' };
+    if (!projectRoot || !artifactStore) return { ok: false, error: 'No project root' };
+
+    const emit = (text: string) => {
+      appendLog(instance, 'service', text);
+      send('instance:log', { instanceId: instance.id, text });
+    };
+
+    const sectionTitles: Record<string, string> = {
+      preflight: 'Preflight Checks',
+      clean: `${instance.mode} Clean`,
+      watchman: 'Watchman Clear',
+      metro: 'Metro Start',
+      build: `Build for ${instance.platform}`,
+    };
+
+    const title = sectionTitles[stepId] ?? stepId;
+    send('instance:section:start', { instanceId: instance.id, id: stepId, title, icon: '\u23F3' });
+
+    try {
+      if (stepId === 'preflight') {
+        const rnDevDir = path.join(projectRoot, '.rn-dev');
+        const profileStore = new ProfileStore(path.join(rnDevDir, 'profiles'));
+        const engine = createDefaultPreflightEngine(projectRoot);
+
+        // Build minimal preflight config — run all checks for the instance's platform
+        const preflightConfig = {
+          checks: [
+            'node-version', 'ruby-version', 'xcode-cli-tools', 'cocoapods-installed',
+            'podfile-lock-sync', 'watchman', 'node-modules-sync', 'metro-port', 'env-file',
+          ],
+          frequency: 'always' as const,
+        };
+
+        emit('Running preflight checks...');
+        const results = await engine.runAll(instance.platform, preflightConfig);
+        let hasErrors = false;
+        for (const [id, result] of results) {
+          const icon = result.passed ? '  OK' : '  FAIL';
+          emit(`${icon} ${id}: ${result.message}`);
+          if (!result.passed) hasErrors = true;
+        }
+        if (hasErrors) {
+          emit('  Some preflight checks failed.');
+          send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'warning' });
+        } else {
+          emit('  All preflight checks passed');
+          send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'ok' });
+        }
+
+      } else if (stepId === 'clean') {
+        const effectiveRoot = instance.worktree ?? projectRoot;
+        const cleaner = new CleanManager(effectiveRoot);
+        const results = await cleaner.execute(instance.mode as any, instance.platform, (step, status) => {
+          const icon = status === 'running' ? '\u23F3' : '\u2714';
+          emit(`  ${icon} ${step}`);
+        });
+        const failed = results.filter((r: any) => !r.success);
+        if (failed.length > 0) {
+          emit(`  ⚠ ${failed.length} clean step(s) had issues`);
+          send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'warning' });
+        } else {
+          emit('Clean complete');
+          send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'ok' });
+        }
+
+      } else if (stepId === 'watchman') {
+        emit('Clearing watchman...');
+        await execShellAsync(`watchman watch-del '${projectRoot}'`, { timeout: 10000 }).catch(() => {});
+        if (instance.worktree && instance.worktree !== projectRoot) {
+          await execShellAsync(`watchman watch-del '${instance.worktree}'`, { timeout: 10000 }).catch(() => {});
+        }
+        await execShellAsync('watchman watch-del-all', { timeout: 10000 }).catch(() => {});
+        emit('Watchman cleared');
+        send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'ok' });
+
+      } else if (stepId === 'metro') {
+        emit(`Restarting Metro on port ${instance.port}...`);
+        // Stop existing metro if running
+        if (instance.metro) {
+          const worktreeKey = artifactStore.worktreeHash(instance.worktree);
+          instance.metro.stop(worktreeKey);
+          instance.metro = null;
+        }
+        await new Promise(r => setTimeout(r, 500));
+
+        const worktreeKey = artifactStore.worktreeHash(instance.worktree);
+        const metroMgr = new MetroManager(artifactStore);
+        // Kill anything on the port
+        const portFree = await metroMgr.isPortFree(instance.port);
+        if (!portFree) {
+          emit(`Port ${instance.port} in use — killing stale process...`);
+          await metroMgr.killProcessOnPort(instance.port);
+          await new Promise(r => setTimeout(r, 1000));
+        }
+
+        metroMgr.start({
+          worktreeKey,
+          projectRoot: instance.worktree ?? projectRoot,
+          port: instance.port,
+          resetCache: false,
+          env: {},
+        });
+        instance.metro = metroMgr;
+
+        metroMgr.on('log', ({ line }: { worktreeKey: string; line: string }) => {
+          appendLog(instance, 'metro', line);
+          send('instance:metro', { instanceId: instance.id, text: line });
+        });
+
+        metroMgr.on('status', ({ status }: { worktreeKey: string; status: string }) => {
+          instance.metroStatus = status;
+          send('instance:status', { instanceId: instance.id, ...toSummary(instance) });
+          if (status === 'running') {
+            emit('Metro is running');
+            send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'ok' });
+          }
+        });
+
+      } else if (stepId === 'build') {
+        emit(`Rebuilding for ${instance.platform}...`);
+        // Stop previous builder if any
+        if (instance.builder) {
+          instance.builder.removeAllListeners?.();
+          instance.builder = null;
+        }
+
+        const b = new Builder();
+        instance.builder = b;
+
+        b.on('line', ({ text }: { text: string }) => {
+          appendLog(instance, 'service', text);
+          send('instance:build:line', { instanceId: instance.id, text });
+        });
+
+        b.on('done', ({ success, errors }: any) => {
+          send('instance:build:done', { instanceId: instance.id, success, errors });
+          if (success) {
+            emit('Build complete!');
+            send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'ok' });
+          } else {
+            emit('Build failed');
+            for (const err of errors ?? []) {
+              emit(`  ${err.summary}`);
+              if (err.suggestion) emit(`    Fix: ${err.suggestion}`);
+            }
+            send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'error' });
+          }
+        });
+
+        const platformsToBuild: Array<'ios' | 'android'> =
+          instance.platform === 'both' ? ['ios', 'android'] : [instance.platform];
+
+        for (const plat of platformsToBuild) {
+          b.build({
+            projectRoot: instance.worktree ?? projectRoot,
+            platform: plat,
+            deviceId: instance.deviceId ?? undefined,
+            port: instance.port,
+            variant: 'debug',
+            env: {},
+          });
+        }
+
+      } else {
+        emit(`Unknown step: ${stepId}`);
+        send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'warning' });
+      }
+
+      return { ok: true };
+    } catch (err: any) {
+      const msg = err.message?.slice(0, 200) ?? 'Unknown error';
+      emit(`ERROR ${msg}`);
+      send('instance:section:end', { instanceId: instance.id, id: stepId, status: 'error' });
+      return { ok: false, error: msg };
+    }
+  });
 }
 
 // ── Start services for a single instance ──

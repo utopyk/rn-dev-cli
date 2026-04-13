@@ -209,6 +209,22 @@ export function App() {
     }
   }, []);
 
+  // Section retry handler
+  const handleRetrySection = useCallback((instanceId: string, sectionId: string) => {
+    // Reset section to running state in local log state
+    const logs = instanceLogsRef.current.get(instanceId);
+    if (logs) {
+      const section = logs.sections.find(s => s.id === sectionId);
+      if (section) {
+        section.status = 'running';
+        section.lines = [];
+        section.collapsed = false;
+        setLogVersion(v => v + 1);
+      }
+    }
+    invoke('instance:retryStep', { instanceId, stepId: sectionId });
+  }, [invoke]);
+
   // Helper to handle section events from simulated logs
   const handleSimulatedSectionEvent = useCallback((event: SimulatedSectionEvent) => {
     const logs = instanceLogsRef.current.get('main-8081');
@@ -386,6 +402,7 @@ export function App() {
             sections={activeLogs.sections}
             instanceId={activeId ?? ''}
             onToggleSection={(sectionId) => handleToggleSection(activeId ?? '', sectionId)}
+            onRetrySection={(sectionId) => handleRetrySection(activeId ?? '', sectionId)}
           />
         );
       case 'devtools':
