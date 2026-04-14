@@ -356,7 +356,7 @@ export class CleanManager {
       description: "Run pod install",
       platform: "ios",
       mode: ["clean", "ultra-clean"],
-      action: async () => run(`LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 ${podCmd} install --repo-update`, { cwd: iosDir, timeout: 600000 }),
+      action: async () => run(`LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 RUBYOPT="-EUTF-8" ${podCmd} install --repo-update`, { cwd: iosDir, timeout: 600000 }),
     };
 
     // ------------------------------------------------------------------
@@ -369,7 +369,7 @@ export class CleanManager {
       platform: "ios",
       mode: ["ultra-clean"],
       action: async () =>
-        run(`LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 ${podCmd} deintegrate`, { cwd: iosDir, ignoreFailure: true }),
+        run(`LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 RUBYOPT="-EUTF-8" ${podCmd} deintegrate`, { cwd: iosDir, ignoreFailure: true }),
     };
 
     const removePods: CleanStep = {
