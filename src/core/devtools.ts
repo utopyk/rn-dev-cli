@@ -80,16 +80,31 @@ interface WorktreeState {
 
 export class DevToolsManager extends EventEmitter {
   private instances: Map<string, WorktreeState> = new Map();
+  private readonly metroStatusListener: (payload: {
+    worktreeKey: string;
+    status: string;
+  }) => void;
 
   constructor(
     private readonly metro: MetroManager,
     private readonly opts: DevToolsOpts = {}
   ) {
     super();
-    // Subscribe to Metro status to react to restarts.
-    this.metro.on("status", (payload: { worktreeKey: string; status: string }) => {
-      this.onMetroStatus(payload);
-    });
+    // Subscribe to Metro status to react to restarts. Held as a field so
+    // dispose() can remove it and avoid leaking listeners when the manager
+    // is rebuilt (e.g. on Metro retry).
+    this.metroStatusListener = (payload) => this.onMetroStatus(payload);
+    this.metro.on("status", this.metroStatusListener);
+  }
+
+  /**
+   * Full teardown: stop every worktree and release the Metro status
+   * subscription. After dispose() the manager must not be reused.
+   */
+  async dispose(): Promise<void> {
+    await this.stopAll();
+    this.metro.off("status", this.metroStatusListener);
+    this.removeAllListeners();
   }
 
   // -------------------------------------------------------------------------

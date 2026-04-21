@@ -3,6 +3,7 @@ import path, { join } from 'path';
 import { existsSync } from 'fs';
 import { serviceBus } from '../src/app/service-bus.js';
 import { MetroManager } from '../src/core/metro.js';
+import { DevToolsManager } from '../src/core/devtools.js';
 import { ArtifactStore } from '../src/core/artifact.js';
 import { ProfileStore } from '../src/core/profile.js';
 import { Builder } from '../src/core/builder.js';
@@ -28,6 +29,8 @@ interface InstanceState {
   platform: 'ios' | 'android' | 'both';
   mode: string;
   metro: MetroManager | null;
+  devtools: DevToolsManager | null;
+  devtoolsStarted: boolean;
   builder: Builder | null;
   serviceLog: string[];
   metroLog: string[];
@@ -202,6 +205,8 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
       platform: profileData.platform ?? 'ios',
       mode: profileData.mode ?? 'dirty',
       metro: null,
+      devtools: null,
+      devtoolsStarted: false,
       builder: null,
       serviceLog: [],
       metroLog: [],
@@ -227,6 +232,18 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
   ipcMain.handle('instances:remove', async (_, instanceId: string) => {
     const instance = instances.get(instanceId);
     if (!instance) return { ok: false, error: 'Instance not found' };
+
+    // Tear down DevTools (releases proxy port + Metro listener) before Metro,
+    // since DevToolsManager subscribes to Metro's status events.
+    if (instance.devtools) {
+      try {
+        await instance.devtools.dispose();
+      } catch {
+        // Best effort
+      }
+      instance.devtools = null;
+      instance.devtoolsStarted = false;
+    }
 
     // Stop Metro
     if (instance.metro) {
@@ -487,20 +504,114 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     }
   });
 
-  // DevTools: fetch Metro /json endpoint from main process (avoids CORS in renderer)
-  ipcMain.handle('devtools:getTargets', async (_, port: number) => {
-    try {
-      const http = require('http') as typeof import('http');
-      const data = await new Promise<string>((resolve, reject) => {
-        const req = http.get(`http://localhost:${port}/json`, (res: any) => {
-          let body = '';
-          res.on('data', (chunk: string) => { body += chunk; });
-          res.on('end', () => resolve(body));
+  // ── DevTools (devtools-network module) — lazy-bound CDP proxy ──
+  //
+  // The renderer calls `devtools-network:proxy-port` when its view mounts;
+  // that call lazily starts the per-instance DevToolsManager. The returned
+  // `{ proxyPort, sessionNonce }` is spliced into Fusebox's `ws=` URL so the
+  // webview connects through our transparent proxy. Status + captured entries
+  // are queried on demand; live updates are pushed via `devtools-network:change`.
+
+  const getInstanceByPort = (port: number): InstanceState | null => {
+    for (const inst of instances.values()) if (inst.port === port) return inst;
+    return null;
+  };
+
+  const devtoolsWorktreeKey = (inst: InstanceState): string =>
+    artifactStore?.worktreeHash(inst.worktree) ?? inst.id;
+
+  // Start the manager once per instance and wire its events to IPC. Idempotent.
+  const ensureDevtoolsStarted = async (
+    inst: InstanceState
+  ): Promise<{ proxyPort: number; sessionNonce: string } | null> => {
+    if (!inst.metro) return null;
+    if (!inst.devtools) {
+      inst.devtools = new DevToolsManager(inst.metro, {});
+      inst.devtools.on('delta', (payload: unknown) => {
+        send('devtools-network:change', {
+          instanceId: inst.id,
+          port: inst.port,
+          kind: 'delta',
+          payload,
         });
-        req.on('error', reject);
-        req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
       });
-      return JSON.parse(data);
+      inst.devtools.on('status', (payload: unknown) => {
+        send('devtools-network:change', {
+          instanceId: inst.id,
+          port: inst.port,
+          kind: 'status',
+          payload,
+        });
+      });
+    }
+    if (!inst.devtoolsStarted) {
+      const info = await inst.devtools.start(devtoolsWorktreeKey(inst));
+      inst.devtoolsStarted = true;
+      return info;
+    }
+    const status = inst.devtools.status(devtoolsWorktreeKey(inst));
+    if (status.proxyPort === null || status.sessionNonce === null) return null;
+    return { proxyPort: status.proxyPort, sessionNonce: status.sessionNonce };
+  };
+
+  ipcMain.handle('devtools-network:proxy-port', async (_, port: number) => {
+    const inst = getInstanceByPort(port);
+    if (!inst) return null;
+    try {
+      return await ensureDevtoolsStarted(inst);
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle('devtools-network:status', async (_, port: number) => {
+    const inst = getInstanceByPort(port);
+    if (!inst?.devtools) return null;
+    return inst.devtools.status(devtoolsWorktreeKey(inst));
+  });
+
+  ipcMain.handle('devtools-network:list', async (_, port: number, filter?: unknown) => {
+    const inst = getInstanceByPort(port);
+    if (!inst?.devtools) return null;
+    return inst.devtools.listNetwork(devtoolsWorktreeKey(inst), filter as any);
+  });
+
+  ipcMain.handle('devtools-network:get', async (_, port: number, requestId: string) => {
+    const inst = getInstanceByPort(port);
+    if (!inst?.devtools) return null;
+    return inst.devtools.getNetwork(devtoolsWorktreeKey(inst), requestId);
+  });
+
+  ipcMain.handle('devtools-network:select-target', async (_, port: number, targetId: string) => {
+    const inst = getInstanceByPort(port);
+    if (!inst?.devtools) return { ok: false, error: 'DevTools not started' };
+    try {
+      await inst.devtools.selectTarget(devtoolsWorktreeKey(inst), targetId);
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? 'selectTarget failed' };
+    }
+  });
+
+  ipcMain.handle('devtools-network:clear', async (_, port: number) => {
+    const inst = getInstanceByPort(port);
+    if (!inst?.devtools) return { ok: false };
+    inst.devtools.clear(devtoolsWorktreeKey(inst));
+    return { ok: true };
+  });
+
+  // Full restart: used by the renderer's "Reconnect" button when the manager
+  // landed in `no-target` and the user wants to rediscover targets.
+  ipcMain.handle('devtools-network:restart', async (_, port: number) => {
+    const inst = getInstanceByPort(port);
+    if (!inst) return null;
+    if (inst.devtools) {
+      try { await inst.devtools.dispose(); } catch { /* best-effort */ }
+      inst.devtools = null;
+      inst.devtoolsStarted = false;
+    }
+    try {
+      return await ensureDevtoolsStarted(inst);
     } catch {
       return null;
     }
@@ -617,6 +728,14 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
 
       } else if (stepId === 'metro') {
         emit(`Restarting Metro on port ${instance.port}...`);
+        // Tear down DevTools first — it holds the old Metro reference via a
+        // status listener; rebuilding Metro without disposing would leave a
+        // stale subscription.
+        if (instance.devtools) {
+          try { await instance.devtools.dispose(); } catch { /* best-effort */ }
+          instance.devtools = null;
+          instance.devtoolsStarted = false;
+        }
         // Stop existing metro if running
         if (instance.metro) {
           const worktreeKey = artifactStore.worktreeHash(instance.worktree);
