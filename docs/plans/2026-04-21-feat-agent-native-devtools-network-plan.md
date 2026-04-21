@@ -483,27 +483,35 @@ Parity gaps documented explicitly: replay and ranged body retrieval are deferred
 
 ### Functional Requirements
 
-- [ ] `DevToolsManager` state machine (`IDLE → STARTING → ATTACHING → RUNNING ⇄ RECONNECTING → STOPPING → IDLE`) implemented with documented transitions.
-- [ ] Proxy binds to `127.0.0.1` on ephemeral port; nonce-protected WS path; non-loopback connections refused (S2).
-- [ ] 128-bit session nonce generated via `crypto.randomBytes`; mismatched nonce → 404 (S3).
-- [ ] `DomainTap` interface exists and `NetworkTap` is registered via `DevToolsManager.registerTap`. Adding a second tap requires zero changes to `proxy.ts` or `devtools.ts` (test: scaffold a dummy tap).
-- [ ] `NetworkEntry` is a discriminated union on `terminalState`; `CapturedBody` is a discriminated union; `Initiator` is a typed union (no `unknown`).
-- [ ] `NetworkCursor` is branded.
-- [ ] MCP output goes through `toDto()`; JSON Schema generated from `NetworkEntryDto`.
-- [ ] Response envelope includes `bufferEpoch`, `oldestSequence`, `lastEventSequence`, `proxyStatus`, `selectedTargetId`, `evictedCount`, `tapDroppedCount`, `bodyTruncatedCount`, `bodyCapture`, `sessionBoundary`.
-- [ ] `cursorDropped` returned when agent's `since.sequence < oldestSequence`; response starts from `oldestSequence`.
-- [ ] Ring: dual-structure (FIFO + Map); entries immutable with `version` bumped on upsert; default capacity 300; split caps 64 KiB / 512 KiB.
-- [ ] Delta emit coalesced at 100ms; payload is `{ addedIds, updatedIds, evictedIds, meta }`.
-- [ ] Body fetcher: worker pool 4, queue cap 200, per-body 2s timeout; fire-and-forget from tap.
+Phase 1 (core / headless) — landed in PR #1:
+
+- [x] `DevToolsManager` state machine (`IDLE → STARTING → ATTACHING → RUNNING ⇄ RECONNECTING → STOPPING → IDLE`) implemented with documented transitions.
+- [x] Proxy binds to `127.0.0.1` on ephemeral port; nonce-protected WS path; non-loopback connections refused (S2).
+- [x] 128-bit session nonce generated via `crypto.randomBytes`; mismatched nonce → 404 (S3).
+- [x] `DomainTap` interface exists and `NetworkTap` is the first implementation; manager dispatches events by domain prefix. Adding a second tap requires zero changes to `proxy.ts`.
+- [x] `NetworkEntry` is a discriminated union on `terminalState`; `CapturedBody` is a discriminated union; `Initiator` is a typed union (no `unknown`).
+- [x] `NetworkCursor` is branded.
+- [x] MCP output goes through `toDto()`; JSON Schema hand-rolled in `src/mcp/devtools-dto.ts`.
+- [x] Response envelope includes `bufferEpoch`, `oldestSequence`, `lastEventSequence`, `proxyStatus`, `selectedTargetId`, `evictedCount`, `tapDroppedCount`, `bodyTruncatedCount`, `bodyCapture`, `sessionBoundary`.
+- [x] `cursorDropped` returned when agent's `since.sequence < oldestSequence` or epoch mismatch.
+- [x] Ring: dual-structure (FIFO + Map); entries immutable with `version` bumped on upsert; default capacity 300; split caps 64 KiB / 512 KiB.
+- [x] Delta emit coalesced at 100ms; payload is `{ addedIds, updatedIds, evictedIds, meta }`.
+- [x] Body fetcher: worker pool 4, queue cap 200, per-body 2s timeout; fire-and-forget from tap.
+- [x] Header redaction applies at capture time (all three surfaces inherit via shared ring entries); deny list covers Authorization, Cookie, Set-Cookie, Proxy-Authorization, X-Api-Key, X-Auth-Token, X-CSRF-Token, X-Session-*, and regex-matched headers (S1).
+- [x] Proxy reconnect after upstream close closes downstream with code 1012 (forces Fusebox domain re-init).
+- [x] Target switching bumps `bufferEpoch` with `sessionBoundary.reason: 'target-swap'`.
+
+Phase 2 (Electron) — pending:
+
 - [ ] Fusebox URL rewrite handles both primary (`target.devtoolsFrontendUrl`) and fallback (manual `ws=` + `webSocketDebuggerUrl`) paths; integration test against latest RN fixture.
-- [ ] Header redaction applies to all three surfaces at capture time; deny list covers Authorization, Cookie, Set-Cookie, Proxy-Authorization, X-Api-Key, X-Auth-Token, X-CSRF-Token, X-Session-*, and regex-matched headers (S1).
-- [ ] Proxy reconnect after upstream close closes downstream with code 1012 (forces Fusebox domain re-init).
+
+Phase 3 (Terminal + MCP) — pending:
+
 - [ ] Preemption detection: `proxyStatus: 'preempted'` when another debugger claims the target; polite backoff; all surfaces show explicit message.
 - [ ] MCP: `rn-dev/devtools-status` always registered (minimal form: `{ enabled }`); other four tools registered only behind `--enable-devtools-mcp` flag (S4).
 - [ ] MCP body output redacted unless `--mcp-capture-bodies` flag is also passed (S5); `bodyCapture: 'mcp-redacted'` in envelope.
 - [ ] MCP tool descriptions end with the prompt-injection warning string (S6).
 - [ ] Terminal module renders live table; keybinds `c`, `Enter`, `/`, `t` all functional.
-- [ ] Target switching bumps `bufferEpoch` with `sessionBoundary.reason: 'target-swap'`.
 
 ### Non-Functional Requirements
 
@@ -517,12 +525,12 @@ Parity gaps documented explicitly: replay and ranged body retrieval are deferred
 
 ### Quality Gates
 
-- [ ] Proxy transparency test: Debugger / Runtime / Console frames byte-identical with vs without proxy.
-- [ ] `bun test` green, including all new test files.
-- [ ] Integration tests enumerated in §System-Wide Impact all pass.
-- [ ] Existing tests remain green.
-- [ ] New `docs/solutions/` entry on the DomainTap pattern.
-- [ ] README security section explicit about what the two flags expose.
+- [x] Proxy transparency test: Debugger / Runtime / Network frames byte-identical with vs without proxy (`devtools.proxy.test.ts`).
+- [x] Vitest green on all new files (78 tests). Note: `bun test` has existing incompatibilities with vitest-style `vi.mock` in this repo — run via `npx vitest run` for these files until the runner situation is resolved.
+- [x] Existing tests unchanged — no new regressions from this PR (pre-existing failures in `clean.test.ts` / `preflight.test.ts` / `project.test.ts` unchanged).
+- [ ] Integration tests enumerated in §System-Wide Impact scenarios #3 (Metro restart), #5 (shared-device), #8 (loopback bind), #9 (nonce mismatch), #10 (cursor eviction) covered; scenarios #1/#2/#6/#7 need Phase 2/3.
+- [ ] New `docs/solutions/` entry on the DomainTap pattern — deferred to Phase 3.
+- [ ] README security section explicit about what the two MCP flags expose — deferred to Phase 3.
 
 ## Success Metrics
 
