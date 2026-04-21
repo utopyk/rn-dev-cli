@@ -501,9 +501,13 @@ Phase 1 (core / headless) — landed in PR #1:
 - [x] Proxy reconnect after upstream close closes downstream with code 1012 (forces Fusebox domain re-init).
 - [x] Target switching bumps `bufferEpoch` with `sessionBoundary.reason: 'target-swap'`.
 
-Phase 2 (Electron) — pending:
+Phase 2 (Electron) — landed in commit 733719d:
 
-- [ ] Fusebox URL rewrite handles both primary (`target.devtoolsFrontendUrl`) and fallback (manual `ws=` + `webSocketDebuggerUrl`) paths; integration test against latest RN fixture.
+- [x] Fusebox URL rewrite handles both primary (`target.devtoolsFrontendUrl`) and fallback (manual `ws=` + `webSocketDebuggerUrl`) paths; manually verified against live RN app (all Fusebox subtabs load and live Network activity appears). **Gotcha:** the `ws=` param must be `HOST:PORT/PATH` without the `ws://` protocol prefix — Fusebox prepends `ws://` itself. Passing a full URL produces `ws://ws://…` and the WebSocket never opens.
+- [x] Per-instance `DevToolsManager` lazy-bound on first `devtools-network:proxy-port` IPC call. Integration test against live RN fixture: green.
+- [x] `devtools-network:*` IPC namespace (future-proofed for the module-system brainstorm's `devtools-network` module id): `proxy-port`, `status`, `list`, `get`, `select-target`, `clear`, `restart`. Delta + status events pushed as `devtools-network:change`, filtered by port.
+- [x] `DevToolsManager.dispose()` added so the manager can be rebuilt on Metro retry without leaking the Metro status listener. Called from `instances:remove` and from `retryStep('metro')`.
+- [x] Target dropdown shown in the DevTools toolbar when more than one target is present; selection goes through `selectTarget()` which bumps `bufferEpoch`.
 
 Phase 3 (Terminal + MCP) — pending:
 
@@ -520,7 +524,7 @@ Phase 3 (Terminal + MCP) — pending:
 - [ ] Memory under 400 MiB sustained at default caps / 300 entries / 1000 req/min.
 - [ ] Tap keeps pace with forwarder at 1000 req/min (perf smoke).
 - [ ] Delta emit cadence: 10 ± 2/s under load.
-- [ ] Lazy-bind: proxy port not allocated until DevTools tab first opened in a session.
+- [x] Lazy-bind: proxy port not allocated until DevTools tab first opened in a session (lazy trigger is the first `devtools-network:proxy-port` IPC call from the renderer).
 - [ ] Zero `any` / `unknown` outside the single existing service-bus escape hatch.
 
 ### Quality Gates
