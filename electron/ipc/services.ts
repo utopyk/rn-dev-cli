@@ -12,6 +12,7 @@ import { execShellAsync } from '../../src/core/exec-async.js';
 import { CleanManager, detectAllPackageManagers, detectPackageManager } from '../../src/core/clean.js';
 import type { Profile } from '../../src/core/types.js';
 import { instances, state, send, appendLog, toSummary, findFreePort, type InstanceState } from './state.js';
+import { bootstrapElectronModuleSystem } from '../module-system-bootstrap.js';
 
 // ── Start services for a single instance ──
 
@@ -431,6 +432,13 @@ export async function startRealServices(targetProjectRoot: string) {
   const rnDevDir = path.join(targetProjectRoot, '.rn-dev');
   state.artifactStore = new ArtifactStore(path.join(rnDevDir, 'artifacts'));
   const profileStore = new ProfileStore(path.join(rnDevDir, 'profiles'));
+
+  // Phase 5c — stand up the module system in Electron mode so the
+  // Marketplace panel, Settings config form, and `modules:list-panels`
+  // have a live backend. Synchronous + idempotent; the pre-registered
+  // ipcMain handlers pick up deps via serviceBus on publish.
+  const worktreeKey = state.artifactStore.worktreeHash(null);
+  bootstrapElectronModuleSystem({ worktreeKey });
 
   // Load the default profile
   const branch = await getCurrentBranch(targetProjectRoot) ?? 'main';
