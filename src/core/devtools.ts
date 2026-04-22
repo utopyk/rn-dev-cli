@@ -24,8 +24,8 @@ import type { MetroInstance } from "./types.js";
 import { CdpProxy } from "./devtools/proxy.js";
 import { NetworkTap } from "./devtools/network-tap.js";
 import type {
+  AnyDomainTap,
   CdpEvent,
-  DomainTap,
   TapDispatch,
 } from "./devtools/domain-tap.js";
 import {
@@ -58,6 +58,21 @@ type ManagerState =
 interface WorktreeState {
   worktreeKey: string;
   proxy: CdpProxy;
+  /**
+   * Every tap registered for this worktree. Iterated for attach/detach,
+   * enable-command flushing, session-boundary propagation, and event
+   * dispatch. Adding a new tap (Console, Performance, ...) means appending
+   * a factory via `DevToolsManager.registerTap(...)` — the manager's
+   * lifecycle code below is tap-agnostic.
+   */
+  taps: AnyDomainTap[];
+  /**
+   * Typed pointer to the always-registered NetworkTap. Derived from `taps`
+   * at start() time. Network-specific query APIs (`listNetwork`,
+   * `getNetwork`, `clear`, `cursor`) narrow via this field. Console /
+   * Performance taps surface their queries through their own manager
+   * methods (additive per plan §Success Metrics).
+   */
   networkTap: NetworkTap;
   state: ManagerState;
   proxyPort: number;
@@ -78,8 +93,26 @@ interface WorktreeState {
 // DevToolsManager
 // ---------------------------------------------------------------------------
 
+/**
+ * Builds a fresh tap instance for a worktree. Invoked once per `start()` per
+ * worktree — each worktree owns its own ring buffers and body queues, so tap
+ * state is never shared across worktrees.
+ */
+export type TapFactory = (opts: DevToolsOpts) => AnyDomainTap;
+
 export class DevToolsManager extends EventEmitter {
   private instances: Map<string, WorktreeState> = new Map();
+  /**
+   * Tap factories, invoked in order for each worktree on `start()`. The
+   * built-in NetworkTap factory is seeded first and is always present. Adding
+   * a new DomainTap is a single `registerTap(factory)` call — the manager's
+   * lifecycle methods below iterate this array and never name concrete taps
+   * (NetworkTap is the only exception: it has bespoke query APIs on the
+   * manager — legitimately domain-specific).
+   */
+  private readonly tapFactories: TapFactory[] = [
+    (opts) => new NetworkTap(opts),
+  ];
   private readonly metroStatusListener: (payload: {
     worktreeKey: string;
     status: string;
@@ -95,6 +128,15 @@ export class DevToolsManager extends EventEmitter {
     // is rebuilt (e.g. on Metro retry).
     this.metroStatusListener = (payload) => this.onMetroStatus(payload);
     this.metro.on("status", this.metroStatusListener);
+  }
+
+  /**
+   * Register an additional DomainTap factory. Must be called before `start()`
+   * for a worktree — already-running worktrees do not retroactively acquire
+   * the new tap.
+   */
+  registerTap(factory: TapFactory): void {
+    this.tapFactories.push(factory);
   }
 
   /**
@@ -134,10 +176,12 @@ export class DevToolsManager extends EventEmitter {
     const targets = await fetchTargets(metroInstance.port);
     const selected = pickTarget(targets);
 
-    const networkTap = new NetworkTap(this.opts);
+    const taps = this.tapFactories.map((f) => f(this.opts));
+    const networkTap = findNetworkTap(taps);
 
     const partial: Partial<WorktreeState> = {
       worktreeKey,
+      taps,
       networkTap,
       state: "STARTING",
       proxyStatus: "starting",
@@ -196,16 +240,18 @@ export class DevToolsManager extends EventEmitter {
     };
     this.instances.set(worktreeKey, state);
 
-    // Attach tap + send enable commands. Errors here are non-fatal — the
-    // proxy remains up even if Network.enable fails.
+    // Attach every tap + flush their enable commands. Errors here are
+    // non-fatal — the proxy remains up even if an enable fails.
     const dispatch: TapDispatch = {
       sendCommand: (cmd, timeoutMs) => proxy.sendCommand(cmd, timeoutMs),
     };
-    networkTap.attach(dispatch);
-    for (const cmd of networkTap.enableCommands) {
-      proxy.sendCommand(cmd, 5000).catch(() => {
-        // Swallow — the capability is probed by event arrival, not cmd success.
-      });
+    for (const tap of taps) {
+      tap.attach(dispatch);
+      for (const cmd of tap.enableCommands) {
+        proxy.sendCommand(cmd, 5000).catch(() => {
+          // Swallow — capability is probed by event arrival, not cmd success.
+        });
+      }
     }
 
     state.state = "RUNNING";
@@ -221,10 +267,12 @@ export class DevToolsManager extends EventEmitter {
     if (!state) return;
     state.state = "STOPPING";
     this.stopDeltaTimer(state);
-    try {
-      state.networkTap.detach();
-    } catch {
-      // ignore
+    for (const tap of state.taps) {
+      try {
+        tap.detach();
+      } catch {
+        // tap errors shouldn't block teardown
+      }
     }
     await state.proxy.stop();
     this.instances.delete(worktreeKey);
@@ -254,8 +302,10 @@ export class DevToolsManager extends EventEmitter {
     }
     if (state.selectedTargetId === targetId) return;
 
-    // Bump ring epoch with target-swap reason.
-    state.networkTap.ring.markSessionBoundary("target-swap");
+    // Bump ring epoch with target-swap reason for every tap's ring.
+    for (const tap of state.taps) {
+      tap.ring.markSessionBoundary("target-swap");
+    }
     state.lastSnapshot.clear();
     state.dirty = { added: new Set(), updated: new Set(), evicted: new Set() };
 
@@ -280,15 +330,22 @@ export class DevToolsManager extends EventEmitter {
     state.state = "RUNNING";
     state.proxyStatus = "connected";
 
-    // Re-attach tap to new proxy.
-    state.networkTap.detach();
-    state.networkTap.attach({
+    // Re-attach every tap to the new proxy + re-flush enable commands.
+    const dispatch: TapDispatch = {
       sendCommand: (cmd, timeoutMs) => newProxy.sendCommand(cmd, timeoutMs),
-    });
-    for (const cmd of state.networkTap.enableCommands) {
-      newProxy.sendCommand(cmd, 5000).catch(() => {
-        // non-fatal
-      });
+    };
+    for (const tap of state.taps) {
+      try {
+        tap.detach();
+      } catch {
+        // best-effort
+      }
+      tap.attach(dispatch);
+      for (const cmd of tap.enableCommands) {
+        newProxy.sendCommand(cmd, 5000).catch(() => {
+          // non-fatal
+        });
+      }
     }
     this.emitStatus(state);
   }
@@ -406,14 +463,23 @@ export class DevToolsManager extends EventEmitter {
   private handleCdpEvent(worktreeKey: string, evt: CdpEvent): void {
     const state = this.instances.get(worktreeKey);
     if (!state) return;
-    // Dispatch to tap(s) by domain prefix. For Phase 1 only NetworkTap exists.
-    const tap: DomainTap<NetworkEntry> = state.networkTap;
-    if (!evt.method.startsWith(`${tap.domain}.`)) return;
+    // Dispatch to every tap whose domain matches the event's prefix. One
+    // event may match at most one tap (domains are disjoint) but we iterate
+    // rather than branching to keep this loop tap-agnostic.
+    //
+    // Delta tracking is currently Network-only — `captureVersions` and
+    // `reconcileDirty` inspect the NetworkTap ring. When Phase 3+ lands a
+    // real second tap with consumer-visible deltas (Console), this block
+    // becomes per-tap. The per-tap-delta refactor touches only this file,
+    // not proxy.ts — the seam still holds.
     const prevVersions = this.captureVersions(state);
-    try {
-      tap.handleEvent(evt);
-    } catch {
-      // tap errors shouldn't bring down the proxy
+    for (const tap of state.taps) {
+      if (!evt.method.startsWith(`${tap.domain}.`)) continue;
+      try {
+        tap.handleEvent(evt);
+      } catch {
+        // tap errors shouldn't bring down the proxy
+      }
     }
     this.reconcileDirty(state, prevVersions);
   }
@@ -519,7 +585,9 @@ export class DevToolsManager extends EventEmitter {
     const state = this.instances.get(payload.worktreeKey);
     if (!state) return;
     if (payload.status === "stopped" || payload.status === "error") {
-      state.networkTap.ring.markSessionBoundary("metro-restart");
+      for (const tap of state.taps) {
+        tap.ring.markSessionBoundary("metro-restart");
+      }
       state.proxyStatus = "no-target";
       state.state = "IDLE";
       this.emitStatus(state);
@@ -589,6 +657,22 @@ function pickTarget(targets: TargetDescriptor[]): TargetDescriptor | null {
   if (targets.length === 0) return null;
   const nodeTarget = targets.find((t) => t.type === "node");
   return nodeTarget ?? targets[0]!;
+}
+
+/**
+ * Locate the NetworkTap instance in a worktree's tap list. Network-specific
+ * query APIs (`listNetwork`, `getNetwork`, `clear`, `cursor`) narrow via this
+ * helper. Throws if the built-in NetworkTap factory was removed — a
+ * programmer error, since the manager seeds it in the factory list.
+ */
+function findNetworkTap(taps: readonly AnyDomainTap[]): NetworkTap {
+  const network = taps.find((t): t is NetworkTap => t instanceof NetworkTap);
+  if (!network) {
+    throw new Error(
+      "DevToolsManager: no NetworkTap registered. The built-in NetworkTap factory is seeded by the constructor; do not remove it."
+    );
+  }
+  return network;
 }
 
 /**
