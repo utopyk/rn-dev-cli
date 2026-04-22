@@ -60,7 +60,7 @@ export function registerModulesPanelsIpc(
   ipcMain.handle(
     "modules:host-call",
     (_event, payload: HostCallPayload) =>
-      resolveHostCall(deps.manager, deps.registry, payload),
+      resolveHostCall(deps.manager, deps.registry, payload, deps.auditHostCall),
   );
 
   return {

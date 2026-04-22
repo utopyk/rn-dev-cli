@@ -88,6 +88,12 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
       manager,
       registry,
       bounds: boundsCache,
+      auditHostCall: (event) => {
+        send(
+          'service:log',
+          `[host-call] ${event.moduleId}/${event.capabilityId}.${event.method} ${event.outcome}`,
+        );
+      },
     });
     handleGetActiveBounds = handle.getActiveBounds;
   };

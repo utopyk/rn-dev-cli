@@ -98,17 +98,36 @@ export function listPanels(registry: ModuleRegistry): PanelsListResponse {
   return { modules };
 }
 
+export interface HostCallAuditEvent {
+  moduleId: string;
+  capabilityId: string;
+  method: string;
+  outcome: "ok" | "unavailable" | "denied" | "method-not-found" | "error";
+  timestamp: number;
+}
+
 export async function resolveHostCall(
   manager: ModuleHostManager,
   registry: ModuleRegistry,
   payload: HostCallPayload,
+  audit?: (event: HostCallAuditEvent) => void,
 ): Promise<HostCallReply> {
+  const logOutcome = (outcome: HostCallAuditEvent["outcome"]): void => {
+    audit?.({
+      moduleId: payload?.moduleId ?? "",
+      capabilityId: payload?.capabilityId ?? "",
+      method: payload?.method ?? "",
+      outcome,
+      timestamp: Date.now(),
+    });
+  };
   if (
     !payload ||
     typeof payload.moduleId !== "string" ||
     typeof payload.capabilityId !== "string" ||
     typeof payload.method !== "string"
   ) {
+    logOutcome("error");
     return {
       kind: "error",
       code: "HOST_CALL_FAILED",
@@ -119,6 +138,7 @@ export async function resolveHostCall(
 
   const reg = findRegistered(registry, payload.moduleId);
   if (!reg) {
+    logOutcome("unavailable");
     return {
       kind: "error",
       code: "MODULE_UNAVAILABLE",
@@ -132,6 +152,7 @@ export async function resolveHostCall(
     granted,
   );
   if (!impl) {
+    logOutcome("denied");
     return {
       kind: "error",
       code: "HOST_CAPABILITY_NOT_FOUND_OR_DENIED",
@@ -141,6 +162,7 @@ export async function resolveHostCall(
 
   const fn = impl[payload.method];
   if (typeof fn !== "function") {
+    logOutcome("method-not-found");
     return {
       kind: "error",
       code: "HOST_METHOD_NOT_FOUND",
@@ -151,8 +173,10 @@ export async function resolveHostCall(
   try {
     const args = Array.isArray(payload.args) ? payload.args : [];
     const result = await (fn as (...a: unknown[]) => unknown).apply(impl, args);
+    logOutcome("ok");
     return { kind: "ok", result };
   } catch (err) {
+    logOutcome("error");
     return {
       kind: "error",
       code: "HOST_CALL_FAILED",
@@ -246,6 +270,12 @@ export interface ModulesPanelsIpcDeps {
   manager: ModuleHostManager;
   registry: ModuleRegistry;
   bounds: PanelBoundsCache;
+  /**
+   * Optional sink for host-call audit events. Every `modules:host-call`
+   * — ok, denied, method-not-found, or error — fires exactly once. Used
+   * by the Electron wiring to forward to the service-bus log channel.
+   */
+  auditHostCall?: (event: HostCallAuditEvent) => void;
 }
 
 export interface ModulesPanelsIpcHandle {

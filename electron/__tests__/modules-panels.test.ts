@@ -243,6 +243,49 @@ describe("resolveHostCall", () => {
     if (reply.kind === "error") expect(reply.code).toBe("HOST_METHOD_NOT_FOUND");
   });
 
+  it("emits an audit event for every host-call outcome (ok + denied)", async () => {
+    const manager = managerWith((reg) => {
+      reg.register("math", { add: (a: number, b: number) => a + b });
+      reg.register(
+        "secret",
+        { read: () => "classified" },
+        { requiredPermission: "secret:read" },
+      );
+    });
+    const registry = registryWith(
+      registeredWith(manifest("dev-ctl", { permissions: [] })),
+    );
+    const audit: Array<{ outcome: string; capabilityId: string }> = [];
+
+    await resolveHostCall(
+      manager,
+      registry,
+      {
+        moduleId: "dev-ctl",
+        capabilityId: "math",
+        method: "add",
+        args: [2, 3],
+      },
+      (e) => audit.push({ outcome: e.outcome, capabilityId: e.capabilityId }),
+    );
+    await resolveHostCall(
+      manager,
+      registry,
+      {
+        moduleId: "dev-ctl",
+        capabilityId: "secret",
+        method: "read",
+        args: [],
+      },
+      (e) => audit.push({ outcome: e.outcome, capabilityId: e.capabilityId }),
+    );
+
+    expect(audit).toEqual([
+      { outcome: "ok", capabilityId: "math" },
+      { outcome: "denied", capabilityId: "secret" },
+    ]);
+  });
+
   it("wraps thrown errors as HOST_CALL_FAILED with the error message", async () => {
     const manager = managerWith((reg) =>
       reg.register("broken", {
