@@ -10,6 +10,7 @@
 import { EventEmitter } from "events";
 import type { MetroManager } from "../core/metro.js";
 import type { FileWatcher } from "../core/watcher.js";
+import type { DevToolsManager } from "../core/devtools.js";
 
 export interface ServiceBusEvents {
   log: (text: string) => void;
@@ -17,6 +18,18 @@ export interface ServiceBusEvents {
   builder: (builder: any) => void;
   watcher: (watcher: FileWatcher) => void;
   worktreeKey: (key: string) => void;
+  /**
+   * DevTools is published once per session after Metro is up. Consumers
+   * subscribe to the manager's own 'delta' and 'status' events — the bus
+   * only bridges the instance reference across the start-flow / React
+   * boundary.
+   *
+   * Namespacing: the module-system brainstorm frames `devtools` as one of
+   * several future built-in modules. When that lands, this topic will
+   * become one of a family (`devtools-network`, `devtools-console`, ...).
+   * Treat the name as provisional.
+   */
+  devtools: (manager: DevToolsManager) => void;
 }
 
 class ServiceBus extends EventEmitter {
@@ -38,6 +51,10 @@ class ServiceBus extends EventEmitter {
 
   setWorktreeKey(key: string) {
     this.emit("worktreeKey", key);
+  }
+
+  setDevTools(manager: DevToolsManager) {
+    this.emit("devtools", manager);
   }
 }
 
