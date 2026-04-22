@@ -26,6 +26,7 @@
  *   - destructiveHint runtime confirmation
  */
 
+import { EventEmitter } from "node:events";
 import type { IpcMessage, IpcServer, IpcMessageEvent } from "../core/ipc.js";
 import type {
   ModuleHostManager,
@@ -57,6 +58,34 @@ export interface ModulesIpcOptions {
   hostVersion?: string;
   /** Scope unit used when re-loading manifests after `modules/enable`. */
   scopeUnit?: string;
+  /**
+   * Local bus used to fan out registry-level changes to `modules/subscribe`
+   * consumers. Created by `registerModulesIpc` when omitted.
+   *
+   * Tests that call `dispatchModulesAction` directly and want to assert
+   * event emission can pass one in and listen for `modules-event` events.
+   */
+  moduleEvents?: EventEmitter;
+}
+
+/**
+ * Payload shape for `modules/subscribe` event pushes. `kind` groups the
+ * cause; agents treat any value as "the tool list may have changed".
+ */
+export interface ModulesEvent {
+  kind:
+    | "enabled"
+    | "disabled"
+    | "restarted"
+    | "crashed"
+    | "failed"
+    | "state-changed";
+  moduleId: string;
+  scopeUnit?: string;
+  /** Present on state-changed. */
+  state?: string;
+  /** Present on crashed / failed. */
+  reason?: string;
 }
 
 export type ModulesIpcAction =
@@ -65,7 +94,8 @@ export type ModulesIpcAction =
   | "modules/restart"
   | "modules/call"
   | "modules/enable"
-  | "modules/disable";
+  | "modules/disable"
+  | "modules/subscribe";
 
 const MODULES_ACTIONS: ReadonlySet<string> = new Set<ModulesIpcAction>([
   "modules/list",
@@ -74,6 +104,7 @@ const MODULES_ACTIONS: ReadonlySet<string> = new Set<ModulesIpcAction>([
   "modules/call",
   "modules/enable",
   "modules/disable",
+  "modules/subscribe",
 ]);
 
 export interface RegisteredModuleRow {
@@ -132,6 +163,12 @@ export async function dispatchModulesAction(
         opts,
         msg.payload as { moduleId: string; scopeUnit?: string },
       );
+    case "modules/subscribe":
+      // Subscribe is stream-shaped — not routed through the request/response
+      // dispatcher. `registerModulesIpc` handles it directly.
+      throw new Error(
+        "[modules-ipc] modules/subscribe must be handled by registerModulesIpc, not dispatchModulesAction",
+      );
     default:
       throw new Error(
         `[modules-ipc] unreachable: action=${msg.action}`,
@@ -187,28 +224,44 @@ function enableModule(
   // Already present in the manifest map? Nothing to do (flag just flipped).
   const existing = resolveRegistered(opts, payload.moduleId, payload.scopeUnit);
   if (existing) {
-    return {
-      status: "enabled",
+    const result = {
+      status: "enabled" as const,
       alreadyEnabled: !wasDisabled,
       state:
         opts.manager.inspect(existing.manifest.id, existing.scopeUnit)
           ?.state ?? "inert",
     };
+    if (!result.alreadyEnabled) {
+      emitModuleEvent(opts, {
+        kind: "enabled",
+        moduleId: existing.manifest.id,
+        scopeUnit: existing.scopeUnit,
+      });
+    }
+    return result;
   }
 
   // Not yet loaded — re-run the loader so the flag flip takes effect.
   const hostVersion = opts.hostVersion ?? "0.0.0";
-  const result = opts.registry.loadUserGlobalModules({
+  const loadResult = opts.registry.loadUserGlobalModules({
     hostVersion,
     scopeUnit: opts.scopeUnit ?? "global",
     modulesDir: root,
   });
-  const registered = result.modules.find(
+  const registered = loadResult.modules.find(
     (m) => m.manifest.id === payload.moduleId,
   );
+  const alreadyEnabled = !wasDisabled && registered !== undefined;
+  if (registered && !alreadyEnabled) {
+    emitModuleEvent(opts, {
+      kind: "enabled",
+      moduleId: registered.manifest.id,
+      scopeUnit: registered.scopeUnit,
+    });
+  }
   return {
     status: "enabled",
-    alreadyEnabled: !wasDisabled && registered !== undefined,
+    alreadyEnabled,
     state: registered ? "inert" : null,
   };
 }
@@ -237,6 +290,19 @@ async function disableModule(
       /* already gone — acceptable */
     }
     opts.registry.unregisterManifest(reg.manifest.id, reg.scopeUnit);
+    if (!alreadyDisabled) {
+      emitModuleEvent(opts, {
+        kind: "disabled",
+        moduleId: reg.manifest.id,
+        scopeUnit: reg.scopeUnit,
+      });
+    }
+  } else if (!alreadyDisabled) {
+    emitModuleEvent(opts, {
+      kind: "disabled",
+      moduleId: payload.moduleId,
+      scopeUnit: payload.scopeUnit,
+    });
   }
 
   return { status: "disabled", alreadyDisabled };
@@ -307,10 +373,69 @@ async function callModuleTool(
 export function registerModulesIpc(
   ipc: IpcServer,
   options: ModulesIpcOptions,
-): { unregister: () => void } {
+): { unregister: () => void; moduleEvents: EventEmitter } {
+  // Local event bus — dispatchers emit into it, subscribers fan out.
+  // Callers may supply their own for test introspection; default one is
+  // created here so the dispatcher always has a destination.
+  const moduleEvents = options.moduleEvents ?? new EventEmitter();
+  const effectiveOptions: ModulesIpcOptions = { ...options, moduleEvents };
+
+  // Bridge ModuleHostManager lifecycle events → moduleEvents so subscribers
+  // see crashes / failed-state transitions without polling. Kept here rather
+  // than on the manager itself to keep the bus file-scoped.
+  const forwardCrashed = (p: {
+    moduleId: string;
+    scopeUnit: string;
+    reason?: string;
+  }): void => {
+    moduleEvents.emit("modules-event", {
+      kind: "crashed",
+      moduleId: p.moduleId,
+      scopeUnit: p.scopeUnit,
+      reason: p.reason,
+    } satisfies ModulesEvent);
+  };
+  const forwardFailed = (p: {
+    moduleId: string;
+    scopeUnit: string;
+    reason?: string;
+  }): void => {
+    moduleEvents.emit("modules-event", {
+      kind: "failed",
+      moduleId: p.moduleId,
+      scopeUnit: p.scopeUnit,
+      reason: p.reason,
+    } satisfies ModulesEvent);
+  };
+  const forwardStateChanged = (p: {
+    moduleId: string;
+    scopeUnit: string;
+    from: string;
+    to: string;
+  }): void => {
+    // Only forward transitions that affect tool callability — otherwise we'd
+    // wake every agent on every internal state machine tick.
+    if (p.to !== "active" && p.from !== "active") return;
+    moduleEvents.emit("modules-event", {
+      kind: "state-changed",
+      moduleId: p.moduleId,
+      scopeUnit: p.scopeUnit,
+      state: p.to,
+    } satisfies ModulesEvent);
+  };
+  options.manager.on("crashed", forwardCrashed);
+  options.manager.on("failed", forwardFailed);
+  options.manager.on("state-changed", forwardStateChanged);
+
   const listener = (event: IpcMessageEvent): void => {
     if (!MODULES_ACTIONS.has(event.message.action)) return;
-    void dispatchModulesAction(options, event.message)
+
+    if (event.message.action === "modules/subscribe") {
+      handleSubscribe(moduleEvents, event);
+      return;
+    }
+
+    void dispatchModulesAction(effectiveOptions, event.message)
       .then((payload) => {
         event.reply({
           type: "response",
@@ -331,11 +456,45 @@ export function registerModulesIpc(
       });
   };
   ipc.on("message", listener);
+
   return {
     unregister: () => {
       ipc.off("message", listener);
+      options.manager.off("crashed", forwardCrashed);
+      options.manager.off("failed", forwardFailed);
+      options.manager.off("state-changed", forwardStateChanged);
     },
+    moduleEvents,
   };
+}
+
+function handleSubscribe(
+  moduleEvents: EventEmitter,
+  event: IpcMessageEvent,
+): void {
+  // 1. Confirm the subscription so the client's promise resolves.
+  event.reply({
+    type: "response",
+    action: "modules/subscribe",
+    payload: { subscribed: true },
+    id: event.message.id,
+  });
+
+  // 2. Stream every subsequent event on the same socket using the same id,
+  //    so the client can route it back to this subscription.
+  const pushEvent = (payload: ModulesEvent): void => {
+    event.reply({
+      type: "event",
+      action: "modules/event",
+      payload,
+      id: event.message.id,
+    });
+  };
+
+  moduleEvents.on("modules-event", pushEvent);
+  event.onClose(() => {
+    moduleEvents.off("modules-event", pushEvent);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -378,12 +537,21 @@ async function restart(
     // Release immediately — the restart API's contract is "module is up
     // again"; we don't hold a refcount on the caller's behalf.
     await opts.manager.release(reg.manifest.id, reg.scopeUnit, consumerId);
+    emitModuleEvent(opts, {
+      kind: "restarted",
+      moduleId: reg.manifest.id,
+      scopeUnit: reg.scopeUnit,
+    });
     return { status: "restarted", pid: managed.pid };
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : "restart failed",
     };
   }
+}
+
+function emitModuleEvent(opts: ModulesIpcOptions, event: ModulesEvent): void {
+  opts.moduleEvents?.emit("modules-event", event);
 }
 
 function resolveRegistered(
