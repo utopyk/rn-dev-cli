@@ -14,6 +14,7 @@ import { FileWatcher } from "../core/watcher.js";
 import { IpcServer } from "../core/ipc.js";
 import { ModuleHostManager } from "../core/module-host/manager.js";
 import { CapabilityRegistry } from "../core/module-host/capabilities.js";
+import { registerModulesIpc } from "./modules-ipc.js";
 import { loadTheme, getThemeEffects } from "../ui/theme-provider.js";
 import { registerDevtoolsIpc } from "./devtools-ipc.js";
 import {
@@ -508,14 +509,18 @@ async function startServicesAsync(
   const builder = new Builder();
   serviceBus.setBuilder(builder);
 
-  // 12. Module host — Phase 2. Owns subprocess lifecycle for 3p modules.
-  // Registers built-in capabilities that modules can resolve via
-  // host.capability<T>(id). Actual module loading + activation happens in
-  // Phase 3 (when MCP tool proxying wires activationEvents); Phase 2 just
-  // stands up the primitive and publishes it on the service bus.
+  // 12. Module host — Phase 2 + Phase 3a.
+  //
+  // Owns subprocess lifecycle for 3p modules. Registers built-in capabilities
+  // that modules can resolve via host.capability<T>(id). Phase 3a also loads
+  // user-global module manifests + wires the `modules/*` IPC dispatcher so
+  // MCP clients can query lifecycle state.
+  //
+  // Actual module-contributed tools/call proxying is Phase 3b.
   const capabilities = new CapabilityRegistry();
+  const hostVersion = readHostVersion();
   capabilities.register<AppInfoCapability>("appInfo", {
-    hostVersion: readHostVersion(),
+    hostVersion,
     platform: process.platform,
     worktreeKey,
   });
@@ -526,11 +531,32 @@ async function startServicesAsync(
   capabilities.register("artifacts", artifactStore, {
     requiredPermission: "fs:artifacts",
   });
-  const moduleHost = new ModuleHostManager({
-    hostVersion: readHostVersion(),
-    capabilities,
-  });
+  const moduleHost = new ModuleHostManager({ hostVersion, capabilities });
   serviceBus.setModuleHost(moduleHost);
+
+  // Phase 3a: discover user-global modules from ~/.rn-dev/modules/ and
+  // register them as inert manifests. Rejections are logged but don't fail
+  // startup — a broken 3p module shouldn't prevent the dev loop.
+  const moduleRegistry = new ModuleRegistry();
+  const loadResult = moduleRegistry.loadUserGlobalModules({
+    hostVersion,
+    scopeUnit: worktreeKey,
+  });
+  if (loadResult.modules.length > 0) {
+    emit(
+      `ℹ Loaded ${loadResult.modules.length} module manifest${loadResult.modules.length === 1 ? "" : "s"} (${loadResult.modules.map((m) => m.manifest.id).join(", ")})`,
+    );
+  }
+  for (const rejected of loadResult.rejected) {
+    emit(
+      `⚠ Module manifest rejected (${rejected.code}): ${rejected.manifestPath} — ${rejected.message}`,
+    );
+  }
+
+  registerModulesIpc(ipc, {
+    manager: moduleHost,
+    registry: moduleRegistry,
+  });
 
   emit("\u2714 All services started");
   emit("");

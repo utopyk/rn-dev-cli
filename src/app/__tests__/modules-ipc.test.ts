@@ -1,0 +1,229 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { dispatchModulesAction } from "../modules-ipc.js";
+import { ModuleRegistry } from "../../modules/registry.js";
+import { ModuleHostManager } from "../../core/module-host/manager.js";
+import type { ModuleManifest } from "@rn-dev/module-sdk";
+import type { IpcMessage } from "../../core/ipc.js";
+import type { SpawnHandle, ModuleSpawner } from "../../core/module-host/manager.js";
+import { PassThrough } from "node:stream";
+import {
+  StreamMessageReader,
+  StreamMessageWriter,
+  createMessageConnection,
+} from "vscode-jsonrpc/node.js";
+
+// ---------------------------------------------------------------------------
+// Fake spawner — in-process "module" lives in the test with RPC over
+// PassThrough streams. Mirrors the real subprocess handshake shape.
+// ---------------------------------------------------------------------------
+
+function fakeSpawner(): ModuleSpawner {
+  return {
+    spawn: () => fakeChild(),
+  };
+}
+
+function fakeChild(): SpawnHandle {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+
+  // In-process "module" reading from stdin, writing to stdout.
+  const reader = new StreamMessageReader(stdin);
+  const writer = new StreamMessageWriter(stdout);
+  const conn = createMessageConnection(reader, writer);
+  conn.onRequest("initialize", () => ({
+    moduleId: "fake",
+    toolCount: 1,
+  }));
+  conn.listen();
+
+  const exitListeners: Array<
+    (code: number | null, signal: NodeJS.Signals | null) => void
+  > = [];
+  return {
+    pid: Math.floor(Math.random() * 100000) + 1,
+    stdin,
+    stdout,
+    stderr,
+    kill(_signal) {
+      conn.dispose();
+      for (const l of exitListeners) l(0, null);
+      return true;
+    },
+    onExit(l) {
+      exitListeners.push(l);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+function makeManifest(
+  overrides: Partial<ModuleManifest> = {},
+): ModuleManifest {
+  return {
+    id: "sample",
+    version: "0.1.0",
+    hostRange: ">=0.1.0",
+    scope: "per-worktree",
+    ...overrides,
+  };
+}
+
+interface Harness {
+  registry: ModuleRegistry;
+  manager: ModuleHostManager;
+  teardown: () => Promise<void>;
+}
+
+async function setup(
+  manifests: ModuleManifest[] = [makeManifest()],
+): Promise<Harness> {
+  const registry = new ModuleRegistry();
+  for (const manifest of manifests) {
+    registry.registerManifest({
+      manifest,
+      modulePath: `/fake/${manifest.id}`,
+      scopeUnit: manifest.scope === "global" ? "global" : "wt-1",
+      state: "inert",
+      isBuiltIn: false,
+    });
+  }
+  const manager = new ModuleHostManager({
+    hostVersion: "0.1.0",
+    spawner: fakeSpawner(),
+    initializeTimeoutMs: 500,
+  });
+  return {
+    registry,
+    manager,
+    teardown: () => manager.shutdownAll(),
+  };
+}
+
+let active: Harness | null = null;
+
+afterEach(async () => {
+  await active?.teardown();
+  active = null;
+});
+
+function makeMsg(
+  action: string,
+  payload: Record<string, unknown> = {},
+): IpcMessage {
+  return {
+    type: "command",
+    action,
+    payload,
+    id: "test-" + Math.random(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// modules/list
+// ---------------------------------------------------------------------------
+
+describe("dispatchModulesAction — modules/list", () => {
+  it("returns a row per registered manifest with state='inert' before acquire", async () => {
+    active = await setup([
+      makeManifest({ id: "first" }),
+      makeManifest({ id: "second", scope: "global" }),
+    ]);
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/list"),
+    )) as { modules: Array<{ id: string; state: string; scope: string }> };
+    expect(result.modules).toHaveLength(2);
+    expect(result.modules.map((m) => m.id).sort()).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(result.modules.every((m) => m.state === "inert")).toBe(true);
+  });
+
+  it("reports 'active' after a consumer acquires the module", async () => {
+    active = await setup([makeManifest({ id: "alive" })]);
+    const reg = active.registry.getManifest("alive", "wt-1");
+    if (!reg) throw new Error("fixture missing");
+    await active.manager.acquire(reg, "consumer-x");
+
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/list"),
+    )) as { modules: Array<{ id: string; state: string }> };
+
+    expect(result.modules[0]?.state).toBe("active");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// modules/status
+// ---------------------------------------------------------------------------
+
+describe("dispatchModulesAction — modules/status", () => {
+  it("returns null when the module id is unknown", async () => {
+    active = await setup();
+    const result = await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/status", { moduleId: "ghost" }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("reports state + last-crash reason for a known module", async () => {
+    active = await setup([makeManifest({ id: "watched" })]);
+    const reg = active.registry.getManifest("watched", "wt-1");
+    if (!reg) throw new Error("fixture missing");
+    await active.manager.acquire(reg, "c");
+
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/status", { moduleId: "watched", scopeUnit: "wt-1" }),
+    )) as {
+      id: string;
+      state: string;
+      scope: string;
+      lastCrashReason: string | null;
+    };
+
+    expect(result.id).toBe("watched");
+    expect(result.state).toBe("active");
+    expect(result.lastCrashReason).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// modules/restart
+// ---------------------------------------------------------------------------
+
+describe("dispatchModulesAction — modules/restart", () => {
+  it("returns an error when the module is not registered", async () => {
+    active = await setup();
+    const result = await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/restart", { moduleId: "ghost", scopeUnit: "wt-1" }),
+    );
+    expect(result).toMatchObject({ error: expect.stringMatching(/unknown/i) });
+  });
+
+  it("tears down a running module and re-acquires it (fresh pid)", async () => {
+    active = await setup([makeManifest({ id: "cycled" })]);
+    const reg = active.registry.getManifest("cycled", "wt-1");
+    if (!reg) throw new Error("fixture missing");
+    const firstHandle = await active.manager.acquire(reg, "c1");
+    const firstPid = firstHandle.pid;
+
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/restart", { moduleId: "cycled", scopeUnit: "wt-1" }),
+    )) as { status: string; pid?: number };
+
+    expect(result.status).toBe("restarted");
+    expect(result.pid).toBeDefined();
+    expect(result.pid).not.toBe(firstPid);
+  });
+});

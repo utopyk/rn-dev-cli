@@ -240,6 +240,28 @@ export class ModuleHostManager extends EventEmitter {
       .state ?? null;
   }
 
+  /**
+   * Read-only snapshot of a live managed module — state, pid, last-crash
+   * reason. Returns `null` when the (id, scope) pair is not currently
+   * managed. Used by IPC handlers that report to MCP / Electron consumers.
+   */
+  inspect(
+    moduleId: string,
+    scopeUnit: string,
+  ): {
+    state: ModuleInstanceState;
+    pid: number;
+    lastCrashReason: string | null;
+  } | null {
+    const entry = this.entries.get(`${moduleId}:${scopeUnit}`);
+    if (!entry) return null;
+    return {
+      state: entry.managed.instance.state,
+      pid: entry.managed.pid,
+      lastCrashReason: entry.managed.instance.lastCrashReason,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // Internal — spawn/handshake
   // -------------------------------------------------------------------------
