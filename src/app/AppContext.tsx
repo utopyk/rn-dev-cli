@@ -3,6 +3,12 @@ import type { Profile } from "../core/types.js";
 import type { MetroManager } from "../core/metro.js";
 import type { FileWatcher } from "../core/watcher.js";
 import type { Builder } from "../core/builder.js";
+import type { DevToolsManager } from "../core/devtools.js";
+import type {
+  CaptureMeta,
+  NetworkEntry,
+  TargetDescriptor,
+} from "../core/devtools/types.js";
 import { execShellAsync } from "../core/exec-async.js";
 import { serviceBus } from "./service-bus.js";
 
@@ -29,6 +35,20 @@ export interface AppContextValue {
   modal: ModalConfig | null;
   showModal: (config: ModalConfig) => void;
   dismissModal: () => void;
+  // DevTools — Phase 3 Track A. All fields are null / empty until the
+  // manager publishes on the service bus (which happens after Metro is up).
+  /** Current captured entries for the active worktree, newest last. */
+  networkEntries: readonly NetworkEntry[];
+  /** Capture envelope metadata (proxy status, epoch, etc). */
+  devtoolsMeta: CaptureMeta | null;
+  /** Available CDP targets from Metro `/json`. Often length 1 on Hermes. */
+  devtoolsTargets: TargetDescriptor[];
+  /** Currently selected target id, or null when no target is attached. */
+  devtoolsSelectedTargetId: string | null;
+  /** Clear the capture ring. No-op when no manager is attached. */
+  devtoolsClear: () => void;
+  /** Switch the active CDP target. Bumps the buffer epoch. */
+  devtoolsSelectTarget: (targetId: string) => Promise<void>;
 }
 
 const AppContextInstance = createContext<AppContextValue | null>(null);
@@ -76,6 +96,13 @@ export function AppProvider({
   const [liveBuilder, setLiveBuilder] = useState<Builder | undefined>(builder);
   const [liveWatcher, setLiveWatcher] = useState<FileWatcher | null | undefined>(watcher);
   const [liveWorktreeKey, setLiveWorktreeKey] = useState<string | undefined>(worktreeKey);
+  const [liveDevTools, setLiveDevTools] = useState<DevToolsManager | undefined>(undefined);
+
+  // DevTools state — driven by the manager's 'delta' and 'status' events.
+  const [networkEntries, setNetworkEntries] = useState<readonly NetworkEntry[]>([]);
+  const [devtoolsMeta, setDevtoolsMeta] = useState<CaptureMeta | null>(null);
+  const [devtoolsTargets, setDevtoolsTargets] = useState<TargetDescriptor[]>([]);
+  const [devtoolsSelectedTargetId, setDevtoolsSelectedTargetId] = useState<string | null>(null);
 
   // Subscribe to service bus — bridges start-flow → React state
   useEffect(() => {
@@ -86,12 +113,14 @@ export function AppProvider({
     const onBuilder = (b: any) => setLiveBuilder(b);
     const onWatcher = (w: FileWatcher) => setLiveWatcher(w);
     const onWorktreeKey = (k: string) => setLiveWorktreeKey(k);
+    const onDevTools = (m: DevToolsManager) => setLiveDevTools(m);
 
     serviceBus.on("log", onLog);
     serviceBus.on("metro", onMetro);
     serviceBus.on("builder", onBuilder);
     serviceBus.on("watcher", onWatcher);
     serviceBus.on("worktreeKey", onWorktreeKey);
+    serviceBus.on("devtools", onDevTools);
 
     return () => {
       serviceBus.off("log", onLog);
@@ -99,8 +128,60 @@ export function AppProvider({
       serviceBus.off("builder", onBuilder);
       serviceBus.off("watcher", onWatcher);
       serviceBus.off("worktreeKey", onWorktreeKey);
+      serviceBus.off("devtools", onDevTools);
     };
   }, []);
+
+  // Subscribe to DevToolsManager delta + status events. The manager's own
+  // query APIs (listNetwork, status) are the source of truth — we re-snapshot
+  // on every delta flush rather than maintaining a parallel entry list.
+  useEffect(() => {
+    if (!liveDevTools || !liveWorktreeKey) return;
+    const manager = liveDevTools;
+    const worktreeKey = liveWorktreeKey;
+
+    const refresh = () => {
+      const list = manager.listNetwork(worktreeKey);
+      setNetworkEntries(list.entries);
+      setDevtoolsMeta(list.meta);
+      const status = manager.status(worktreeKey);
+      setDevtoolsTargets(status.targets);
+      setDevtoolsSelectedTargetId(status.meta.selectedTargetId);
+    };
+
+    // Seed with whatever is already captured (the module may mount after the
+    // manager has been running for a while).
+    refresh();
+
+    const onDelta = (payload: { worktreeKey: string }) => {
+      if (payload.worktreeKey !== worktreeKey) return;
+      refresh();
+    };
+    const onStatus = (payload: { worktreeKey: string }) => {
+      if (payload.worktreeKey !== worktreeKey) return;
+      refresh();
+    };
+
+    manager.on("delta", onDelta);
+    manager.on("status", onStatus);
+    return () => {
+      manager.off("delta", onDelta);
+      manager.off("status", onStatus);
+    };
+  }, [liveDevTools, liveWorktreeKey]);
+
+  const devtoolsClear = useCallback(() => {
+    if (!liveDevTools || !liveWorktreeKey) return;
+    liveDevTools.clear(liveWorktreeKey);
+  }, [liveDevTools, liveWorktreeKey]);
+
+  const devtoolsSelectTarget = useCallback(
+    async (targetId: string) => {
+      if (!liveDevTools || !liveWorktreeKey) return;
+      await liveDevTools.selectTarget(liveWorktreeKey, targetId);
+    },
+    [liveDevTools, liveWorktreeKey]
+  );
 
   const showModal = useCallback((config: ModalConfig) => {
     setModal(config);
@@ -377,6 +458,12 @@ export function AppProvider({
     modal,
     showModal,
     dismissModal,
+    networkEntries,
+    devtoolsMeta,
+    devtoolsTargets,
+    devtoolsSelectedTargetId,
+    devtoolsClear,
+    devtoolsSelectTarget,
   };
 
   return React.createElement(

@@ -8,16 +8,19 @@ import { detectProjectRoot, getCurrentBranch } from "../core/project.js";
 import { ProfileStore } from "../core/profile.js";
 import { ArtifactStore } from "../core/artifact.js";
 import { MetroManager } from "../core/metro.js";
+import { DevToolsManager } from "../core/devtools.js";
 import { CleanManager } from "../core/clean.js";
 import { FileWatcher } from "../core/watcher.js";
 import { IpcServer } from "../core/ipc.js";
 import { loadTheme, getThemeEffects } from "../ui/theme-provider.js";
+import { registerDevtoolsIpc } from "./devtools-ipc.js";
 import {
   ModuleRegistry,
   devSpaceModule,
   settingsModule,
   lintTestModule,
   metroLogsModule,
+  devtoolsNetworkModule,
 } from "../modules/index.js";
 import { firstRunSetup } from "./first-run.js";
 import { App } from "./App.js";
@@ -71,6 +74,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
   registry.register(devSpaceModule);
   registry.register(lintTestModule);
   registry.register(metroLogsModule);
+  registry.register(devtoolsNetworkModule);
   registry.register(settingsModule);
 
   // 6. Determine if we need the wizard
@@ -108,6 +112,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
 
   // 7. Declare service references (populated after initial render)
   let metro: MetroManager | undefined;
+  let devtools: DevToolsManager | undefined;
   let watcher: FileWatcher | null = null;
   let ipc: IpcServer | undefined;
   let worktreeKey: string | undefined;
@@ -223,6 +228,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
   if (profile && !needsWizard) {
     startServicesAsync(profile, projectRoot, artifactStore).then((result) => {
       metro = result.metro;
+      devtools = result.devtools;
       watcher = result.watcher;
       ipc = result.ipc;
       worktreeKey = result.worktreeKey;
@@ -253,6 +259,9 @@ export async function startFlow(options: StartOptions): Promise<void> {
 
   // 11. Handle cleanup on exit — must destroy renderer to restore terminal
   const cleanup = (): void => {
+    // Dispose devtools BEFORE metro so its metro.on('status') listener is
+    // released cleanly (see DevToolsManager.dispose).
+    devtools?.dispose().catch(() => { /* best-effort on shutdown */ });
     metro?.stopAll();
     watcher?.stop();
     ipc?.stop();
@@ -294,6 +303,7 @@ async function startServicesAsync(
   artifactStore: ArtifactStore
 ): Promise<{
   metro: MetroManager;
+  devtools: DevToolsManager;
   watcher: FileWatcher | null;
   ipc: IpcServer;
   worktreeKey: string;
@@ -476,7 +486,21 @@ async function startServicesAsync(
   const ipc = new IpcServer(path.join(projectRoot, ".rn-dev", "sock"));
   await ipc.start();
 
-  // 10. Create builder
+  // 10. DevTools — Phase 3 Track A. Eager-start so MCP tools over unix
+  // socket see a live proxy from the moment the session is up. Starting
+  // may land in `no-target` posture if Metro isn't ready yet; that's
+  // fine — the manager polls /json again on first activity and the
+  // status envelope tells the agent what's going on.
+  const devtools = new DevToolsManager(metro, {});
+  try {
+    await devtools.start(worktreeKey);
+  } catch (err) {
+    emit(`ℹ DevTools: deferred (${err instanceof Error ? err.message : String(err)})`);
+  }
+  serviceBus.setDevTools(devtools);
+  registerDevtoolsIpc(ipc, { manager: devtools, defaultWorktreeKey: worktreeKey });
+
+  // 11. Create builder
   const { Builder } = await import("../core/builder.js");
   const builder = new Builder();
   serviceBus.setBuilder(builder);
@@ -484,7 +508,7 @@ async function startServicesAsync(
   emit("\u2714 All services started");
   emit("");
 
-  return { metro, watcher, ipc, worktreeKey, builder };
+  return { metro, devtools, watcher, ipc, worktreeKey, builder };
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +521,7 @@ async function startServices(
   artifactStore: ArtifactStore
 ): Promise<{
   metro: MetroManager;
+  devtools: DevToolsManager;
   watcher: FileWatcher | null;
   ipc: IpcServer;
   worktreeKey: string;
