@@ -1,10 +1,11 @@
 // F5 — verify the host-renderer preload allowlist accepts every channel the
-// renderer actually uses and rejects anything else. The arrays live in a
-// plain CJS module so we require() them here in vitest.
+// renderer actually uses and rejects anything else. The preload.js file
+// self-guards its `require('electron')` call so vitest can require it
+// directly without a module mock.
 
 import { describe, expect, it } from "vitest";
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-const allowlist = require("../preload-allowlist.cjs") as {
+const allowlist = require("../preload.cjs") as {
   INVOKE_EXACT: readonly string[];
   INVOKE_PREFIX: readonly string[];
   ON_EXACT: readonly string[];
@@ -28,7 +29,6 @@ describe("preload allowlist — isAllowedInvoke", () => {
   });
 
   it("rejects the prefix itself without a suffix", () => {
-    // Bare "prompt:respond:" is not a legitimate channel — requires an id.
     expect(allowlist.isAllowedInvoke("prompt:respond:")).toBe(false);
   });
 

@@ -1,12 +1,18 @@
-// Pure-data channel allowlist for `electron/preload.js`. Split out so vitest
-// can import it without the `electron` runtime. Keep in sync with the
-// renderer's actual usage.
+// Host-renderer preload. Exposes a narrow `window.rndev` surface with an
+// explicit channel allowlist — NOT a generic `invoke(anyChannel)` bridge.
+// Security F5 (Phase 5c).
 //
-// To audit the real usage:
+// The file is self-contained (data + predicates + contextBridge call) so
+// the Electron preload loader doesn't have to resolve relative paths at
+// runtime — an earlier split into preload-allowlist.cjs silently broke
+// the preload and the renderer fell back to `useSimulatedLogs`. Vitest
+// covers the predicates by requiring this file directly; the
+// `require('electron')` call is wrapped so it no-ops under the test
+// harness.
 //
-//   rg "invoke\('" renderer/      → INVOKE_EXACT / INVOKE_PREFIX
-//   rg "useIpcOn\('" renderer/     → ON_EXACT
-//   rg "window\.rndev\.invoke\('" renderer/  → one-offs outside the hook
+// To audit the renderer's real usage:
+//   rg "invoke\('" renderer/       → INVOKE_EXACT / INVOKE_PREFIX
+//   rg "useIpcOn\('" renderer/      → ON_EXACT
 
 const INVOKE_EXACT = Object.freeze([
   // Profiles
@@ -109,3 +115,42 @@ module.exports = {
   isAllowedInvoke,
   isAllowedOn,
 };
+
+// Electron runtime binding. Wrapped so vitest can `require(this file)`
+// to test the predicates without pulling in `electron`. When the import
+// fails (non-Electron context) we just skip exposing the bridge — the
+// predicate functions and arrays are still exported for tests.
+let electron;
+try {
+  electron = require('electron');
+} catch {
+  electron = null;
+}
+
+if (electron && electron.contextBridge && electron.ipcRenderer) {
+  const { contextBridge, ipcRenderer } = electron;
+  contextBridge.exposeInMainWorld('rndev', {
+    on: (channel, callback) => {
+      if (!isAllowedOn(channel)) {
+        console.error(`[preload] rejected on("${channel}") — not in allowlist`);
+        return;
+      }
+      ipcRenderer.on(channel, (_event, ...args) => callback(...args));
+    },
+    off: (channel) => {
+      if (!isAllowedOn(channel)) {
+        console.error(`[preload] rejected off("${channel}") — not in allowlist`);
+        return;
+      }
+      ipcRenderer.removeAllListeners(channel);
+    },
+    invoke: (channel, ...args) => {
+      if (!isAllowedInvoke(channel)) {
+        return Promise.reject(
+          new Error(`[preload] rejected invoke("${channel}") — not in allowlist`),
+        );
+      }
+      return ipcRenderer.invoke(channel, ...args);
+    },
+  });
+}
