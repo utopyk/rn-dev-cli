@@ -1,28 +1,15 @@
 // Electron-mode module-system bootstrap.
 //
-// The TUI path (`src/app/start-flow.ts`) creates the daemon's ModuleHost +
-// ModuleRegistry + moduleEvents bus inside `startServicesAsync`, because
-// that process runs the unix-socket IpcServer and needs the full
-// `modules/*` IPC dispatcher for MCP clients. Electron's `startRealServices`
-// has no unix socket and no MCP server to feed — it only needs the
-// ipcMain handlers in `electron/ipc/modules-panels-register.ts` +
-// `modules-config-register.ts` to resolve against live services.
-//
-// This file stands up the minimum: a capability registry, a module host,
-// a registry populated with built-in manifests + user-global 3p modules,
-// a shared event bus for `modules:event` + `modules:config-set` fan-out.
-// Published through the serviceBus singleton; the existing eager-
-// registered ipcMain handlers pick up `deps` via their `tryInstall`
-// closures without further wiring.
-//
 // Phase 5c NEW work — before this existed, `modules:list-panels` returned
 // `{modules: []}` and `modules:config-*` returned `E_CONFIG_SERVICES_PENDING`
-// in Electron mode, which broke the Marketplace panel + Settings
-// migration this phase is shipping.
+// in Electron mode. `startRealServices` didn't initialize the module
+// system; the TUI path (`src/app/start-flow.ts`) did it for the daemon
+// but the Electron host had its own bootstrap that never got the equivalent.
 
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { CapabilityRegistry } from "../src/core/module-host/capabilities.js";
 import { ModuleHostManager } from "../src/core/module-host/manager.js";
 import { ModuleRegistry } from "../src/modules/registry.js";
@@ -87,17 +74,22 @@ export function bootstrapElectronModuleSystem(args: {
   registerMarketplaceBuiltIn({ moduleRegistry, capabilities });
 
   // Load user-global 3p manifests — best-effort; a broken 3p module
-  // shouldn't break the Electron boot.
+  // shouldn't break the Electron boot. Rejections surface through the
+  // serviceBus log channel so they reach the renderer's service:log
+  // pane (parity with the TUI path which emits via `serviceBus.log`).
   const loaded = moduleRegistry.loadUserGlobalModules({
     hostVersion,
     scopeUnit: args.worktreeKey ?? "global",
   });
-  if (loaded.rejected.length > 0) {
-    for (const r of loaded.rejected) {
-      console.warn(
-        `[module-system] rejected manifest (${r.code}): ${r.manifestPath} — ${r.message}`,
-      );
-    }
+  for (const r of loaded.rejected) {
+    serviceBus.log(
+      `⚠ Module manifest rejected (${r.code}): ${r.manifestPath} — ${r.message}`,
+    );
+  }
+  if (loaded.modules.length > 0) {
+    serviceBus.log(
+      `ℹ Loaded ${loaded.modules.length} module manifest${loaded.modules.length === 1 ? "" : "s"} (${loaded.modules.map((m) => m.manifest.id).join(", ")})`,
+    );
   }
 
   const moduleEvents = new EventEmitter();
@@ -110,14 +102,21 @@ export function bootstrapElectronModuleSystem(args: {
   return booted;
 }
 
+// Resolve the host's package.json relative to this file, NOT process.cwd().
+// When Electron is launched with the CWD pointed at a user's React Native
+// project, `process.cwd()/package.json` is the project's manifest, and a
+// hostile project could spoof the host version to bypass `hostRange`
+// gating. The tsx launcher loads this file from the source tree in dev,
+// and from the packaged asar in production — both have a resolvable
+// parent containing the host `package.json`.
 function readHostVersion(): string {
-  try {
-    const pkgPath = path.join(process.cwd(), "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
-      version?: string;
-    };
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const pkgPath = path.join(here, "..", "package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
+    version?: string;
+  };
+  if (!pkg.version) {
+    throw new Error(`host package.json at ${pkgPath} has no version field`);
   }
+  return pkg.version;
 }

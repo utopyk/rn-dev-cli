@@ -2,14 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useIpcInvoke, useIpcOn } from '../hooks/useIpc';
 import './Marketplace.css';
 
-// Phase 5c — Marketplace renderer panel. Reads `modules/list` through the
-// new `modules:list` ipcMain channel (added alongside this panel) and
-// projects the rows into a table with kind / scope / state badges.
-//
-// No install / uninstall UI yet — Phase 6 owns that. Built-ins show an
-// explicit "system, uninstallable" badge so users see why the Action
-// column stays empty on those rows.
-
 interface MarketplaceRow {
   id: string;
   version: string;
@@ -78,7 +70,6 @@ export function Marketplace(): React.JSX.Element {
       <h2 className="marketplace-title">Marketplace</h2>
       <p className="marketplace-subtitle">
         {rows.length} module{rows.length === 1 ? '' : 's'} registered.
-        Install / uninstall lands in Phase 6.
       </p>
 
       <table className="marketplace-table">
@@ -89,7 +80,6 @@ export function Marketplace(): React.JSX.Element {
             <th>Kind</th>
             <th>Scope</th>
             <th>State</th>
-            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -124,20 +114,11 @@ export function Marketplace(): React.JSX.Element {
                   </div>
                 )}
               </td>
-              <td>
-                {row.isBuiltIn ? (
-                  <span className="marketplace-badge marketplace-badge--system">
-                    system, uninstallable
-                  </span>
-                ) : (
-                  <span className="marketplace-action-placeholder">—</span>
-                )}
-              </td>
             </tr>
           ))}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={6} className="marketplace-empty">
+              <td colSpan={5} className="marketplace-empty">
                 No modules registered. Built-ins should always appear — if
                 this row is empty, the host's module system hasn't
                 finished booting.

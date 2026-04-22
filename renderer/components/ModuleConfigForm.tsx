@@ -1,19 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useIpcInvoke, useIpcOn } from '../hooks/useIpc';
 import './ModuleConfigForm.css';
 
-// Minimal JSON-Schema shape the form renders. We only interpret the
-// keywords each built-in / 3p manifest actually uses today; unsupported
-// schemas fall through to a JSON textarea so the user can still edit the
-// raw config, we just can't present a structured form.
-
 interface JsonSchemaProperty {
-  type?: 'string' | 'boolean' | 'integer' | 'number' | 'object' | 'array' | 'null';
+  type?: 'string' | 'boolean';
   description?: string;
   enum?: Array<string | number | boolean>;
   default?: unknown;
-  minimum?: number;
-  maximum?: number;
   minLength?: number;
   maxLength?: number;
   title?: string;
@@ -61,15 +54,21 @@ export function ModuleConfigForm({
   const invoke = useIpcInvoke();
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [draft, setDraft] = useState<Record<string, unknown>>({});
+  // Kept in sync with state so the modules:event handler can read the
+  // latest config + draft without depending on them (closure stability
+  // keeps useIpcOn from churning subscriptions on every keystroke).
+  const configRef = useRef(config);
+  const draftRef = useRef(draft);
+  useEffect(() => {
+    configRef.current = config;
+    draftRef.current = draft;
+  }, [config, draft]);
   const [status, setStatus] = useState<
-    | { kind: 'idle' }
-    | { kind: 'saving' }
-    | { kind: 'saved' }
-    | { kind: 'error'; message: string }
+    { kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string }
   >({ kind: 'idle' });
+  const [justSaved, setJustSaved] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Load current config on mount and whenever moduleId / scope changes.
   useEffect(() => {
     let active = true;
     setStatus({ kind: 'idle' });
@@ -99,7 +98,9 @@ export function ModuleConfigForm({
   }, [invoke, moduleId, scopeUnit]);
 
   // Live-update from external config-changed events (another window / the
-  // TUI, or `modules:config-set` from a subprocess module).
+  // TUI, or `modules:config-set` from a subprocess module). Reads latest
+  // config + draft via refs so the callback identity is stable across
+  // renders — otherwise `useIpcOn` would churn subscriptions per keystroke.
   useIpcOn(
     'modules:event',
     useCallback(
@@ -108,16 +109,19 @@ export function ModuleConfigForm({
         if (event.moduleId !== moduleId) return;
         const fresh = (event as ConfigChangedEvent).config ?? {};
         setConfig(fresh);
-        // Only update the draft when it wasn't dirty — preserve the user's
-        // in-flight edits otherwise.
-        setDraft((prev) => (shallowEqual(prev, config) ? fresh : prev));
+        // Preserve in-flight edits when the draft diverges from the
+        // previously-persisted config.
+        if (shallowEqual(draftRef.current, configRef.current)) {
+          setDraft(fresh);
+        }
       },
-      [moduleId, config],
+      [moduleId],
     ),
   );
 
   const commit = useCallback(async () => {
     setStatus({ kind: 'saving' });
+    setJustSaved(false);
     const reply = (await invoke('modules:config-set', {
       moduleId,
       scopeUnit,
@@ -125,12 +129,9 @@ export function ModuleConfigForm({
     })) as ConfigSetReply;
     if (reply.kind === 'ok') {
       setConfig(reply.config);
-      setStatus({ kind: 'saved' });
+      setStatus({ kind: 'idle' });
+      setJustSaved(true);
       onSaved?.(reply.config);
-      // Fade the "saved" pill after a moment.
-      setTimeout(() => {
-        setStatus((s) => (s.kind === 'saved' ? { kind: 'idle' } : s));
-      }, 1500);
     } else {
       setStatus({ kind: 'error', message: reply.message });
     }
@@ -139,6 +140,7 @@ export function ModuleConfigForm({
   const revert = useCallback(() => {
     setDraft(config);
     setStatus({ kind: 'idle' });
+    setJustSaved(false);
   }, [config]);
 
   if (loadError) {
@@ -150,6 +152,8 @@ export function ModuleConfigForm({
   }
 
   const dirty = !shallowEqual(draft, config);
+  // "Saved" fades as soon as the user edits again.
+  const showSaved = justSaved && !dirty && status.kind === 'idle';
   const properties = schema.properties ?? {};
   const keys = Object.keys(properties);
 
@@ -194,7 +198,7 @@ export function ModuleConfigForm({
         >
           Revert
         </button>
-        {status.kind === 'saved' && (
+        {showSaved && (
           <span className="module-config-form__status module-config-form__status--ok">
             ✓ Saved
           </span>
@@ -208,10 +212,6 @@ export function ModuleConfigForm({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Field rendering
-// ---------------------------------------------------------------------------
 
 interface FieldRowProps {
   name: string;
@@ -283,33 +283,11 @@ function FieldInput({
     );
   }
 
-  if (property.type === 'integer' || property.type === 'number') {
-    const n = typeof value === 'number' ? value : '';
-    return (
-      <input
-        type="number"
-        className="module-config-form__number"
-        value={n === '' ? '' : n}
-        min={property.minimum}
-        max={property.maximum}
-        step={property.type === 'integer' ? 1 : undefined}
-        onChange={(e) => {
-          const raw = e.target.value;
-          if (raw === '') {
-            onChange(null);
-            return;
-          }
-          const parsed =
-            property.type === 'integer' ? parseInt(raw, 10) : Number(raw);
-          onChange(Number.isNaN(parsed) ? raw : parsed);
-        }}
-      />
-    );
-  }
-
-  // Default: string input. Also covers `type: undefined` and
-  // object/array, which we don't support structurally — user types JSON.
-  const stringValue = typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value);
+  // Default: string input. Add integer/number/object/array branches when
+  // a manifest actually ships one (YAGNI — Phase 5c only exercises
+  // string + boolean + enum).
+  const stringValue =
+    typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value);
   return (
     <input
       type="text"
@@ -321,10 +299,6 @@ function FieldInput({
     />
   );
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function shallowEqual(
   a: Record<string, unknown>,

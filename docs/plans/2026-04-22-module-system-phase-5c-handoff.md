@@ -116,7 +116,31 @@ Three coherent units in one PR:
 
 ---
 
-## Deferred items (Phase 5c → Phase 6 and beyond)
+## Pre-merge review — 4 reviewers, fixes applied this PR
+
+Four parallel reviews ran against the initial 3-commit stack (kieran-typescript, security-sentinel, architecture-strategist, code-simplicity-reviewer). Zero P0 findings. P1 items were split between "fix pre-merge" (introduced by this PR, real correctness/security, short fix) and "follow-up" (pre-existing or scope-expansion).
+
+### Pre-merge fixes (4th commit on the stack)
+
+- **Kieran P1-1** — `ModuleConfigForm` `useIpcOn` listener leak. Handler closed over `config` and depended on `[moduleId, config]`, so the subscription re-created on every config change + every keystroke (since `useIpcOn` re-fires on handler identity). Switched to `configRef` / `draftRef` refs; callback identity is now stable across renders.
+- **Kieran P1-2** — `ConfigSetReply = Promise<ModuleConfigSetResult>` was mis-shaped; reply types should describe values. Changed to `ConfigSetReply = ModuleConfigSetResult`, `handleConfigSet(...): Promise<ConfigSetReply>` explicitly.
+- **Security P1-2** — bootstrap's 3p manifest rejections were silent `console.warn` in production. Routed through `serviceBus.log()` for parity with the TUI path (`start-flow.ts`) so rejections surface in the renderer's service:log pane.
+- **Security P1-3** — `readHostVersion()` used `process.cwd()/package.json` which in Electron mode often points at the user's RN project. A hostile project `package.json` could spoof the host version to bypass `hostRange` gating. Resolved relative to `import.meta.url` instead. No silent `"0.0.0"` fallback either — throws with a clear message if the host `package.json` is missing a `version`.
+- **Simplicity P0-1** — deleted the `integer` / `number` FieldInput branch in `ModuleConfigForm`. No Phase 5c built-in uses those types; re-add when a 3p module actually ships one. Narrowed `JsonSchemaProperty.type` to `'string' | 'boolean'`.
+- **Simplicity P0-2** — dropped the Marketplace "Action" column. It only ever displayed "system, uninstallable" (built-ins) or an em-dash (3p, no install flow yet). Phase 6 will reintroduce the column when the install button is real.
+- **Simplicity P0-3** — trimmed WHAT-explains comments (section dividers, obvious useEffect explanations, narrative preamble in bootstrap).
+- **Simplicity P1-4** — collapsed `saved` status into a derived `showSaved = justSaved && !dirty && status === 'idle'` flag. Dropped the 1500ms timeout and the explicit `saved` state variant; the "✓ Saved" pill fades as soon as the user edits again.
+
+### Deferred to follow-ups (not in this PR)
+
+Each of these is tracked in the list below; the "Deferred items" section calls them out for Phase 6 / 7 owners. None block merge.
+
+- **Kieran P1-3** — `useIpc.ts` returns `any`. Pre-existing. Tighten the hook signature to `<T = unknown>(channel: string, ...args): Promise<T>` in a follow-up.
+- **Arch P1-1** — `electron/module-system-bootstrap.ts` duplicates `src/app/start-flow.ts`'s capability + registry + built-in wiring. The TUI and Electron paths need different subsets today (Electron skips `metro` / `artifacts` capabilities and the unix IPC dispatcher), but every new built-in has to land in both files. Extract a shared `createModuleSystem()` factory in Phase 6 when install-flow adds a third bootstrap concern.
+- **Arch P1-2** — `ModuleConfigForm` mixes IPC with presentation. Extract a `useModuleConfig(moduleId, scope)` hook when the second consumer arrives (likely Phase 6's per-module settings drawer off a Marketplace row click).
+- **Security P1-1** — host UI `PanelSenderRegistry.trustHostSender(window.webContents)` grants wildcard cross-module config-write authority. A renderer XSS could rewrite any module's config. Mitigation: either split trust into `host:read` / `host:write-own` / `host:write-cross-module`, or scope cross-module writes to a declared allowlist per panel. Phase 6 consideration — compounds once 3p modules ship schemas with sensitive fields.
+
+
 
 1. **Real install / uninstall.** Phase 6. `@npmcli/arborist --ignore-scripts`, registry SHA pin, consent dialog. The Marketplace renderer panel's "Action" column is deliberately a placeholder for built-ins today; Phase 6 fills it in for `kind === "subprocess"` rows.
 2. **Option (b) sidebar — drive off `modules:list-panels` + branch on `kind`.** Needs the `electronPanel` manifest schema to grow a `kind: "webview" | "renderer-native"` discriminator (or make `webviewEntry` optional) so built-ins can contribute renderer-native panels declaratively. Defer until Phase 7 or whenever a third renderer-native panel joins Marketplace + Settings.

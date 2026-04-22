@@ -117,20 +117,11 @@
   border-color: var(--warning);
 }
 
-.marketplace-badge--system {
-  color: var(--muted);
-  font-style: italic;
-}
-
 .marketplace-crash-reason {
   margin-top: 4px;
   font-size: 11px;
   color: var(--error);
   font-family: 'SF Mono', 'Menlo', monospace;
-}
-
-.marketplace-action-placeholder {
-  color: var(--muted);
 }
 
 .marketplace-empty {
