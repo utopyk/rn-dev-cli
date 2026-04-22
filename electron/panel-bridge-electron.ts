@@ -18,6 +18,7 @@ import {
   type PanelViewFactory,
   type PanelViewFactoryOptions,
 } from "./panel-bridge.js";
+import type { PanelSenderRegistry } from "./panel-sender-registry.js";
 
 export interface InstallPanelBridgeOptions {
   window: BrowserWindow;
@@ -25,13 +26,23 @@ export interface InstallPanelBridgeOptions {
   moduleRoot: (moduleId: string) => string;
   getBounds: () => PanelBounds;
   auditLog?: CreatePanelBridgeOptions["auditLog"];
+  /**
+   * Phase 5b hardening — populated as new panel WebContentsViews are
+   * created so the `modules:*` ipcMain handlers can bind `_event.sender`
+   * to a moduleId and reject spoofed payloads. Optional for test code
+   * that uses the pure panel-bridge without the Electron runtime.
+   */
+  senderRegistry?: PanelSenderRegistry;
 }
 
 export function installPanelBridge(
   opts: InstallPanelBridgeOptions,
 ): PanelBridge {
   const host = createElectronBrowserHost(opts.window);
-  const factory = createElectronPanelViewFactory(opts.preloadPath);
+  const factory = createElectronPanelViewFactory(
+    opts.preloadPath,
+    opts.senderRegistry,
+  );
   return createPanelBridge({
     host,
     factory,
@@ -98,6 +109,7 @@ function viewToWCV(view: PanelView): WebContentsView {
 
 export function createElectronPanelViewFactory(
   preloadPath: string,
+  senderRegistry?: PanelSenderRegistry,
 ): PanelViewFactory {
   return {
     create(opts: PanelViewFactoryOptions): PanelView {
@@ -116,6 +128,9 @@ export function createElectronPanelViewFactory(
           ],
         },
       });
+      // Phase 5b hardening — bind this webContents to its moduleId so
+      // ipcMain handlers can reject spoofed payloads via _event.sender.
+      senderRegistry?.registerPanel(wcv.webContents, opts.moduleId);
       void wcv.webContents.loadFile(path.resolve(opts.entryPath));
 
       const view: PanelView = {

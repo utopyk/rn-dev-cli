@@ -51,22 +51,14 @@ describe("marketplace — createMarketplaceCapability", () => {
     expect(entry!.state).toBe("inert");
   });
 
-  it("install() rejects with NOT_IMPLEMENTED in Phase 5b", async () => {
+  it("exposes only list() in Phase 5b — install/uninstall land in Phase 6", () => {
     const cap: MarketplaceCapability = createMarketplaceCapability(
       new ModuleRegistry(),
     );
-    await expect(cap.install({ id: "anything" })).rejects.toThrow(
-      /NOT_IMPLEMENTED/,
-    );
-  });
-
-  it("uninstall() rejects with NOT_IMPLEMENTED in Phase 5b", async () => {
-    const cap: MarketplaceCapability = createMarketplaceCapability(
-      new ModuleRegistry(),
-    );
-    await expect(cap.uninstall({ id: "anything" })).rejects.toThrow(
-      /NOT_IMPLEMENTED/,
-    );
+    // Guards against accidentally re-introducing stubs before the real
+    // Phase 6 implementation exists. A grep-for-NOT_IMPLEMENTED helper
+    // is the compound-engineering-friendly replacement.
+    expect(Object.keys(cap)).toEqual(["list"]);
   });
 });
 

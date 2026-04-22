@@ -679,4 +679,110 @@ describe("runModule", () => {
       await handle.dispose();
     }
   });
+
+  it("ctx.config is a live getter — destructured aliases stay stale but ctx reads see updates", async () => {
+    const h = harness();
+    // `capturedCtx` is the same reference across the two tool calls;
+    // the test reads `ctx.config` via the reference both times.
+    let capturedCtx: ModuleToolContext | null = null;
+
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": (_args, ctx) => {
+          capturedCtx = ctx;
+          return { config: ctx.config, appInfoConfig: ctx.appInfo.config };
+        },
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    try {
+      await client.sendRequest("initialize", {
+        capabilities: [],
+        hostVersion: "1.0.0",
+        config: { v: 1 },
+      });
+      await client.sendRequest("tool/ping", {});
+      expect(capturedCtx!.config).toEqual({ v: 1 });
+
+      client.sendNotification("config/changed", { v: 2 });
+
+      // Second tool call — same ctx reference; config getter sees the
+      // replacement without needing to re-enter a handler.
+      const followup = await client.sendRequest<unknown, {
+        config: Record<string, unknown>;
+        appInfoConfig: Record<string, unknown>;
+      }>("tool/ping", {});
+      expect(followup.config).toEqual({ v: 2 });
+      expect(followup.appInfoConfig).toEqual({ v: 2 });
+      // Reading through the outer reference — same value, live.
+      expect(capturedCtx!.config).toEqual({ v: 2 });
+      expect(capturedCtx!.appInfo.config).toEqual({ v: 2 });
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
+
+  it("config/changed arriving before initialize is buffered + flushed after activate", async () => {
+    const h = harness();
+    const observed: Array<Record<string, unknown>> = [];
+    // Gate `activate` on a manually-controlled promise so the test can
+    // deterministically interleave: initialize sent → config/changed
+    // arrives → activate resolves → callback fires.
+    let releaseActivate: () => void = () => {};
+    const activateGate = new Promise<void>((resolve) => {
+      releaseActivate = resolve;
+    });
+
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": (_args, ctx) => ({ config: ctx.config }),
+      },
+      activate: async () => {
+        await activateGate;
+      },
+      onConfigChanged: (config) => {
+        observed.push(config);
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    try {
+      // Don't await — initialize stays pending inside activate.
+      const initPromise = client.sendRequest("initialize", {
+        capabilities: [],
+        hostVersion: "1.0.0",
+        config: { v: 1 },
+      });
+      // Give the module a chance to process initialize + enter activate.
+      await new Promise((r) => setImmediate(r));
+      // Now fire a config/changed while activate is still pending.
+      client.sendNotification("config/changed", { v: 9 });
+      // Allow the notification to cross the stream before we release
+      // activate — this asserts it lands in the pending buffer, not the
+      // post-init path.
+      await new Promise((r) => setImmediate(r));
+      expect(observed).toEqual([]); // not flushed yet
+
+      releaseActivate();
+      await initPromise;
+
+      // Force a round-trip so any queued async work resolves.
+      const result = await client.sendRequest<unknown, {
+        config: Record<string, unknown>;
+      }>("tool/ping", {});
+      expect(result.config).toEqual({ v: 9 });
+      expect(observed).toEqual([{ v: 9 }]);
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
 });

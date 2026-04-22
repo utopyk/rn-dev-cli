@@ -360,7 +360,14 @@ export type ModuleConfigSetResult =
   | { kind: "ok"; config: Record<string, unknown> }
   | {
       kind: "error";
-      code: "E_CONFIG_VALIDATION" | "E_CONFIG_MODULE_UNKNOWN" | "E_CONFIG_BAD_PATCH";
+      code:
+        | "E_CONFIG_VALIDATION"
+        | "E_CONFIG_MODULE_UNKNOWN"
+        | "E_CONFIG_BAD_PATCH"
+        /** Electron main only — handler invoked before services resolved. */
+        | "E_CONFIG_SERVICES_PENDING"
+        /** Electron main only — sender's webContents is not bound to moduleId. */
+        | "E_CONFIG_SENDER_MISMATCH";
       message: string;
     };
 
@@ -399,6 +406,19 @@ export function setModuleConfig(
       code: "E_CONFIG_BAD_PATCH",
       message: "modules/config/set patch must be a JSON object",
     };
+  }
+  // `undefined` survives the in-memory JS merge but is stripped by
+  // `JSON.stringify` — authors who pass it expect a delete, get a
+  // silent no-op. Reject rather than corrupt. `null` is legal JSON and
+  // passes through unchanged (schema decides if it's allowed).
+  for (const [key, value] of Object.entries(payload.patch)) {
+    if (value === undefined) {
+      return {
+        kind: "error",
+        code: "E_CONFIG_BAD_PATCH",
+        message: `modules/config/set: patch key "${key}" has value undefined; use null or omit the key.`,
+      };
+    }
   }
 
   const reg = resolveRegistered(opts, payload.moduleId, payload.scopeUnit);

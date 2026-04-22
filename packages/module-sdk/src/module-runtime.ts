@@ -31,10 +31,13 @@ export interface ModuleAppInfo {
    * Persisted per-module config blob loaded from
    * `~/.rn-dev/modules/<id>/config.json`. Always present: `{}` when the
    * module declares no `contributes.config.schema`, or when no config has
-   * been persisted yet. Updates in place via the `config/changed`
-   * notification — use `onConfigChanged` to react.
+   * been persisted yet. Implemented as a getter by `runModule` — reading
+   * `ctx.appInfo.config` (or `ctx.config`, which is a pass-through)
+   * always returns the latest persisted value, so `config/changed`
+   * notifications are visible without an extra round-trip. Use
+   * `onConfigChanged` to react at the moment of change.
    */
-  config: Record<string, unknown>;
+  readonly config: Record<string, unknown>;
 }
 
 /**
@@ -57,11 +60,14 @@ export interface ModuleToolContext {
    */
   host: HostApi;
   /**
-   * Mirrors `appInfo.config` for ergonomics. Re-read on every tool call —
-   * the reference is replaced when the host sends `config/changed`, so
-   * handlers see the latest persisted value without an extra lookup.
+   * Mirrors `appInfo.config` for ergonomics. Implemented as a getter on
+   * the context object — destructuring (`const { config } = ctx`) still
+   * gives you a snapshot, but reading `ctx.config` on each tool call
+   * (or from an `onConfigChanged` callback) always returns the latest
+   * persisted value, including updates delivered via `config/changed`
+   * after `activate` has already run.
    */
-  config: Record<string, unknown>;
+  readonly config: Record<string, unknown>;
 }
 
 export type ToolHandler<
@@ -88,11 +94,16 @@ export interface RunModuleOptions {
   /**
    * Invoked whenever the host writes a new config blob via
    * `modules/config/set`. The module process receives a `config/changed`
-   * notification (vscode-jsonrpc); this callback fires after `ctx.config`
-   * and `ctx.appInfo.config` have been replaced in place so handlers that
-   * read the context see the latest values synchronously. Runs only after
-   * the initial `initialize` handshake — notifications arriving before
-   * handshake are buffered until activate completes.
+   * notification (vscode-jsonrpc); this callback fires AFTER the internal
+   * `latestConfig` slot has been replaced, so reads of `ctx.config` or
+   * `ctx.appInfo.config` from inside the callback return the new value.
+   *
+   * Notifications arriving before the `initialize` handshake completes
+   * are buffered; once `activate` resolves the most-recent buffered
+   * value is applied (as if it had arrived just after activation) and
+   * the callback fires exactly once for it. Pre-initialize notifications
+   * that get superseded in the buffer window are dropped — they were
+   * never observable anyway.
    */
   onConfigChanged?: (config: Record<string, unknown>) => void | Promise<void>;
   /**
@@ -167,26 +178,68 @@ export function runModule(opts: RunModuleOptions): RunModuleHandle {
   const log = createLogger(connection);
 
   let ctx: ModuleToolContext | null = null;
+  // `latestConfig` is the single source of truth; `ctx.config` and
+  // `ctx.appInfo.config` both read it through getters so authors who
+  // close over the context see the current value, not a stale reference.
+  let latestConfig: Record<string, unknown> = {};
+  let initialized = false;
+  // Buffer a config/changed notification that races ahead of the
+  // initialize handshake — the doc promises "notifications arriving
+  // before handshake are buffered until activate completes", so honor it.
+  let pendingConfig: Record<string, unknown> | null = null;
 
   connection.onRequest("initialize", async (params: unknown) => {
     const parsed = normalizeInitializeParams(params);
+    latestConfig = parsed.config;
     const host = createHostApi(connection, {
       log,
       appInfo: parsed,
       manifest: opts.manifest,
     });
-    ctx = {
+
+    // `appInfo.config` mirrors `ctx.config` — both readthrough getters so
+    // code that stashes `const {config} = ctx` or `const {appInfo} = ctx`
+    // at activation time still sees post-`config/changed` values.
+    const appInfoView: ModuleAppInfo = Object.defineProperty(
+      { ...parsed } as ModuleAppInfo,
+      "config",
+      {
+        get: () => latestConfig,
+        enumerable: true,
+        configurable: false,
+      },
+    );
+    const ctxLocal: ModuleToolContext = {
       log,
-      appInfo: parsed,
+      appInfo: appInfoView,
       hostVersion: parsed.hostVersion,
       sdkVersion: SDK_VERSION,
       host,
-      config: parsed.config,
+      // Placeholder; replaced by the getter below before anyone reads it.
+      config: latestConfig,
     };
+    Object.defineProperty(ctxLocal, "config", {
+      get: () => latestConfig,
+      enumerable: true,
+      configurable: false,
+    });
+    ctx = ctxLocal;
+
     const extras = opts.onInitialize ? await opts.onInitialize(parsed) : {};
     if (opts.activate) {
       await opts.activate(ctx);
     }
+    initialized = true;
+
+    // Flush any config/changed notification that arrived before activate
+    // completed. Fires onConfigChanged exactly once for the buffered value.
+    if (pendingConfig !== null) {
+      const flush = pendingConfig;
+      pendingConfig = null;
+      latestConfig = flush;
+      fireConfigChanged(flush);
+    }
+
     const toolCount = opts.manifest.contributes?.mcp?.tools?.length ?? 0;
     return {
       moduleId: opts.manifest.id,
@@ -198,18 +251,26 @@ export function runModule(opts: RunModuleOptions): RunModuleHandle {
 
   connection.onNotification("config/changed", (rawConfig: unknown) => {
     const nextConfig = coerceConfig(rawConfig);
-    if (ctx) {
-      ctx.config = nextConfig;
-      ctx.appInfo = { ...ctx.appInfo, config: nextConfig };
+    if (!initialized) {
+      // Buffer — the initialize handler flushes after activate resolves.
+      // Only the most recent pending value is kept; intermediate updates
+      // that arrive in the same pre-initialize window would never have
+      // been observable anyway.
+      pendingConfig = nextConfig;
+      return;
     }
-    if (opts.onConfigChanged) {
-      void Promise.resolve(opts.onConfigChanged(nextConfig)).catch((err) => {
-        log.error("onConfigChanged threw", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
+    latestConfig = nextConfig;
+    fireConfigChanged(nextConfig);
   });
+
+  function fireConfigChanged(config: Record<string, unknown>): void {
+    if (!opts.onConfigChanged) return;
+    void Promise.resolve(opts.onConfigChanged(config)).catch((err) => {
+      log.error("onConfigChanged threw", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
 
   const prefix = `${opts.manifest.id}__`;
   for (const [toolName, handler] of Object.entries(opts.tools)) {

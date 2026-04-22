@@ -16,6 +16,7 @@ import {
   type ConfigSetPayload,
   type ModulesConfigIpcDeps,
 } from "./modules-config.js";
+import type { PanelSenderRegistry } from "../panel-sender-registry.js";
 
 export interface ModulesConfigIpcHandle {
   dispose: () => void;
@@ -23,22 +24,47 @@ export interface ModulesConfigIpcHandle {
 
 export function registerModulesConfigIpc(
   getDeps: () => ModulesConfigIpcDeps | null,
+  getSenderRegistry?: () => PanelSenderRegistry | null,
 ): ModulesConfigIpcHandle {
-  ipcMain.handle("modules:config-get", (_event, payload: ConfigGetPayload) => {
-    const deps = getDeps();
-    if (!deps) {
-      return { error: "modules-config: services not ready yet" };
-    }
-    return handleConfigGet(deps, payload);
-  });
-
-  ipcMain.handle("modules:config-set", (_event, payload: ConfigSetPayload) => {
+  ipcMain.handle("modules:config-get", (event, payload: ConfigGetPayload) => {
     const deps = getDeps();
     if (!deps) {
       return {
         kind: "error" as const,
-        code: "E_CONFIG_MODULE_UNKNOWN" as const,
+        code: "E_CONFIG_SERVICES_PENDING" as const,
         message: "modules-config: services not ready yet",
+      };
+    }
+    // Phase 5b hardening — panel senders may only address their own
+    // moduleId. Host UI (main BrowserWindow) can address any.
+    const senderReg = getSenderRegistry?.();
+    if (senderReg && !senderReg.canAddress(event.sender, payload.moduleId)) {
+      return {
+        kind: "error" as const,
+        code: "E_CONFIG_SENDER_MISMATCH" as const,
+        message:
+          "modules:config-get rejected: sender is not bound to the requested module",
+      };
+    }
+    return handleConfigGet(deps, payload);
+  });
+
+  ipcMain.handle("modules:config-set", (event, payload: ConfigSetPayload) => {
+    const deps = getDeps();
+    if (!deps) {
+      return {
+        kind: "error" as const,
+        code: "E_CONFIG_SERVICES_PENDING" as const,
+        message: "modules-config: services not ready yet",
+      };
+    }
+    const senderReg = getSenderRegistry?.();
+    if (senderReg && !senderReg.canAddress(event.sender, payload.moduleId)) {
+      return {
+        kind: "error" as const,
+        code: "E_CONFIG_SENDER_MISMATCH" as const,
+        message:
+          "modules:config-set rejected: sender is not bound to the requested module",
       };
     }
     return handleConfigSet(deps, payload);

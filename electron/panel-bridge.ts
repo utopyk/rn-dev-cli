@@ -166,10 +166,22 @@ export function createPanelBridge(opts: CreatePanelBridgeOptions): PanelBridge {
       const existing = panels.get(k);
       if (existing) return existing;
 
-      const entryPath = path.join(
-        opts.moduleRoot(moduleId),
-        contribution.webviewEntry,
-      );
+      // Phase 5b hardening — reject webviewEntry values that escape the
+      // module root. Manifest schema only guarantees minLength: 1; a
+      // malicious manifest with `"../../../../etc/hosts"` would otherwise
+      // resolve outside the module directory. Curated registry catches
+      // this at install time; defense in depth catches it at load time.
+      const moduleRoot = opts.moduleRoot(moduleId);
+      const entryPath = path.resolve(moduleRoot, contribution.webviewEntry);
+      const resolvedRoot = path.resolve(moduleRoot);
+      if (
+        path.isAbsolute(contribution.webviewEntry) ||
+        !isPathInside(entryPath, resolvedRoot)
+      ) {
+        throw new Error(
+          `[panel-bridge] webviewEntry "${contribution.webviewEntry}" for panel "${moduleId}:${contribution.id}" escapes the module root`,
+        );
+      }
       const view = opts.factory.create({
         moduleId,
         panelId: contribution.id,
@@ -238,3 +250,9 @@ export function createPanelBridge(opts: CreatePanelBridgeOptions): PanelBridge {
     },
   };
 }
+
+function isPathInside(candidate: string, root: string): boolean {
+  const rel = path.relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+

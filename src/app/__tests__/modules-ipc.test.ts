@@ -635,6 +635,29 @@ describe("dispatchModulesAction — modules/config", () => {
     expect(result.code).toBe("E_CONFIG_MODULE_UNKNOWN");
   });
 
+  it("modules/config/set rejects patches containing undefined values", async () => {
+    active = await setup([makeSchemaedManifest()]);
+    const result = (await dispatchModulesAction(
+      {
+        registry: active.registry,
+        manager: active.manager,
+        configStore,
+      },
+      makeMsg("modules/config/set", {
+        moduleId: "tunable",
+        scopeUnit: "wt-1",
+        // `undefined` round-trips through IPC as a dropped key in real
+        // traffic, but direct dispatch passes it through. Without the
+        // guard, JSON.stringify would silently drop the entry and the
+        // caller would get a persisted blob with fewer keys than intended.
+        patch: { greeting: undefined as unknown as string },
+      }),
+    )) as { kind: string; code?: string; message?: string };
+    expect(result.kind).toBe("error");
+    expect(result.code).toBe("E_CONFIG_BAD_PATCH");
+    expect(result.message).toMatch(/undefined/i);
+  });
+
   it("modules/config/set rejects non-object patches with E_CONFIG_BAD_PATCH", async () => {
     active = await setup([makeSchemaedManifest()]);
     const result = (await dispatchModulesAction(

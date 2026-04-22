@@ -331,4 +331,43 @@ describe("createPanelBridge", () => {
     const active = host.childViews[0] as FakePanelView;
     expect(active.moduleId).toBe("attacker");
   });
+
+  // Phase 5b hardening — webviewEntry path traversal guard.
+  it("register() rejects webviewEntry with parent-directory traversal", () => {
+    const bridge = makeBridge();
+    expect(() =>
+      bridge.register("evil", {
+        id: "main",
+        title: "Evil",
+        hostApi: [],
+        webviewEntry: "../../../etc/hosts",
+      }),
+    ).toThrow(/escapes the module root/);
+  });
+
+  it("register() rejects absolute webviewEntry paths", () => {
+    const bridge = makeBridge();
+    expect(() =>
+      bridge.register("evil", {
+        id: "main",
+        title: "Evil",
+        hostApi: [],
+        webviewEntry: "/etc/hosts",
+      }),
+    ).toThrow(/escapes the module root/);
+  });
+
+  it("register() resolves nested webviewEntry paths inside the module root", () => {
+    const bridge = makeBridge();
+    const reg = bridge.register("well-behaved", {
+      id: "main",
+      title: "OK",
+      hostApi: [],
+      webviewEntry: "views/panel.html",
+    });
+    expect(reg.view.id).toBe("well-behaved:main");
+    expect(factory.created[factory.created.length - 1].entryPath).toMatch(
+      /\/modules\/well-behaved\/views\/panel\.html$/,
+    );
+  });
 });

@@ -12,10 +12,18 @@ import { registerProfileHandlers } from './profile.js';
 import { registerWizardHandlers } from './wizard.js';
 import { registerDevtoolsHandlers } from './devtools.js';
 import { installPanelBridge } from '../panel-bridge-electron.js';
+import { PanelSenderRegistry } from '../panel-sender-registry.js';
 import { createBoundsCache, type ModulesPanelsIpcDeps } from './modules-panels.js';
 import { registerModulesPanelsIpc } from './modules-panels-register.js';
 import type { ModulesConfigIpcDeps } from './modules-config.js';
 import { registerModulesConfigIpc } from './modules-config-register.js';
+
+// Phase 5b hardening — one PanelSenderRegistry per Electron process.
+// The main BrowserWindow's webContents is trusted as "host"; panel
+// factory registers each new WebContentsView against its moduleId.
+// ipcMain handlers consult this via _event.sender to reject spoofed
+// moduleId payloads.
+const senderRegistry = new PanelSenderRegistry();
 
 export { startRealServices } from './services.js';
 
@@ -29,6 +37,11 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
   if (initialProjectRoot) {
     state.projectRoot = initialProjectRoot;
   }
+
+  // Trust the main BrowserWindow's webContents — it's the host UI and
+  // may address any moduleId via modules:config-* (e.g. Settings panel
+  // editing another module's config).
+  senderRegistry.trustHostSender(window.webContents);
 
   // Forward service bus events to renderer (legacy, for global logs)
   serviceBus.on('log', (text: string) => send('service:log', text));
@@ -62,7 +75,10 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
   let deps: ModulesPanelsIpcDeps | null = null;
   let handleGetActiveBounds: (() => ReturnType<typeof boundsCache.get>) | null = null;
 
-  const handle = registerModulesPanelsIpc(() => deps);
+  const handle = registerModulesPanelsIpc(
+    () => deps,
+    () => senderRegistry,
+  );
   handleGetActiveBounds = handle.getActiveBounds;
 
   let latestManager: ModuleHostManager | null = null;
@@ -88,6 +104,7 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
       auditLog: (event) => {
         send('service:log', `[panel-bridge] ${event.kind} ${event.moduleId}:${event.panelId}`);
       },
+      senderRegistry,
     });
 
     deps = {
@@ -128,7 +145,10 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
 function registerModulesConfigHandlers(): void {
   let deps: ModulesConfigIpcDeps | null = null;
 
-  registerModulesConfigIpc(() => deps);
+  registerModulesConfigIpc(
+    () => deps,
+    () => senderRegistry,
+  );
 
   let latestManager: ModuleHostManager | null = null;
   let latestRegistry: ModuleRegistry | null = null;
