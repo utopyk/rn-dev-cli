@@ -1,65 +1,67 @@
 #!/usr/bin/env node
-// Minimal module subprocess used by integration tests. Speaks vscode-jsonrpc
-// over stdio Content-Length framing. Registers:
-//   - `initialize` → returns { moduleId: 'echo', toolCount, sdkVersion }
-//   - `echo`       → returns whatever params were sent
-//   - `crash-on-request` → exits with code 42 (tests supervisor crash path)
-//   - `sleep` notification → noop (tests hold-open behavior)
+// Minimal module subprocess used by integration tests. Previously managed
+// its own `vscode-jsonrpc` setup; now uses `runModule()` from the SDK so
+// the rewrite doubles as DX validation for third-party authors.
 //
-// Kept as a standalone ESM script with no TS transpile so the host can
-// spawn it with `node path/to/index.js` directly. The repo's package.json
-// has "type": "module" so this file is interpreted as ESM.
+// Tools:
+//   - tool/ping              → { pong: true, echoed: <args> }
+//
+// Non-tool RPC methods (registered via `onConnection` escape hatch for
+// Phase 2 integration-test compatibility):
+//   - echo                   → returns its params verbatim
+//   - crash-on-request       → exits with code 42 (supervisor crash path)
+//   - sleep (notification)   → noop (hold-open / orphan-prevention tests)
+//
+// `runModule` owns stdin/stdout framing and the `initialize` / `tool/*`
+// routing. The fixture contributes extra fields to the initialize response
+// via `onInitialize` so the Phase 2 integration-test assertions survive.
+//
+// The repo's package.json has "type": "module" so this file is interpreted
+// as ESM; the host spawns it with `node <path>` directly.
 
-import {
-  StreamMessageReader,
-  StreamMessageWriter,
-  createMessageConnection,
-} from "vscode-jsonrpc/node.js";
+import { runModule } from "@rn-dev/module-sdk";
 
-const reader = new StreamMessageReader(process.stdin);
-const writer = new StreamMessageWriter(process.stdout);
-const connection = createMessageConnection(reader, writer);
+const manifest = {
+  id: "echo",
+  version: "0.1.0",
+  hostRange: ">=0.1.0",
+  scope: "global",
+  contributes: {
+    mcp: {
+      tools: [
+        {
+          name: "echo__ping",
+          description: "Ping",
+          inputSchema: {},
+        },
+      ],
+    },
+  },
+};
 
-connection.onRequest("initialize", (params) => {
-  return {
-    moduleId: "echo",
-    toolCount: 1,
-    sdkVersion: "0.1.0",
-    echoedHostVersion: params?.hostVersion,
-    echoedCapabilityCount: Array.isArray(params?.capabilities)
-      ? params.capabilities.length
-      : 0,
-  };
+const handle = runModule({
+  manifest,
+  tools: {
+    "echo__ping": (params) => ({ pong: true, echoed: params }),
+  },
+  onInitialize: (appInfo) => ({
+    echoedHostVersion: appInfo.hostVersion,
+    echoedCapabilityCount: appInfo.capabilities.length,
+  }),
+  activate: (ctx) => {
+    ctx.log.info("echo fixture ready");
+  },
+  onConnection: (connection) => {
+    connection.onRequest("echo", (params) => params);
+    connection.onRequest("crash-on-request", () => {
+      process.exit(42);
+    });
+    connection.onNotification("sleep", () => {
+      /* no-op — used by hold-open tests */
+    });
+  },
 });
 
-connection.onRequest("echo", (params) => {
-  return params;
-});
-
-// Phase 3b: `modules/call` IPC translates <id>__<tool> into `tool/<tool>`
-// requests on the subprocess. The echo fixture declares `echo__ping` in its
-// manifest, so the wire request is `tool/ping`.
-connection.onRequest("tool/ping", (params) => {
-  return { pong: true, echoed: params };
-});
-
-connection.onRequest("crash-on-request", () => {
-  // Fail fast — the supervisor test verifies this becomes a `crashed`
-  // transition on the host side.
-  process.exit(42);
-});
-
-connection.onNotification("sleep", () => {
-  // Intentionally no-op — used by hold-open / orphan-prevention tests.
-});
-
-connection.listen();
-
-// Heartbeat: write a log-ish notification on startup so the host can
-// observe we're alive without having to send a request.
-setImmediate(() => {
-  connection.sendNotification("log", {
-    level: "info",
-    message: "echo fixture ready",
-  });
+process.on("SIGTERM", () => {
+  void handle.dispose().finally(() => process.exit(0));
 });

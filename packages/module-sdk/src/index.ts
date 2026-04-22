@@ -22,3 +22,11 @@ export type {
   UsesEntry,
 } from "./types.js";
 export type { AppInfo, HostApi, Logger } from "./host-rpc.js";
+export { runModule } from "./module-runtime.js";
+export type {
+  ModuleAppInfo,
+  ModuleToolContext,
+  RunModuleHandle,
+  RunModuleOptions,
+  ToolHandler,
+} from "./module-runtime.js";
