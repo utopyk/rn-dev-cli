@@ -82,6 +82,14 @@ interface WorktreeState {
   selectedTarget: TargetDescriptor | null;
   proxyStatus: ProxyStatus;
   deltaTimer: ReturnType<typeof setInterval> | null;
+  /**
+   * Periodic `/json` poll — tracks target availability without requiring
+   * the UI to click Reconnect. Also the trigger for preemption detection:
+   * after an unexpected upstream close we kick an immediate poll, and if
+   * the target is still listed in `/json` we mark `proxyStatus: 'preempted'`
+   * because someone else must be holding the upstream open.
+   */
+  pollTimer: ReturnType<typeof setInterval> | null;
   bodyCaptureEnabled: boolean;
   /** Snapshot of ring state at last delta — used to compute deltas. */
   lastSnapshot: Map<string, number>; // id -> version
@@ -190,13 +198,15 @@ export class DevToolsManager extends EventEmitter {
       targets,
       bodyCaptureEnabled: this.opts.captureBodies ?? DEFAULTS.captureBodies,
       deltaTimer: null,
+      pollTimer: null,
       lastSnapshot: new Map(),
       dirty: { added: new Set(), updated: new Set(), evicted: new Set() },
     };
 
     if (!selected) {
       // No target — still create the proxy state in a 'no-target' posture so
-      // subsequent list() calls surface the status cleanly.
+      // subsequent list() calls surface the status cleanly. `/json` polling
+      // is what brings us out of this state once a target appears.
       const proxy = new CdpProxy({
         // We don't have a real URL yet; use a placeholder. `start` will skip
         // upstream eager open since we can't connect.
@@ -213,6 +223,7 @@ export class DevToolsManager extends EventEmitter {
       };
       this.instances.set(worktreeKey, state);
       this.startDeltaTimer(state);
+      this.startTargetPolling(state);
       this.emitStatus(state);
       return { proxyPort: port, sessionNonce: nonce };
     }
@@ -257,6 +268,7 @@ export class DevToolsManager extends EventEmitter {
     state.state = "RUNNING";
     state.proxyStatus = "connected";
     this.startDeltaTimer(state);
+    this.startTargetPolling(state);
     this.emitStatus(state);
 
     return { proxyPort: port, sessionNonce: nonce };
@@ -267,6 +279,7 @@ export class DevToolsManager extends EventEmitter {
     if (!state) return;
     state.state = "STOPPING";
     this.stopDeltaTimer(state);
+    this.stopTargetPolling(state);
     for (const tap of state.taps) {
       try {
         tap.detach();
@@ -570,12 +583,116 @@ export class DevToolsManager extends EventEmitter {
     const state = this.instances.get(worktreeKey);
     if (!state) return;
     if (state.state === "STOPPING") return; // ours
-    state.proxyStatus = code === 1012 ? "disconnected" : "disconnected";
+    state.proxyStatus = "disconnected";
     state.state = "RECONNECTING";
-    // For Phase 1: do not aggressively reconnect. Manager consumers can call
-    // start() again. A proper reconnect loop with backoff goes here.
-    // TODO: preemption detection via /json re-poll (plan §Shared-Device Contention).
     this.emitStatus(state);
+
+    // Preemption detection (plan §Shared-Device Contention). Hermes close
+    // codes 1006 / 1012 are the common "something kicked us" signals. If
+    // `/json` still lists our target right after the close, someone else is
+    // already attached — mark `'preempted'` so the UI can stop pestering
+    // with reconnect prompts. If the target is gone, it's a reload /
+    // Hermes restart — stay `'no-target'` until polling picks up a new
+    // target.
+    //
+    // `void code` for readability: we use the close as a signal, not the
+    // specific code — the `/json` response is the authoritative check.
+    void code;
+    void this.checkPreemption(state);
+  }
+
+  /**
+   * Immediate `/json` poll triggered by an unexpected upstream close.
+   * Runs independently of the scheduled poll loop so the user sees a
+   * useful status within ~2s instead of waiting for the next tick.
+   */
+  private async checkPreemption(state: WorktreeState): Promise<void> {
+    const metroInstance = this.metro.getInstance?.(state.worktreeKey) as
+      | MetroInstance
+      | undefined;
+    if (!metroInstance) return;
+    const fresh = await fetchTargets(metroInstance.port);
+    // State may have changed during the fetch — guard via manager registry.
+    if (!this.instances.has(state.worktreeKey)) return;
+    const stillListed = state.selectedTargetId
+      ? fresh.some((t) => t.id === state.selectedTargetId)
+      : false;
+    state.targets = fresh;
+    state.proxyStatus = stillListed ? "preempted" : "no-target";
+    this.emitStatus(state);
+  }
+
+  // -------------------------------------------------------------------------
+  // `/json` polling — target discovery + Hermes reload detection
+  // -------------------------------------------------------------------------
+
+  private startTargetPolling(state: WorktreeState): void {
+    const interval = this.opts.pollIntervalMs ?? DEFAULTS.pollIntervalMs;
+    if (interval <= 0) return; // disabled (used by tests)
+    state.pollTimer = setInterval(() => {
+      void this.pollTargets(state);
+    }, interval);
+    state.pollTimer.unref?.();
+  }
+
+  private stopTargetPolling(state: WorktreeState): void {
+    if (state.pollTimer) {
+      clearInterval(state.pollTimer);
+      state.pollTimer = null;
+    }
+  }
+
+  /**
+   * Refresh `state.targets` from Metro `/json`. Called on an interval
+   * (`startTargetPolling`) while a worktree is running. Pure inspection:
+   * this method does NOT reattach or bump epoch — it only surfaces
+   * discovery events to consumers. The Electron and Ink surfaces decide
+   * whether to offer the new target; the agent sees it via
+   * `devtools-status`.
+   *
+   * One side effect worth naming: if the previously selected target has
+   * disappeared and proxyStatus is currently `'connected'`, we downgrade
+   * to `'no-target'`. (Hermes reloads can break the websocket silently
+   * in some RN versions — the `/json` poll is the authoritative check.)
+   */
+  async pollTargets(state: WorktreeState): Promise<void> {
+    if (!this.instances.has(state.worktreeKey)) return;
+    const metroInstance = this.metro.getInstance?.(state.worktreeKey) as
+      | MetroInstance
+      | undefined;
+    if (!metroInstance) return;
+
+    const fresh = await fetchTargets(metroInstance.port);
+    // State may have changed during the async fetch. Guard via the
+    // manager registry — the type system narrows `state.state` and would
+    // otherwise complain that STOPPING is "impossible".
+    if (!this.instances.has(state.worktreeKey)) return;
+
+    const prevIds = state.targets.map((t) => t.id).sort().join(",");
+    const nextIds = fresh.map((t) => t.id).sort().join(",");
+    const changed = prevIds !== nextIds;
+
+    if (changed) {
+      state.targets = fresh;
+    }
+
+    // If the selected target has vanished and we still thought we were
+    // connected, drop to `'no-target'`. Don't override `'preempted'` —
+    // that's a stronger signal.
+    let statusChanged = false;
+    const stillSelected = state.selectedTargetId
+      ? fresh.some((t) => t.id === state.selectedTargetId)
+      : true;
+    if (
+      !stillSelected &&
+      state.selectedTargetId !== null &&
+      state.proxyStatus === "connected"
+    ) {
+      state.proxyStatus = "no-target";
+      statusChanged = true;
+    }
+
+    if (changed || statusChanged) this.emitStatus(state);
   }
 
   private onMetroStatus(payload: {

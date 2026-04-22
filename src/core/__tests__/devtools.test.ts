@@ -275,12 +275,18 @@ describe("DevToolsManager", () => {
     expect(after.meta.proxyStatus).toBe("no-target");
   });
 
-  it("upstream close triggers RECONNECTING state + disconnected status", async () => {
+  it("upstream close triggers RECONNECTING + preemption detection", async () => {
+    // After the upstream close we poll /json; the Metro HTTP fixture is
+    // still up and still lists the target, so the manager correctly
+    // identifies this as a preemption scenario (someone else is holding
+    // the upstream). The immediate `'disconnected'` flip happens first
+    // but the preemption check races to replace it — accept either the
+    // transient or the terminal.
     await mgr.start("w1");
     await waitMs(30);
     for (const c of env.ws.clients) c.close();
-    await waitMs(50);
-    expect(mgr.status("w1").meta.proxyStatus).toBe("disconnected");
+    await waitMs(200);
+    expect(mgr.status("w1").meta.proxyStatus).toBe("preempted");
   });
 
   it("stop tears down proxy and removes state", async () => {
