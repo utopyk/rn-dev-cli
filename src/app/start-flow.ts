@@ -220,20 +220,23 @@ export async function startFlow(options: StartOptions): Promise<void> {
         builder: result.builder,
       });
 
-      // Trigger build after re-render
-      const platformsToBuild: Array<"ios" | "android"> =
-        fullProfile.platform === "both" ? ["ios", "android"] : [fullProfile.platform];
+      // Trigger build after re-render (quick mode skips this — the already-
+      // installed app connects to Metro directly).
+      if (fullProfile.mode !== "quick") {
+        const platformsToBuild: Array<"ios" | "android"> =
+          fullProfile.platform === "both" ? ["ios", "android"] : [fullProfile.platform];
 
-      for (const plat of platformsToBuild) {
-        const devId = plat === "ios" ? fullProfile.devices?.ios : fullProfile.devices?.android;
-        result.builder.build({
-          projectRoot: fullProfile.worktree ?? projectRoot,
-          platform: plat,
-          deviceId: devId ?? undefined,
-          port: fullProfile.metroPort,
-          variant: fullProfile.buildVariant,
-          env: fullProfile.env,
-        });
+        for (const plat of platformsToBuild) {
+          const devId = plat === "ios" ? fullProfile.devices?.ios : fullProfile.devices?.android;
+          result.builder.build({
+            projectRoot: fullProfile.worktree ?? projectRoot,
+            platform: plat,
+            deviceId: devId ?? undefined,
+            port: fullProfile.metroPort,
+            variant: fullProfile.buildVariant,
+            env: fullProfile.env,
+          });
+        }
       }
     },
     onWizardCancel: () => {
@@ -252,23 +255,27 @@ export async function startFlow(options: StartOptions): Promise<void> {
       builder = result.builder;
 
       // Trigger build after a short delay so React's useEffect has time
-      // to subscribe to builder events before they start firing
-      setTimeout(() => {
-        const platformsToBuild: Array<"ios" | "android"> =
-          profile.platform === "both" ? ["ios", "android"] : [profile.platform];
+      // to subscribe to builder events before they start firing. Quick
+      // mode skips this entirely — the existing installed app connects
+      // to Metro directly.
+      if (profile.mode !== "quick") {
+        setTimeout(() => {
+          const platformsToBuild: Array<"ios" | "android"> =
+            profile.platform === "both" ? ["ios", "android"] : [profile.platform];
 
-        for (const plat of platformsToBuild) {
-          const devId = plat === "ios" ? profile.devices?.ios : profile.devices?.android;
-          result.builder.build({
-            projectRoot: profile.worktree ?? projectRoot,
-            platform: plat,
-            deviceId: devId ?? undefined,
-            port: profile.metroPort,
-            variant: profile.buildVariant,
-            env: profile.env,
-          });
-        }
-      }, 200);
+          for (const plat of platformsToBuild) {
+            const devId = plat === "ios" ? profile.devices?.ios : profile.devices?.android;
+            result.builder.build({
+              projectRoot: profile.worktree ?? projectRoot,
+              platform: plat,
+              deviceId: devId ?? undefined,
+              port: profile.metroPort,
+              variant: profile.buildVariant,
+              env: profile.env,
+            });
+          }
+        }, 200);
+      }
     }).catch((err) => {
       serviceBus.log(`\u2716 Service startup error: ${err instanceof Error ? err.message : String(err)}`);
     });
@@ -406,8 +413,8 @@ async function startServicesAsync(
     }
   }
 
-  // 3. Run clean if needed
-  if (profile.mode !== "dirty") {
+  // 3. Run clean if needed — skipped for dirty + quick modes.
+  if (profile.mode !== "dirty" && profile.mode !== "quick") {
     const cleaner = new CleanManager(projectRoot);
     emit(`\u23f3 Running ${profile.mode} clean...`);
     await cleaner.execute(profile.mode, profile.platform, (step, status) => {
@@ -482,7 +489,7 @@ async function startServicesAsync(
     worktreeKey,
     projectRoot: effectiveRoot,
     port: profile.metroPort,
-    resetCache: profile.mode !== "dirty",
+    resetCache: profile.mode !== "dirty" && profile.mode !== "quick",
     verbose: true,
     env: profile.env,
   });
