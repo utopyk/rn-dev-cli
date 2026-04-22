@@ -50,19 +50,35 @@ export interface TapDispatch {
 // DomainTap
 // ---------------------------------------------------------------------------
 
-export interface DomainTap<TEntry> {
+/**
+ * Non-generic base for DomainTap. DevToolsManager stores taps as
+ * `AnyDomainTap[]` so a single registry can hold NetworkTap, ConsoleTap, etc.
+ * without forcing the entry type into the manager's internals. Only
+ * `ring.markSessionBoundary` is exposed here — the manager's session-boundary
+ * propagation is the one generic operation that touches every tap's ring.
+ * Tap-specific query APIs (listNetwork, etc.) narrow back to the concrete
+ * tap type.
+ */
+export interface AnyDomainTap {
   /** Stable name, used for logging and event dispatch (Network → "Network"). */
   readonly domain: string;
   /** Sent once on every upstream attach. */
   readonly enableCommands: readonly CdpCommand[];
-  /** Public buffer. Manager composes `CaptureMeta` from its state. */
-  readonly ring: RingBuffer<TEntry>;
+  /** Ring-level session boundary marker. Concrete `DomainTap<T>` narrows ring. */
+  readonly ring: {
+    markSessionBoundary(reason: SessionBoundary["reason"]): void;
+  };
   /** Called after upstream attach + enable commands flushed. */
   attach(dispatch: TapDispatch): void;
   /** Called on upstream close / manager stop. Tap should cancel pending work. */
   detach(): void;
   /** Called for every CDP event the proxy receives. Tap filters by method. */
   handleEvent(evt: CdpEvent): void;
+}
+
+export interface DomainTap<TEntry> extends AnyDomainTap {
+  /** Public buffer. Manager composes `CaptureMeta` from its state. */
+  readonly ring: RingBuffer<TEntry>;
 }
 
 // ---------------------------------------------------------------------------
