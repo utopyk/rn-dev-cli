@@ -1,4 +1,24 @@
-// @rn-dev/module-sdk — author SDK for third-party modules.
-// Phase 1 will populate this with defineModule(), manifest types, host-rpc client,
-// and typed error codes. Phase 0 only scaffolds the package.
-export const SDK_VERSION = "0.0.0";
+export const SDK_VERSION = "0.1.0";
+
+export {
+  defineModule,
+  validateManifest,
+  enforceToolPrefix,
+  type ManifestError,
+  type ValidationResult,
+} from "./define-module.js";
+export { ModuleError, ModuleErrorCode } from "./errors.js";
+export type {
+  ApiMethodContribution,
+  ElectronPanelContribution,
+  McpToolContribution,
+  ModuleContributions,
+  ModuleManifest,
+  ModuleSandbox,
+  ModuleScope,
+  ModuleSignature,
+  ModuleTarget,
+  TuiViewContribution,
+  UsesEntry,
+} from "./types.js";
+export type { AppInfo, HostApi, Logger } from "./host-rpc.js";
