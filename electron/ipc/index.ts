@@ -11,7 +11,7 @@ import { registerProfileHandlers } from './profile.js';
 import { registerWizardHandlers } from './wizard.js';
 import { registerDevtoolsHandlers } from './devtools.js';
 import { installPanelBridge } from '../panel-bridge-electron.js';
-import { createBoundsCache } from './modules-panels.js';
+import { createBoundsCache, type ModulesPanelsIpcDeps } from './modules-panels.js';
 import { registerModulesPanelsIpc } from './modules-panels-register.js';
 
 export { startRealServices } from './services.js';
@@ -45,23 +45,29 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
 }
 
 /**
- * Phase 4 — install the module-panels bridge + its ipcMain channels once
- * both the module host and the module registry have been published via
- * the service bus. Keeps the panel wiring out of the critical startup
- * path while still binding as early as possible.
+ * Phase 4 — install the module-panels bridge + its ipcMain channels.
+ * Channels are registered EAGERLY during `setupIpcBridge` with a
+ * `getDeps()` closure so the renderer can safely invoke
+ * `modules:list-panels` on mount, before `startRealServices` has
+ * finished publishing `moduleHost` + `moduleRegistry`. Missing deps
+ * return empty/no-op defaults rather than
+ * "No handler registered for ..." errors.
  */
 function registerModulePanelsHandlers(window: BrowserWindow): void {
+  const boundsCache = createBoundsCache();
+  let deps: ModulesPanelsIpcDeps | null = null;
+  let handleGetActiveBounds: (() => ReturnType<typeof boundsCache.get>) | null = null;
+
+  const handle = registerModulesPanelsIpc(() => deps);
+  handleGetActiveBounds = handle.getActiveBounds;
+
   let latestManager: ModuleHostManager | null = null;
   let latestRegistry: ModuleRegistry | null = null;
 
   const tryInstall = () => {
-    if (!latestManager || !latestRegistry) return;
+    if (!latestManager || !latestRegistry || deps) return;
     const manager = latestManager;
     const registry = latestRegistry;
-
-    const boundsCache = createBoundsCache();
-    let handleGetActiveBounds: (() => ReturnType<typeof boundsCache.get>) | null =
-      null;
 
     const preloadPath = path.join(__dirname, '..', 'preload-module.js');
     const bridge = installPanelBridge({
@@ -76,14 +82,11 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
       getBounds: () =>
         handleGetActiveBounds?.() ?? { x: 0, y: 0, width: 0, height: 0 },
       auditLog: (event) => {
-        // Phase 4: audit-log each panel event via the service-bus log
-        // channel. A dedicated HMAC-chained sink lands in a follow-up when
-        // the AuditLog API is finalized.
         send('service:log', `[panel-bridge] ${event.kind} ${event.moduleId}:${event.panelId}`);
       },
     });
 
-    const handle = registerModulesPanelsIpc({
+    deps = {
       bridge,
       manager,
       registry,
@@ -94,8 +97,10 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
           `[host-call] ${event.moduleId}/${event.capabilityId}.${event.method} ${event.outcome}`,
         );
       },
-    });
-    handleGetActiveBounds = handle.getActiveBounds;
+    };
+
+    // Re-notify the renderer so sidebar re-fetches panel list now that deps are live.
+    send('modules:event', { kind: 'ready', moduleId: '', scopeUnit: '' });
   };
 
   serviceBus.on('moduleHost', (m) => {
