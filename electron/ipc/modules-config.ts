@@ -36,7 +36,7 @@ export interface ConfigGetPayload {
 export interface ConfigSetPayload extends ModuleConfigSetRequest {}
 
 export type ConfigGetReply = ModuleConfigGetResult | { error: string };
-export type ConfigSetReply = ModuleConfigSetResult;
+export type ConfigSetReply = Promise<ModuleConfigSetResult>;
 
 export interface ModulesConfigIpcDeps {
   manager: ModuleHostManager;
@@ -85,11 +85,11 @@ export function handleConfigGet(
   );
 }
 
-export function handleConfigSet(
+export async function handleConfigSet(
   deps: ModulesConfigIpcDeps,
   payload: ConfigSetPayload,
 ): ConfigSetReply {
-  const result = daemonSetConfig(
+  const result = await daemonSetConfig(
     {
       manager: deps.manager,
       registry: deps.registry,
