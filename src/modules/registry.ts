@@ -11,6 +11,7 @@ import {
   type ModuleManifest,
 } from "@rn-dev/module-sdk";
 import type { RnDevModule } from "../core/types.js";
+import { isDisabled as isModuleDisabled } from "./disabled-flag.js";
 
 // ---------------------------------------------------------------------------
 // Manifest-based module types (Phase 1)
@@ -183,6 +184,13 @@ export class ModuleRegistry {
 
       const manifestPath = join(moduleRoot, "rn-dev-module.json");
       if (!existsSync(manifestPath)) continue;
+
+      // Phase 3c: skip modules that have been explicitly disabled via
+      // `modules/disable`. Keeps the manifest on disk; just doesn't register
+      // it at runtime. `modules/enable` re-enables by removing the flag.
+      if (isModuleDisabled(entry, modulesDir)) {
+        continue;
+      }
 
       const loaded = this.loadManifestFile(manifestPath, {
         hostVersion: options.hostVersion,

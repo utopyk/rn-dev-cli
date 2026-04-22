@@ -26,6 +26,8 @@ export const ModuleErrorCode = {
   E_INVALID_MANIFEST: "E_INVALID_MANIFEST",
   /** Module declared a hostRange that does not include the current host version. */
   E_HOST_RANGE_MISMATCH: "E_HOST_RANGE_MISMATCH",
+  /** tool/<name> request on a live subprocess threw or returned an error that wasn't one of the more specific codes above. */
+  E_MODULE_CALL_FAILED: "E_MODULE_CALL_FAILED",
 } as const;
 
 export type ModuleErrorCode =

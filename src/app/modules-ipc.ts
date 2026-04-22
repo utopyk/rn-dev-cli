@@ -35,6 +35,11 @@ import type {
   RegisteredModule,
 } from "../modules/registry.js";
 import type { ModuleInstanceState } from "../core/module-host/instance.js";
+import {
+  defaultModulesRoot,
+  isDisabled,
+  setDisabled,
+} from "../modules/disabled-flag.js";
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -43,19 +48,32 @@ import type { ModuleInstanceState } from "../core/module-host/instance.js";
 export interface ModulesIpcOptions {
   manager: ModuleHostManager;
   registry: ModuleRegistry;
+  /**
+   * Root directory for on-disk disabled-flag persistence. Defaults to
+   * `~/.rn-dev/modules/`. Tests override this to an isolated tmpdir.
+   */
+  modulesDir?: string;
+  /** Host version used when re-loading manifests after `modules/enable`. */
+  hostVersion?: string;
+  /** Scope unit used when re-loading manifests after `modules/enable`. */
+  scopeUnit?: string;
 }
 
 export type ModulesIpcAction =
   | "modules/list"
   | "modules/status"
   | "modules/restart"
-  | "modules/call";
+  | "modules/call"
+  | "modules/enable"
+  | "modules/disable";
 
 const MODULES_ACTIONS: ReadonlySet<string> = new Set<ModulesIpcAction>([
   "modules/list",
   "modules/status",
   "modules/restart",
   "modules/call",
+  "modules/enable",
+  "modules/disable",
 ]);
 
 export interface RegisteredModuleRow {
@@ -104,6 +122,16 @@ export async function dispatchModulesAction(
         opts,
         msg.payload as ModuleCallRequest,
       );
+    case "modules/enable":
+      return enableModule(
+        opts,
+        msg.payload as { moduleId: string; scopeUnit?: string },
+      );
+    case "modules/disable":
+      return disableModule(
+        opts,
+        msg.payload as { moduleId: string; scopeUnit?: string },
+      );
     default:
       throw new Error(
         `[modules-ipc] unreachable: action=${msg.action}`,
@@ -137,6 +165,81 @@ export interface ModuleCallError {
     | "MODULE_ACTIVATION_TIMEOUT"
     | "E_MODULE_CALL_FAILED";
   message: string;
+}
+
+// ---------------------------------------------------------------------------
+// modules/enable + modules/disable — persist via disabled-flag file
+// ---------------------------------------------------------------------------
+
+function enableModule(
+  opts: ModulesIpcOptions,
+  payload: { moduleId: string; scopeUnit?: string } | null,
+):
+  | { status: "enabled"; alreadyEnabled: boolean; state: string | null }
+  | { error: string } {
+  if (!payload || typeof payload.moduleId !== "string") {
+    return { error: "modules/enable requires { moduleId: string }" };
+  }
+  const root = opts.modulesDir ?? defaultModulesRoot();
+  const wasDisabled = isDisabled(payload.moduleId, root);
+  setDisabled(payload.moduleId, false, root);
+
+  // Already present in the manifest map? Nothing to do (flag just flipped).
+  const existing = resolveRegistered(opts, payload.moduleId, payload.scopeUnit);
+  if (existing) {
+    return {
+      status: "enabled",
+      alreadyEnabled: !wasDisabled,
+      state:
+        opts.manager.inspect(existing.manifest.id, existing.scopeUnit)
+          ?.state ?? "inert",
+    };
+  }
+
+  // Not yet loaded — re-run the loader so the flag flip takes effect.
+  const hostVersion = opts.hostVersion ?? "0.0.0";
+  const result = opts.registry.loadUserGlobalModules({
+    hostVersion,
+    scopeUnit: opts.scopeUnit ?? "global",
+    modulesDir: root,
+  });
+  const registered = result.modules.find(
+    (m) => m.manifest.id === payload.moduleId,
+  );
+  return {
+    status: "enabled",
+    alreadyEnabled: !wasDisabled && registered !== undefined,
+    state: registered ? "inert" : null,
+  };
+}
+
+async function disableModule(
+  opts: ModulesIpcOptions,
+  payload: { moduleId: string; scopeUnit?: string } | null,
+): Promise<
+  | { status: "disabled"; alreadyDisabled: boolean }
+  | { error: string }
+> {
+  if (!payload || typeof payload.moduleId !== "string") {
+    return { error: "modules/disable requires { moduleId: string }" };
+  }
+  const root = opts.modulesDir ?? defaultModulesRoot();
+  const alreadyDisabled = isDisabled(payload.moduleId, root);
+  setDisabled(payload.moduleId, true, root);
+
+  // Tear down the live subprocess (if any) + remove from the manifest map so
+  // modules/call immediately stops working.
+  const reg = resolveRegistered(opts, payload.moduleId, payload.scopeUnit);
+  if (reg) {
+    try {
+      await opts.manager.shutdown(reg.manifest.id, reg.scopeUnit);
+    } catch {
+      /* already gone — acceptable */
+    }
+    opts.registry.unregisterManifest(reg.manifest.id, reg.scopeUnit);
+  }
+
+  return { status: "disabled", alreadyDisabled };
 }
 
 async function callModuleTool(

@@ -1123,6 +1123,79 @@ function buildModulesLifecycleTools(ctx: McpContext): ToolDefinition[] {
         return okResult(payload);
       },
     },
+    {
+      name: "rn-dev/modules-enable",
+      description:
+        "Enable a previously-disabled module. Removes the persistent disabled.flag file and re-registers the module in inert state; it will spawn on first tools/call.",
+      inputSchema: {
+        type: "object",
+        required: ["moduleId"],
+        properties: {
+          moduleId: { type: "string" },
+          scopeUnit: { type: "string" },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string" },
+          alreadyEnabled: { type: "boolean" },
+          state: { type: ["string", "null"] },
+          error: { type: "string" },
+        },
+      },
+      handler: async (args) => {
+        const resp = await ipcAction(ctx, "modules/enable", args);
+        if (!resp) return noSessionError();
+        const payload = resp.payload as Record<string, unknown>;
+        if (payload && typeof payload.error === "string") {
+          return {
+            isError: true,
+            structuredContent: payload,
+            content: [
+              { type: "text" as const, text: `modules/enable error: ${payload.error}` },
+            ],
+          };
+        }
+        return okResult(payload);
+      },
+    },
+    {
+      name: "rn-dev/modules-disable",
+      description:
+        "Disable a module persistently. Writes the disabled.flag file, shuts down the running subprocess (if any), and removes the module from the manifest map so its tools stop surfacing in tools/list at the next snapshot.",
+      inputSchema: {
+        type: "object",
+        required: ["moduleId"],
+        properties: {
+          moduleId: { type: "string" },
+          scopeUnit: { type: "string" },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string" },
+          alreadyDisabled: { type: "boolean" },
+          error: { type: "string" },
+        },
+      },
+      handler: async (args) => {
+        const resp = await ipcAction(ctx, "modules/disable", args);
+        if (!resp) return noSessionError();
+        const payload = resp.payload as Record<string, unknown>;
+        if (payload && typeof payload.error === "string") {
+          return {
+            isError: true,
+            structuredContent: payload,
+            content: [
+              { type: "text" as const, text: `modules/disable error: ${payload.error}` },
+            ],
+          };
+        }
+        return okResult(payload);
+      },
+    },
   ];
 }
 

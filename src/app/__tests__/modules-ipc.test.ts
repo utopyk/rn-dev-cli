@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { dispatchModulesAction } from "../modules-ipc.js";
 import { ModuleRegistry } from "../../modules/registry.js";
 import { ModuleHostManager } from "../../core/module-host/manager.js";
@@ -6,6 +9,7 @@ import type { ModuleManifest } from "@rn-dev/module-sdk";
 import type { IpcMessage } from "../../core/ipc.js";
 import type { SpawnHandle, ModuleSpawner } from "../../core/module-host/manager.js";
 import { PassThrough } from "node:stream";
+import { disabledFlagPath, isDisabled } from "../../modules/disabled-flag.js";
 import {
   StreamMessageReader,
   StreamMessageWriter,
@@ -316,5 +320,147 @@ describe("dispatchModulesAction — modules/call", () => {
     )) as { kind: string; code?: string };
     expect(result.kind).toBe("error");
     expect(result.code).toBe("MODULE_UNAVAILABLE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// modules/enable + modules/disable
+// ---------------------------------------------------------------------------
+
+describe("dispatchModulesAction — modules/disable", () => {
+  let modulesDir: string;
+
+  beforeEach(() => {
+    modulesDir = mkdtempSync(join(tmpdir(), "rn-dev-modenable-"));
+  });
+
+  afterEach(() => {
+    rmSync(modulesDir, { recursive: true, force: true });
+  });
+
+  function writeManifestOnDisk(id: string): void {
+    const root = join(modulesDir, id);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "rn-dev-module.json"),
+      JSON.stringify({
+        id,
+        version: "0.1.0",
+        hostRange: ">=0.1.0",
+        scope: "per-worktree",
+      }),
+    );
+  }
+
+  it("creates the disabled.flag and tears the subprocess down", async () => {
+    active = await setup([makeManifest({ id: "togglable" })]);
+    const reg = active.registry.getManifest("togglable", "wt-1");
+    if (!reg) throw new Error("fixture missing");
+    await active.manager.acquire(reg, "c1");
+
+    const result = (await dispatchModulesAction(
+      {
+        registry: active.registry,
+        manager: active.manager,
+        modulesDir,
+      },
+      makeMsg("modules/disable", {
+        moduleId: "togglable",
+        scopeUnit: "wt-1",
+      }),
+    )) as { status: string; alreadyDisabled: boolean };
+
+    expect(result.status).toBe("disabled");
+    expect(result.alreadyDisabled).toBe(false);
+    expect(isDisabled("togglable", modulesDir)).toBe(true);
+    expect(active.registry.getManifest("togglable", "wt-1")).toBeUndefined();
+    // The manager entry should be gone as well.
+    expect(active.manager.stateOf("togglable", "wt-1")).toBeNull();
+  });
+
+  it("is idempotent — disabling an already-disabled module reports it", async () => {
+    writeManifestOnDisk("idem");
+    active = await setup();
+
+    await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager, modulesDir },
+      makeMsg("modules/disable", { moduleId: "idem" }),
+    );
+    const second = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager, modulesDir },
+      makeMsg("modules/disable", { moduleId: "idem" }),
+    )) as { alreadyDisabled: boolean };
+    expect(second.alreadyDisabled).toBe(true);
+  });
+
+  it("rejects payloads missing moduleId", async () => {
+    active = await setup();
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager, modulesDir },
+      makeMsg("modules/disable", {}),
+    )) as { error?: string };
+    expect(result.error).toMatch(/moduleId/);
+  });
+});
+
+describe("dispatchModulesAction — modules/enable", () => {
+  let modulesDir: string;
+
+  beforeEach(() => {
+    modulesDir = mkdtempSync(join(tmpdir(), "rn-dev-modenable-"));
+  });
+
+  afterEach(() => {
+    rmSync(modulesDir, { recursive: true, force: true });
+  });
+
+  function writeManifestOnDisk(id: string): void {
+    const root = join(modulesDir, id);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "rn-dev-module.json"),
+      JSON.stringify({
+        id,
+        version: "0.1.0",
+        hostRange: ">=0.1.0",
+        scope: "per-worktree",
+      }),
+    );
+  }
+
+  it("removes the disabled.flag and loads the manifest when re-enabling", async () => {
+    writeManifestOnDisk("resume");
+    active = await setup();
+    await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager, modulesDir },
+      makeMsg("modules/disable", { moduleId: "resume" }),
+    );
+    expect(isDisabled("resume", modulesDir)).toBe(true);
+
+    const result = (await dispatchModulesAction(
+      {
+        registry: active.registry,
+        manager: active.manager,
+        modulesDir,
+        hostVersion: "0.1.0",
+        scopeUnit: "wt-1",
+      },
+      makeMsg("modules/enable", { moduleId: "resume" }),
+    )) as { status: string; state: string | null };
+
+    expect(result.status).toBe("enabled");
+    expect(isDisabled("resume", modulesDir)).toBe(false);
+    // The re-load registered the manifest in inert state.
+    expect(active.registry.getManifest("resume", "wt-1")).toBeDefined();
+    expect(result.state).toBe("inert");
+  });
+
+  it("rejects payloads missing moduleId", async () => {
+    active = await setup();
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager, modulesDir },
+      makeMsg("modules/enable", {}),
+    )) as { error?: string };
+    expect(result.error).toMatch(/moduleId/);
   });
 });
