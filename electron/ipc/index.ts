@@ -42,10 +42,15 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     state.projectRoot = initialProjectRoot;
   }
 
-  // Trust the main BrowserWindow's webContents — it's the host UI and
-  // may address any moduleId via modules:config-* (e.g. Settings panel
-  // editing another module's config).
+  // Trust the main BrowserWindow's webContents as the host UI. READ
+  // access is wildcard (Marketplace panel enumerates every module; the
+  // modules:list surface needs cross-module reads). WRITE access is an
+  // explicit allowlist — Phase 6 Security P1-1 caps renderer-XSS blast
+  // radius. `settings` is the only host-writable module today; add more
+  // here when a new host-native panel legitimately edits another
+  // module's config.
   senderRegistry.trustHostSender(window.webContents);
+  senderRegistry.allowHostWrite('settings');
 
   // Forward service bus events to renderer (legacy, for global logs)
   serviceBus.on('log', (text: string) => send('service:log', text));

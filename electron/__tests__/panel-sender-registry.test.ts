@@ -58,4 +58,44 @@ describe("PanelSenderRegistry", () => {
     expect(reg.resolve(dual)).toEqual({ kind: "host" });
     expect(reg.canAddress(dual, "anything")).toBe(true);
   });
+
+  // Phase 6 Security P1-1 — split host trust into read vs. write tiers.
+
+  it("host senders can READ any moduleId even without an allowHostWrite grant", () => {
+    const reg = new PanelSenderRegistry();
+    const host = fakeContents();
+    reg.trustHostSender(host);
+
+    expect(reg.canRead(host, "any-module")).toBe(true);
+    expect(reg.canRead(host, "other-module")).toBe(true);
+  });
+
+  it("host senders are DENIED write access to modules not in the host-writable allowlist", () => {
+    const reg = new PanelSenderRegistry();
+    const host = fakeContents();
+    reg.trustHostSender(host);
+    reg.allowHostWrite("settings");
+
+    expect(reg.canWrite(host, "settings")).toBe(true);
+    expect(reg.canWrite(host, "marketplace")).toBe(false);
+    expect(reg.canWrite(host, "device-control")).toBe(false);
+  });
+
+  it("panel senders can WRITE only their own moduleId regardless of allowHostWrite", () => {
+    const reg = new PanelSenderRegistry();
+    const panel = fakeContents();
+    reg.registerPanel(panel, "device-control");
+    reg.allowHostWrite("settings");
+
+    expect(reg.canWrite(panel, "device-control")).toBe(true);
+    expect(reg.canWrite(panel, "settings")).toBe(false);
+  });
+
+  it("unknown senders cannot READ or WRITE anything", () => {
+    const reg = new PanelSenderRegistry();
+    const stranger = fakeContents();
+
+    expect(reg.canRead(stranger, "settings")).toBe(false);
+    expect(reg.canWrite(stranger, "settings")).toBe(false);
+  });
 });
