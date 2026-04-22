@@ -89,9 +89,7 @@ export class PanelSenderRegistry {
   /**
    * True when the sender is allowed to READ `claimedModuleId`. Host
    * senders can read anything; panel senders can only read their own
-   * module. Unknown senders are always rejected. Equivalent to the
-   * previous `canAddress` semantics; kept as an alias for read-path
-   * handlers.
+   * module. Unknown senders are always rejected.
    */
   canRead(wc: WebContents, claimedModuleId: string): boolean {
     const id = this.resolve(wc);
@@ -113,13 +111,4 @@ export class PanelSenderRegistry {
     return id.moduleId === claimedModuleId;
   }
 
-  /**
-   * @deprecated use `canRead` for read-path channels and `canWrite` for
-   * write-path channels. Kept temporarily so callers that haven't been
-   * migrated still compile; equivalent to `canRead` (read semantics are
-   * permissive for host — writes now flow through `canWrite`).
-   */
-  canAddress(wc: WebContents, claimedModuleId: string): boolean {
-    return this.canRead(wc, claimedModuleId);
-  }
 }

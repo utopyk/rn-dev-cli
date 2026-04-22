@@ -27,6 +27,7 @@ interface MarketplaceEntry extends ConsentRegistryEntry {
 
 interface MarketplaceListReply {
   registrySha256: string;
+  registryUrl: string;
   entries: MarketplaceEntry[];
 }
 
@@ -61,16 +62,12 @@ interface UninstallErrorReply {
 
 type UninstallReply = UninstallOkReply | UninstallErrorReply;
 
-const REGISTRY_URL_DISPLAY =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).process?.env?.RN_DEV_MODULES_REGISTRY_URL ??
-  'https://raw.githubusercontent.com/rn-dev/rn-dev-modules-registry/main/modules.json';
-
 export function Marketplace(): React.JSX.Element {
   const invoke = useIpcInvoke();
   const [rows, setRows] = useState<MarketplaceRow[]>([]);
   const [availableEntries, setAvailableEntries] = useState<MarketplaceEntry[]>([]);
   const [registrySha256, setRegistrySha256] = useState<string>('');
+  const [registryUrl, setRegistryUrl] = useState<string>('');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [consentEntry, setConsentEntry] = useState<MarketplaceEntry | null>(null);
@@ -106,6 +103,7 @@ export function Marketplace(): React.JSX.Element {
         const ok = reply as MarketplaceListReply;
         setRegistryError(null);
         setRegistrySha256(ok.registrySha256);
+        setRegistryUrl(ok.registryUrl);
         setAvailableEntries(ok.entries);
       },
       (err: unknown) => {
@@ -354,7 +352,7 @@ export function Marketplace(): React.JSX.Element {
       {consentEntry && (
         <ConsentDialog
           entry={consentEntry}
-          registryUrl={REGISTRY_URL_DISPLAY}
+          registryUrl={registryUrl}
           registrySha256={registrySha256}
           onCancel={() => setConsentEntry(null)}
           onConfirm={handleConfirmInstall}

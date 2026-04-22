@@ -237,6 +237,41 @@ describe("RegistryFetcher", () => {
     }
   });
 
+  it("rejects entries whose id contains path traversal characters", async () => {
+    const raw = JSON.stringify({
+      version: 1,
+      modules: [
+        {
+          id: "../../etc/passwd",
+          npmPackage: "hostile",
+          version: "0.0.1",
+          tarballSha256: "a".repeat(64),
+          description: "x",
+          author: "x",
+          permissions: [],
+        },
+      ],
+    });
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response(raw, { status: 200 })) as unknown as typeof fetch;
+    try {
+      const fetcher = new RegistryFetcher();
+      const result = await fetcher.fetch({
+        url: "http://stub/modules.json",
+        cachePath,
+        expectedSha: "",
+      });
+      expect(result.kind).toBe("error");
+      if (result.kind === "error") {
+        expect(result.code).toBe("E_REGISTRY_INVALID_SCHEMA");
+        expect(result.message).toMatch(/id must match/);
+      }
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
   it("RegistryFetcher.find returns the entry matching moduleId", () => {
     const fetcher = new RegistryFetcher();
     const reg: ModulesRegistry = JSON.parse(validRegistryJson()) as ModulesRegistry;

@@ -44,6 +44,7 @@ import {
 } from "../modules/disabled-flag.js";
 import {
   RegistryFetcher,
+  resolveRegistryUrl,
   type ModulesRegistry,
   type RegistryEntry,
 } from "../modules/marketplace/registry.js";
@@ -803,6 +804,8 @@ export type ModuleUninstallReply =
 
 export interface MarketplaceListReply {
   registrySha256: string;
+  /** Resolved URL the fetcher pulled from — shown in the consent dialog. */
+  registryUrl: string;
   entries: Array<
     RegistryEntry & {
       installed: boolean;
@@ -851,6 +854,7 @@ export async function marketplaceList(opts: ModulesIpcOptions): Promise<Marketpl
 
   return {
     registrySha256: reg.sha256,
+    registryUrl: resolveRegistryUrl(),
     entries: reg.registry.modules.map((e) => {
       const existing = installed.get(e.id);
       return {

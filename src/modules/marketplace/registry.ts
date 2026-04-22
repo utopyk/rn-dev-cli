@@ -192,7 +192,7 @@ interface CachedRegistry {
   fetchedAt: number;
 }
 
-function resolveRegistryUrl(override?: string): string {
+export function resolveRegistryUrl(override?: string): string {
   if (override) return override;
   const envUrl = process.env["RN_DEV_MODULES_REGISTRY_URL"];
   if (envUrl) return envUrl;
@@ -283,6 +283,14 @@ function parseAndValidate(
   return { kind: "ok", registry: { version: 1, modules: entries } };
 }
 
+/**
+ * Defense-in-depth: reject registry entries whose `id` isn't a safe npm-style
+ * identifier. The id is used as a directory name under `~/.rn-dev/modules/`,
+ * so a compromised registry entry with `"../../etc/passwd"` could otherwise
+ * escape. SHA-pinning is the primary defense; this is the belt.
+ */
+const SAFE_MODULE_ID = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$/;
+
 function validateEntry(
   raw: unknown,
   index: number,
@@ -360,10 +368,18 @@ function validateEntry(
       message: `modules[${index}].tarballSha256 must be 64 hex chars`,
     };
   }
+  const id = obj["id"] as string;
+  if (!SAFE_MODULE_ID.test(id)) {
+    return {
+      kind: "error",
+      code: "E_REGISTRY_INVALID_SCHEMA",
+      message: `modules[${index}].id must match ${SAFE_MODULE_ID.source} (got "${id}")`,
+    };
+  }
   return {
     kind: "ok",
     entry: {
-      id: obj["id"] as string,
+      id,
       npmPackage: obj["npmPackage"] as string,
       version: obj["version"] as string,
       tarballSha256: sha.toLowerCase(),

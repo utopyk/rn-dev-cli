@@ -15,8 +15,8 @@ describe("PanelSenderRegistry", () => {
     reg.trustHostSender(host);
 
     expect(reg.resolve(host)).toEqual({ kind: "host" });
-    expect(reg.canAddress(host, "any-module")).toBe(true);
-    expect(reg.canAddress(host, "another")).toBe(true);
+    expect(reg.canRead(host, "any-module")).toBe(true);
+    expect(reg.canRead(host, "another")).toBe(true);
   });
 
   it("panel senders resolve to their registered moduleId", () => {
@@ -35,8 +35,8 @@ describe("PanelSenderRegistry", () => {
     const panel = fakeContents();
     reg.registerPanel(panel, "device-control");
 
-    expect(reg.canAddress(panel, "device-control")).toBe(true);
-    expect(reg.canAddress(panel, "other-module")).toBe(false);
+    expect(reg.canRead(panel, "device-control")).toBe(true);
+    expect(reg.canRead(panel, "other-module")).toBe(false);
   });
 
   it("unknown senders resolve to null and cannot address anything", () => {
@@ -44,7 +44,7 @@ describe("PanelSenderRegistry", () => {
     const stranger = fakeContents();
 
     expect(reg.resolve(stranger)).toBeNull();
-    expect(reg.canAddress(stranger, "any")).toBe(false);
+    expect(reg.canRead(stranger, "any")).toBe(false);
   });
 
   it("trusted + panel sets are independent — registering both keeps host precedence", () => {
@@ -56,7 +56,7 @@ describe("PanelSenderRegistry", () => {
     reg.trustHostSender(dual);
 
     expect(reg.resolve(dual)).toEqual({ kind: "host" });
-    expect(reg.canAddress(dual, "anything")).toBe(true);
+    expect(reg.canRead(dual, "anything")).toBe(true);
   });
 
   // Phase 6 Security P1-1 — split host trust into read vs. write tiers.

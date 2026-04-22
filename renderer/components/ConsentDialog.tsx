@@ -1,6 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useIpcInvoke } from '../hooks/useIpc';
 import './ConsentDialog.css';
+
+const PERMISSION_LABELS: Record<string, string> = {
+  'exec:adb': 'Run Android Debug Bridge (adb) commands on connected devices.',
+  'exec:simctl': 'Run iOS simulator control commands (xcrun simctl).',
+  'exec:idb': 'Run iOS Development Bridge (idb) against booted simulators.',
+  'fs:artifacts': "Read and write your project's .rn-dev/artifacts directory.",
+  'network:outbound': 'Make outbound network requests to arbitrary hosts.',
+};
 
 export interface ConsentRegistryEntry {
   id: string;
@@ -48,17 +56,6 @@ export function ConsentDialog({
       () => setNeedsFreshHostAck(true),
     );
   }, [invoke]);
-
-  const permissionLabel = useMemo(
-    () => ({
-      'exec:adb': 'Run Android Debug Bridge (adb) commands on connected devices.',
-      'exec:simctl': 'Run iOS simulator control commands (xcrun simctl).',
-      'exec:idb': 'Run iOS Development Bridge (idb) against booted simulators.',
-      'fs:artifacts': 'Read and write your project\'s .rn-dev/artifacts directory.',
-      'network:outbound': 'Make outbound network requests to arbitrary hosts.',
-    } as Record<string, string>),
-    [],
-  );
 
   const readyToInstall =
     trustToggle && (needsFreshHostAck === false || freshHostAck);
@@ -120,8 +117,8 @@ export function ConsentDialog({
                 {entry.permissions.map((p) => (
                   <li key={p}>
                     <code>{p}</code>
-                    {permissionLabel[p] && (
-                      <span className="consent-permission-desc"> — {permissionLabel[p]}</span>
+                    {PERMISSION_LABELS[p] && (
+                      <span className="consent-permission-desc"> — {PERMISSION_LABELS[p]}</span>
                     )}
                   </li>
                 ))}

@@ -26,10 +26,7 @@ import {
   metroLogsManifest,
   settingsManifest,
 } from "./built-in/manifests.js";
-import {
-  registerMarketplaceBuiltIn,
-  type MarketplaceCapability,
-} from "./built-in/marketplace.js";
+import { registerMarketplaceBuiltIn } from "./built-in/marketplace.js";
 
 export interface AppInfoCapability {
   hostVersion: string;
@@ -76,7 +73,6 @@ export interface ModuleSystem {
   capabilities: CapabilityRegistryType;
   moduleHost: ModuleHostManager;
   moduleRegistry: ModuleRegistry;
-  marketplace: MarketplaceCapability;
 }
 
 export function createModuleSystem(opts: CreateModuleSystemOptions): ModuleSystem {
@@ -105,15 +101,7 @@ export function createModuleSystem(opts: CreateModuleSystemOptions): ModuleSyste
   moduleRegistry.registerBuiltIn(metroLogsManifest);
   moduleRegistry.registerBuiltIn(lintTestManifest);
   moduleRegistry.registerBuiltIn(settingsManifest);
-  const marketplaceReg = registerMarketplaceBuiltIn({
-    moduleRegistry,
-    capabilities,
-  });
+  registerMarketplaceBuiltIn({ moduleRegistry, capabilities });
 
-  return {
-    capabilities,
-    moduleHost,
-    moduleRegistry,
-    marketplace: marketplaceReg.capability,
-  };
+  return { capabilities, moduleHost, moduleRegistry };
 }

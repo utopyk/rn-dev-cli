@@ -5,8 +5,6 @@ import {
   existsSync,
   writeFileSync,
   mkdirSync,
-  readFileSync,
-  rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,8 +12,6 @@ import { ModuleRegistry } from "../../registry.js";
 import {
   installModule,
   uninstallModule,
-  acknowledgeThirdParty,
-  type InstallOptions,
   type PacoteLike,
   type ArboristFactory,
   type ArboristLike,
@@ -117,13 +113,9 @@ function makeEntry(overrides: Partial<RegistryEntry> = {}): RegistryEntry {
 
 describe("installModule", () => {
   let modulesDir: string;
-  let origAck: string | undefined;
 
   beforeEach(() => {
     modulesDir = mkdtempSync(join(tmpdir(), "rn-dev-install-"));
-    // Bypass the fresh-host acknowledgment for every test via the flag —
-    // individual tests opt into asserting the gate.
-    origAck = process.env["HOME"];
   });
 
   it("installs a well-formed module end-to-end and returns the RegisteredModule", async () => {
