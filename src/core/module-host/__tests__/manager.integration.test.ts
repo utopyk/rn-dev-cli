@@ -63,14 +63,16 @@ afterEach(async () => {
   tearDownTasks = [];
 });
 
-function makeManager(): ModuleHostManager {
+function makeManager(
+  overrides: { idleShutdownMs?: number } = {},
+): ModuleHostManager {
   const capabilities = new CapabilityRegistry();
   capabilities.register("log", {});
   const manager = new ModuleHostManager({
     hostVersion: "0.1.0",
     capabilities,
     initializeTimeoutMs: 3000,
-    idleShutdownMs: 60_000,
+    idleShutdownMs: overrides.idleShutdownMs ?? 60_000,
   });
   tearDownTasks.push(() => manager.shutdownAll());
   return manager;
@@ -127,6 +129,25 @@ describe("ModuleHostManager — integration (real subprocess)", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(isAlive(pid)).toBe(false);
     expect(manager.stateOf("echo", "global")).toBe(null);
+  });
+
+  it("releases drive idle-shutdown for global-scope modules after last consumer leaves", async () => {
+    const manager = makeManager({ idleShutdownMs: 50 });
+    const reg = registeredEchoModule();
+
+    await manager.acquire(reg, "c1");
+    await manager.acquire(reg, "c2");
+    expect(manager.size).toBe(1);
+
+    await manager.release("echo", "global", "c1");
+    // One consumer left — subprocess stays up.
+    await new Promise((r) => setTimeout(r, 120));
+    expect(manager.size).toBe(1);
+
+    await manager.release("echo", "global", "c2");
+    // Idle-shutdown timer should fire within ~50ms
+    await new Promise((r) => setTimeout(r, 250));
+    expect(manager.size).toBe(0);
   });
 
   it("shutdownAll() kills every managed subprocess (orphan prevention)", async () => {
