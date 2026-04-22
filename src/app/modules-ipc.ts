@@ -836,7 +836,7 @@ async function fetchRegistry(
   return { kind: "ok", registry: result.registry, sha256: result.sha256 };
 }
 
-async function marketplaceList(opts: ModulesIpcOptions): Promise<MarketplaceListReply | {
+export async function marketplaceList(opts: ModulesIpcOptions): Promise<MarketplaceListReply | {
   kind: "error";
   code: string;
   message: string;
@@ -863,7 +863,7 @@ async function marketplaceList(opts: ModulesIpcOptions): Promise<MarketplaceList
   };
 }
 
-async function marketplaceInfo(
+export async function marketplaceInfo(
   opts: ModulesIpcOptions,
   payload: { moduleId: string } | null,
 ): Promise<MarketplaceInfoReply> {
@@ -898,7 +898,7 @@ async function marketplaceInfo(
   };
 }
 
-async function installAction(
+export async function installAction(
   opts: ModulesIpcOptions,
   payload: ModuleInstallRequest | null,
 ): Promise<ModuleInstallReply> {
@@ -959,7 +959,7 @@ async function installAction(
   };
 }
 
-async function uninstallAction(
+export async function uninstallAction(
   opts: ModulesIpcOptions,
   payload: { moduleId: string; scopeUnit?: string; keepData?: boolean } | null,
 ): Promise<ModuleUninstallReply> {

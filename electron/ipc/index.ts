@@ -17,6 +17,10 @@ import { createBoundsCache, type ModulesPanelsIpcDeps } from './modules-panels.j
 import { registerModulesPanelsIpc } from './modules-panels-register.js';
 import type { ModulesConfigIpcDeps } from './modules-config.js';
 import { registerModulesConfigIpc } from './modules-config-register.js';
+import {
+  registerModulesInstallIpc,
+  type ModulesInstallIpcDeps,
+} from './modules-install-register.js';
 
 // Phase 5b hardening — one PanelSenderRegistry per Electron process.
 // The main BrowserWindow's webContents is trusted as "host"; panel
@@ -64,6 +68,7 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
   registerDevtoolsHandlers();
   registerModulePanelsHandlers(window);
   registerModulesConfigHandlers();
+  registerModulesInstallHandlers();
 }
 
 /**
@@ -184,6 +189,57 @@ function registerModulesConfigHandlers(): void {
   });
   serviceBus.on('moduleEventsBus', (bus) => {
     latestEvents = bus;
+    tryInstall();
+  });
+}
+
+/**
+ * Phase 6 — install/uninstall/marketplace ipcMain handlers. Same eager
+ * register / getDeps lazy-fill pattern as modules-config so the renderer
+ * can safely invoke `marketplace:list` before services finish booting.
+ */
+function registerModulesInstallHandlers(): void {
+  let deps: ModulesInstallIpcDeps | null = null;
+
+  registerModulesInstallIpc(() => deps);
+
+  let latestManager: ModuleHostManager | null = null;
+  let latestRegistry: ModuleRegistry | null = null;
+  let latestEvents: EventEmitter | null = null;
+  let latestHostVersion: string | null = null;
+
+  const tryInstall = (): void => {
+    if (!latestManager || !latestRegistry || !latestEvents || !latestHostVersion || deps) {
+      return;
+    }
+    deps = {
+      manager: latestManager,
+      registry: latestRegistry,
+      moduleEvents: latestEvents,
+      hostVersion: latestHostVersion,
+      auditInstall: (event) => {
+        send(
+          'service:log',
+          `[modules-${event.kind}] ${event.moduleId}${event.version ? ` v${event.version}` : ''} ${event.outcome}${event.code ? ` (${event.code})` : ''}`,
+        );
+      },
+    };
+  };
+
+  serviceBus.on('moduleHost', (m) => {
+    latestManager = m;
+    tryInstall();
+  });
+  serviceBus.on('moduleRegistry', (r) => {
+    latestRegistry = r;
+    tryInstall();
+  });
+  serviceBus.on('moduleEventsBus', (bus) => {
+    latestEvents = bus;
+    tryInstall();
+  });
+  serviceBus.on('hostVersion', (v) => {
+    latestHostVersion = v;
     tryInstall();
   });
 }

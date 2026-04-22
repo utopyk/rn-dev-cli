@@ -549,6 +549,7 @@ async function startServicesAsync(
     moduleRegistry,
     logger: createScopedLogger(emit),
   });
+  serviceBus.setHostVersion(hostVersion);
   serviceBus.setModuleHost(moduleHost);
   serviceBus.setModuleRegistry(moduleRegistry);
 

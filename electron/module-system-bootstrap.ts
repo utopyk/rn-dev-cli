@@ -22,6 +22,7 @@ export interface BootstrapResult {
   moduleHost: ModuleHostManager;
   moduleRegistry: ModuleRegistry;
   moduleEvents: EventEmitter;
+  hostVersion: string;
 }
 
 let booted: BootstrapResult | null = null;
@@ -59,11 +60,12 @@ export function bootstrapElectronModuleSystem(args: {
 
   const moduleEvents = new EventEmitter();
 
+  serviceBus.setHostVersion(hostVersion);
   serviceBus.setModuleHost(moduleHost);
   serviceBus.setModuleRegistry(moduleRegistry);
   serviceBus.setModuleEventsBus(moduleEvents);
 
-  booted = { capabilities, moduleHost, moduleRegistry, moduleEvents };
+  booted = { capabilities, moduleHost, moduleRegistry, moduleEvents, hostVersion };
   return booted;
 }
 
