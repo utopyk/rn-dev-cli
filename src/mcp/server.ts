@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { createToolDefinitions } from "./tools.js";
 import type { McpContext, McpFlags, ToolResult } from "./tools.js";
+import { discoverModuleContributedTools } from "./module-proxy.js";
 import { ProfileStore } from "../core/profile.js";
 import { ArtifactStore } from "../core/artifact.js";
 import { createDefaultPreflightEngine } from "../core/preflight.js";
@@ -135,7 +136,12 @@ export async function startMcpServer(argv: readonly string[] = process.argv): Pr
     flags,
   };
 
-  const tools = createToolDefinitions(ctx);
+  const builtInTools = createToolDefinitions(ctx);
+  // Phase 3b: snapshot module-contributed tools from the daemon at startup.
+  // If the daemon is unreachable we degrade to built-ins only — mirroring
+  // the devtools-network-* fallback.
+  const moduleTools = await discoverModuleContributedTools(ctx, flags);
+  const tools = [...builtInTools, ...moduleTools];
 
   // Register tools/list handler
   server.setRequestHandler(ListToolsRequestSchema, async () => ({

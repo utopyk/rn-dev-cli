@@ -36,6 +36,13 @@ function fakeChild(): SpawnHandle {
     moduleId: "fake",
     toolCount: 1,
   }));
+  conn.onRequest("tool/ping", (params) => ({
+    pong: true,
+    echoed: params,
+  }));
+  conn.onRequest("tool/explode", () => {
+    throw new Error("tool runtime error");
+  });
   conn.listen();
 
   const exitListeners: Array<
@@ -225,5 +232,89 @@ describe("dispatchModulesAction — modules/restart", () => {
     expect(result.status).toBe("restarted");
     expect(result.pid).toBeDefined();
     expect(result.pid).not.toBe(firstPid);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// modules/call — the Phase 3b proxy path
+// ---------------------------------------------------------------------------
+
+describe("dispatchModulesAction — modules/call", () => {
+  it("returns MODULE_UNAVAILABLE when the module is not registered", async () => {
+    active = await setup();
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/call", {
+        moduleId: "ghost",
+        tool: "noop",
+        args: {},
+      }),
+    )) as { kind: string; code?: string };
+    expect(result.kind).toBe("error");
+    expect(result.code).toBe("MODULE_UNAVAILABLE");
+  });
+
+  it("rejects malformed requests without a moduleId or tool", async () => {
+    active = await setup();
+    const missingTool = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/call", { moduleId: "something", args: {} }),
+    )) as { kind: string; code?: string };
+    expect(missingTool.kind).toBe("error");
+    expect(missingTool.code).toBe("E_MODULE_CALL_FAILED");
+  });
+
+  it("spawns + proxies the call + returns result on happy path", async () => {
+    active = await setup([makeManifest({ id: "echo" })]);
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/call", {
+        moduleId: "echo",
+        scopeUnit: "wt-1",
+        tool: "ping",
+        args: { hello: "world" },
+      }),
+    )) as { kind: string; result?: { pong: boolean; echoed: unknown } };
+    expect(result.kind).toBe("ok");
+    expect(result.result?.pong).toBe(true);
+    expect(result.result?.echoed).toEqual({ hello: "world" });
+  });
+
+  it("surfaces subprocess handler throws as E_MODULE_CALL_FAILED", async () => {
+    active = await setup([makeManifest({ id: "echo" })]);
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/call", {
+        moduleId: "echo",
+        scopeUnit: "wt-1",
+        tool: "explode",
+        args: {},
+      }),
+    )) as { kind: string; code?: string; message?: string };
+    expect(result.kind).toBe("error");
+    expect(result.code).toBe("E_MODULE_CALL_FAILED");
+    expect(result.message).toMatch(/tool runtime error/);
+  });
+
+  it("rejects calls to modules in FAILED state with MODULE_UNAVAILABLE", async () => {
+    active = await setup([makeManifest({ id: "zombie" })]);
+    const reg = active.registry.getManifest("zombie", "wt-1");
+    if (!reg) throw new Error("fixture missing");
+    // Drive the instance to FAILED by spawning then force-transitioning.
+    const managed = await active.manager.acquire(reg, "c1");
+    managed.instance.transitionTo("crashed", { reason: "x" });
+    managed.instance.transitionTo("failed", { reason: "forced" });
+
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/call", {
+        moduleId: "zombie",
+        scopeUnit: "wt-1",
+        tool: "ping",
+        args: {},
+      }),
+    )) as { kind: string; code?: string };
+    expect(result.kind).toBe("error");
+    expect(result.code).toBe("MODULE_UNAVAILABLE");
   });
 });

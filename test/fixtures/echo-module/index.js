@@ -36,6 +36,13 @@ connection.onRequest("echo", (params) => {
   return params;
 });
 
+// Phase 3b: `modules/call` IPC translates <id>__<tool> into `tool/<tool>`
+// requests on the subprocess. The echo fixture declares `echo__ping` in its
+// manifest, so the wire request is `tool/ping`.
+connection.onRequest("tool/ping", (params) => {
+  return { pong: true, echoed: params };
+});
+
 connection.onRequest("crash-on-request", () => {
   // Fail fast — the supervisor test verifies this becomes a `crashed`
   // transition on the host side.

@@ -48,12 +48,14 @@ export interface ModulesIpcOptions {
 export type ModulesIpcAction =
   | "modules/list"
   | "modules/status"
-  | "modules/restart";
+  | "modules/restart"
+  | "modules/call";
 
 const MODULES_ACTIONS: ReadonlySet<string> = new Set<ModulesIpcAction>([
   "modules/list",
   "modules/status",
   "modules/restart",
+  "modules/call",
 ]);
 
 export interface RegisteredModuleRow {
@@ -67,6 +69,19 @@ export interface RegisteredModuleRow {
   lastCrashReason: string | null;
   /** Only populated when the instance is live. */
   pid: number | null;
+  /**
+   * Shallow view of the module's MCP tool contributions so MCP clients can
+   * register them without a second IPC round-trip. `inputSchema` is included
+   * verbatim from the manifest; handlers don't live here.
+   */
+  tools: ReadonlyArray<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    destructiveHint?: boolean;
+    readOnlyHint?: boolean;
+    openWorldHint?: boolean;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,10 +99,101 @@ export async function dispatchModulesAction(
       return statusRow(opts, msg.payload as { moduleId: string; scopeUnit?: string });
     case "modules/restart":
       return restart(opts, msg.payload as { moduleId: string; scopeUnit?: string });
+    case "modules/call":
+      return callModuleTool(
+        opts,
+        msg.payload as ModuleCallRequest,
+      );
     default:
       throw new Error(
         `[modules-ipc] unreachable: action=${msg.action}`,
       );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// modules/call — proxy a tools/call request to the owning subprocess
+// ---------------------------------------------------------------------------
+
+export interface ModuleCallRequest {
+  moduleId: string;
+  scopeUnit?: string;
+  /** Tool name WITHOUT the `<moduleId>__` prefix. */
+  tool: string;
+  args: Record<string, unknown>;
+  /** Per-request override of the cold-start SLO; rarely used. */
+  callTimeoutMs?: number;
+}
+
+export interface ModuleCallSuccess {
+  kind: "ok";
+  result: unknown;
+}
+
+export interface ModuleCallError {
+  kind: "error";
+  code:
+    | "MODULE_UNAVAILABLE"
+    | "MODULE_ACTIVATION_TIMEOUT"
+    | "E_MODULE_CALL_FAILED";
+  message: string;
+}
+
+async function callModuleTool(
+  opts: ModulesIpcOptions,
+  payload: ModuleCallRequest | null,
+): Promise<ModuleCallSuccess | ModuleCallError> {
+  if (!payload || typeof payload.moduleId !== "string" || typeof payload.tool !== "string") {
+    return {
+      kind: "error",
+      code: "E_MODULE_CALL_FAILED",
+      message: "modules/call requires { moduleId, tool, args? }",
+    };
+  }
+
+  const reg = resolveRegistered(opts, payload.moduleId, payload.scopeUnit);
+  if (!reg) {
+    return {
+      kind: "error",
+      code: "MODULE_UNAVAILABLE",
+      message: `Module "${payload.moduleId}" is not registered.`,
+    };
+  }
+
+  const live = opts.manager.inspect(reg.manifest.id, reg.scopeUnit);
+  if (live?.state === "failed") {
+    return {
+      kind: "error",
+      code: "MODULE_UNAVAILABLE",
+      message: `Module "${reg.manifest.id}" is in FAILED state; call modules/restart to recover.`,
+    };
+  }
+
+  const consumerId = `modules-call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const managed = await opts.manager.acquire(reg, consumerId);
+    try {
+      const result = await managed.rpc.sendRequest<
+        Record<string, unknown>,
+        unknown
+      >(`tool/${payload.tool}`, payload.args ?? {});
+      return { kind: "ok", result };
+    } finally {
+      await opts.manager.release(
+        reg.manifest.id,
+        reg.scopeUnit,
+        consumerId,
+      );
+    }
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    const code =
+      message.includes("MODULE_ACTIVATION_TIMEOUT") ||
+      message.includes("activation timeout")
+        ? "MODULE_ACTIVATION_TIMEOUT"
+        : "E_MODULE_CALL_FAILED";
+    return { kind: "error", code, message };
   }
 }
 
@@ -208,5 +314,6 @@ function rowFor(
     isBuiltIn: reg.isBuiltIn,
     lastCrashReason: live?.lastCrashReason ?? null,
     pid: live?.pid ?? null,
+    tools: reg.manifest.contributes?.mcp?.tools ?? [],
   };
 }
