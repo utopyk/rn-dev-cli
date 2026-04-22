@@ -9,6 +9,10 @@
   "files": [
     "dist/"
   ],
+  "workspaces": [
+    "packages/*",
+    "modules/*"
+  ],
   "scripts": {
     "dev": "bun run src/index.tsx",
     "dev:renderer": "cd renderer && npx vite",
@@ -18,7 +22,7 @@
     "build:compile": "bun run build.ts compile",
     "build:renderer": "cd renderer && npx vite build",
     "build:electron": "npx electron-builder",
-    "test": "bun test",
+    "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build"
   },
