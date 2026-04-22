@@ -140,7 +140,13 @@ interface InternalEntry {
 export class ModuleHostManager extends EventEmitter {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly spawner: ModuleSpawner;
-  private readonly capabilities: CapabilityRegistry;
+  /**
+   * Shared capability registry. Exposed so Electron main-process IPC
+   * handlers (e.g. `modules:host-call` from module panel preloads) can
+   * resolve against the same registry the subprocesses see via `host/call`
+   * RPC — single source of truth for permission gating.
+   */
+  public readonly capabilities: CapabilityRegistry;
   private readonly hostVersion: string;
   private readonly initializeTimeoutMs: number;
   private readonly idleShutdownMs: number;

@@ -12,6 +12,7 @@ import type { MetroManager } from "../core/metro.js";
 import type { FileWatcher } from "../core/watcher.js";
 import type { DevToolsManager } from "../core/devtools.js";
 import type { ModuleHostManager } from "../core/module-host/manager.js";
+import type { ModuleRegistry } from "../modules/registry.js";
 
 export interface ServiceBusEvents {
   log: (text: string) => void;
@@ -37,6 +38,12 @@ export interface ServiceBusEvents {
    * MCP tools; Phase 4 subscribes to render panels.
    */
   moduleHost: (manager: ModuleHostManager) => void;
+  /**
+   * Published once after `moduleHost` — the registry tracks loaded
+   * manifests. Electron main subscribes so panel-bridge can resolve
+   * module root paths + manifests by id.
+   */
+  moduleRegistry: (registry: ModuleRegistry) => void;
 }
 
 class ServiceBus extends EventEmitter {
@@ -66,6 +73,10 @@ class ServiceBus extends EventEmitter {
 
   setModuleHost(manager: ModuleHostManager) {
     this.emit("moduleHost", manager);
+  }
+
+  setModuleRegistry(registry: ModuleRegistry) {
+    this.emit("moduleRegistry", registry);
   }
 }
 
