@@ -235,6 +235,12 @@ export interface DevToolsOpts {
   captureBodies?: boolean;
   /** Delta emit cadence (ms). Default 100. */
   deltaFlushIntervalMs?: number;
+  /**
+   * `/json` poll cadence (ms). Default 10_000. Drives target discovery,
+   * Hermes reload detection, and preemption recovery. Disabled if set
+   * to 0 (useful for tests).
+   */
+  pollIntervalMs?: number;
 }
 
 export const DEFAULTS = {
@@ -246,4 +252,5 @@ export const DEFAULTS = {
   bodyFetchQueueCap: 200,
   captureBodies: true,
   deltaFlushIntervalMs: 100,
+  pollIntervalMs: 10_000,
 } as const;
