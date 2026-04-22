@@ -30,6 +30,11 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
   // Forward service bus events to renderer (legacy, for global logs)
   serviceBus.on('log', (text: string) => send('service:log', text));
 
+  // Forward module-system events to the renderer so the sidebar rebuilds
+  // when a 3p module installs / crashes / toggles. Same payload the MCP
+  // server consumes via `modules/subscribe` — one subscription path.
+  serviceBus.on('moduleEvent', (event) => send('modules:event', event));
+
   registerInstanceHandlers();
   registerMetroHandlers();
   registerToolsHandlers();

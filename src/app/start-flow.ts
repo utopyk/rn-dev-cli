@@ -558,9 +558,15 @@ async function startServicesAsync(
     );
   }
 
-  registerModulesIpc(ipc, {
+  const modulesIpc = registerModulesIpc(ipc, {
     manager: moduleHost,
     registry: moduleRegistry,
+  });
+  // Fan out module events to the serviceBus so Electron main can forward
+  // them to the renderer — same payload as MCP `tools/listChanged` so we
+  // don't introduce a second subscription path (per Phase 4 plan).
+  modulesIpc.moduleEvents.on("modules-event", (event) => {
+    serviceBus.emitModuleEvent(event);
   });
 
   emit("\u2714 All services started");
