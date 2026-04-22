@@ -24,8 +24,8 @@ export function Marketplace(): React.JSX.Element {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    invoke('modules:list').then(
-      (reply: ListReply | null) => {
+    invoke<ListReply | null>('modules:list').then(
+      (reply) => {
         if (!reply) {
           setLoadError('IPC returned no response (module system may not be ready)');
           return;
