@@ -57,17 +57,27 @@ function makeMockIpcClient(
   } as unknown as McpContext["ipcClient"];
 }
 
+const EMPTY_SET: ReadonlySet<string> = new Set<string>();
 const ALL_ON: McpFlags = {
   enableDevtoolsMcp: true,
   mcpCaptureBodies: true,
+  enabledModules: EMPTY_SET,
+  disabledModules: EMPTY_SET,
+  allowDestructiveTools: false,
 };
 const FLAG_ON_BODIES_OFF: McpFlags = {
   enableDevtoolsMcp: true,
   mcpCaptureBodies: false,
+  enabledModules: EMPTY_SET,
+  disabledModules: EMPTY_SET,
+  allowDestructiveTools: false,
 };
 const ALL_OFF: McpFlags = {
   enableDevtoolsMcp: false,
   mcpCaptureBodies: false,
+  enabledModules: EMPTY_SET,
+  disabledModules: EMPTY_SET,
+  allowDestructiveTools: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -75,14 +85,14 @@ const ALL_OFF: McpFlags = {
 // ---------------------------------------------------------------------------
 
 describe("createToolDefinitions()", () => {
-  it("returns 24 tool definitions by default (23 legacy + devtools-status)", () => {
+  it("returns 27 tool definitions by default (23 legacy + devtools-status + 3 modules/* lifecycle)", () => {
     const tools = createToolDefinitions(makeMockContext());
-    expect(tools).toHaveLength(24);
+    expect(tools).toHaveLength(27);
   });
 
-  it("returns 28 tool definitions when --enable-devtools-mcp is set", () => {
+  it("returns 31 tool definitions when --enable-devtools-mcp is set (+4 devtools-network)", () => {
     const tools = createToolDefinitions(makeMockContext({ flags: ALL_ON }));
-    expect(tools).toHaveLength(28);
+    expect(tools).toHaveLength(31);
   });
 
   it("each tool has name, description, inputSchema, and handler", () => {

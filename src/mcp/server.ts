@@ -14,19 +14,45 @@ import { IpcClient } from "../core/ipc.js";
 import { detectProjectRoot } from "../core/project.js";
 
 /**
- * Parse the two DevTools security flags out of `process.argv`. Default OFF.
+ * Parse MCP flags out of `process.argv`. Kept argv-driven to avoid pulling
+ * commander into the MCP server.
  *
- * --enable-devtools-mcp     registers `rn-dev/devtools-network-*` tools (S4)
- * --mcp-capture-bodies      lets captured bodies pass through the MCP DTO
- *                           layer instead of being redacted (S5)
+ * DevTools security flags (default OFF):
+ *   --enable-devtools-mcp     register `rn-dev/devtools-network-*` tools (S4)
+ *   --mcp-capture-bodies      let captured bodies pass through MCP DTOs (S5)
  *
- * Kept small and argv-driven to avoid pulling commander into the MCP server.
+ * Module-system flags (Phase 3a):
+ *   --enable-module:<id>      enable a specific module (repeatable); when
+ *                             this AND --disable-module are both empty,
+ *                             every loaded module is enabled.
+ *   --disable-module:<id>     disable a specific module (repeatable);
+ *                             wins over --enable-module for the same id.
+ *   --allow-destructive-tools  permit `destructiveHint: true` tools to run
+ *                              without per-call confirmation (headless
+ *                              consent). Phase 3b enforces at tools/call.
  */
 export function parseFlags(argv: readonly string[]): McpFlags {
   return {
     enableDevtoolsMcp: argv.includes("--enable-devtools-mcp"),
     mcpCaptureBodies: argv.includes("--mcp-capture-bodies"),
+    enabledModules: collectPrefixed(argv, "--enable-module:"),
+    disabledModules: collectPrefixed(argv, "--disable-module:"),
+    allowDestructiveTools: argv.includes("--allow-destructive-tools"),
   };
+}
+
+function collectPrefixed(
+  argv: readonly string[],
+  prefix: string,
+): ReadonlySet<string> {
+  const set = new Set<string>();
+  for (const arg of argv) {
+    if (arg.startsWith(prefix)) {
+      const id = arg.slice(prefix.length).trim();
+      if (id) set.add(id);
+    }
+  }
+  return set;
 }
 
 /**
