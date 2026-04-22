@@ -43,6 +43,17 @@ const handle = runModule({
   manifest,
   tools: {
     "echo__ping": (params) => ({ pong: true, echoed: params }),
+    // Test helper: probes `ctx.host.capability(id).method(...args)` so
+    // integration tests can verify the host/call round-trip end-to-end.
+    // Not listed in `manifest.contributes.mcp.tools` — fixture-only.
+    "echo__probe-host": async (params, ctx) => {
+      const cap = ctx.host.capability(params.id);
+      if (!cap) return { found: false };
+      const fn = cap[params.method];
+      if (typeof fn !== "function") return { found: true, methodFound: false };
+      const result = await fn(...(params.args ?? []));
+      return { found: true, methodFound: true, result };
+    },
   },
   onInitialize: (appInfo) => ({
     echoedHostVersion: appInfo.hostVersion,

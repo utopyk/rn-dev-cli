@@ -327,6 +327,194 @@ describe("runModule", () => {
     }
   });
 
+  it("ctx.host.capability('log') returns the local logger (no RPC round-trip)", async () => {
+    const h = harness();
+    let seen: unknown = null;
+
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": (_args, ctx) => {
+          seen = ctx.host.capability<{ info: Function }>("log");
+          return { ok: true };
+        },
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    try {
+      await client.sendRequest("initialize", {
+        capabilities: [],
+        hostVersion: "0.1.0",
+      });
+      await client.sendRequest("tool/ping", {});
+      expect(seen).not.toBeNull();
+      expect(typeof (seen as { info: unknown }).info).toBe("function");
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
+
+  it("ctx.host.capability('appInfo') synthesizes locally with hostVersion + platform", async () => {
+    const h = harness();
+    let seen: unknown = null;
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": (_args, ctx) => {
+          seen = ctx.host.capability<{
+            hostVersion: string;
+            platform: NodeJS.Platform;
+            worktreeKey: string | null;
+          }>("appInfo");
+          return { ok: true };
+        },
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    try {
+      await client.sendRequest("initialize", {
+        capabilities: [],
+        hostVersion: "1.2.3",
+      });
+      await client.sendRequest("tool/ping", {});
+      expect(seen).toEqual({
+        hostVersion: "1.2.3",
+        platform: process.platform,
+        worktreeKey: null,
+      });
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
+
+  it("ctx.host.capability(unknownId) returns null", async () => {
+    const h = harness();
+    let seen: unknown = "not-set";
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": (_args, ctx) => {
+          seen = ctx.host.capability("nonexistent");
+          return { ok: true };
+        },
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    try {
+      await client.sendRequest("initialize", {
+        capabilities: [{ id: "log" }],
+        hostVersion: "0.1.0",
+      });
+      await client.sendRequest("tool/ping", {});
+      expect(seen).toBeNull();
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
+
+  it("ctx.host.capability returns null when manifest lacks the required permission", async () => {
+    const h = harness({ permissions: [] });
+    let seen: unknown = "not-set";
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": (_args, ctx) => {
+          seen = ctx.host.capability("artifacts");
+          return { ok: true };
+        },
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    try {
+      await client.sendRequest("initialize", {
+        capabilities: [
+          { id: "artifacts", requiredPermission: "fs:artifacts" },
+        ],
+        hostVersion: "0.1.0",
+      });
+      await client.sendRequest("tool/ping", {});
+      expect(seen).toBeNull();
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
+
+  it("ctx.host.capability returns a Proxy that dispatches method calls as host/call RPC", async () => {
+    const h = harness({ permissions: ["fs:artifacts"] });
+    const hostCallsReceived: Array<{
+      capabilityId: string;
+      method: string;
+      args: unknown[];
+    }> = [];
+
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": async (_args, ctx) => {
+          const artifacts = ctx.host.capability<{
+            save: (name: string, bytes: Uint8Array) => Promise<string>;
+          }>("artifacts");
+          if (!artifacts) return { ok: false };
+          const result = await artifacts.save(
+            "report.log",
+            new Uint8Array([1, 2, 3]),
+          );
+          return { ok: true, result };
+        },
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    client.onRequest("host/call", (params: unknown) => {
+      const p = params as {
+        capabilityId: string;
+        method: string;
+        args: unknown[];
+      };
+      hostCallsReceived.push(p);
+      return "/path/to/report.log";
+    });
+
+    try {
+      await client.sendRequest("initialize", {
+        capabilities: [
+          { id: "artifacts", requiredPermission: "fs:artifacts" },
+        ],
+        hostVersion: "0.1.0",
+      });
+      const result = await client.sendRequest<
+        unknown,
+        { ok: boolean; result: string }
+      >("tool/ping", {});
+      expect(result).toEqual({ ok: true, result: "/path/to/report.log" });
+      expect(hostCallsReceived).toHaveLength(1);
+      expect(hostCallsReceived[0].capabilityId).toBe("artifacts");
+      expect(hostCallsReceived[0].method).toBe("save");
+      expect(hostCallsReceived[0].args[0]).toBe("report.log");
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
+
   it("supports built-in-style unprefixed tool keys", async () => {
     const manifest: ModuleManifest = {
       id: "built-in",

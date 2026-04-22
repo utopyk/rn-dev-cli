@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { RegisteredModule } from "../../modules/registry.js";
 import { CapabilityRegistry } from "./capabilities.js";
+import { attachHostRpc } from "./host-rpc.js";
 import { ModuleInstance, type ModuleInstanceState } from "./instance.js";
 import { ModuleLockfile } from "./lockfile.js";
 import {
@@ -327,6 +328,11 @@ export class ModuleHostManager extends EventEmitter {
         message: p?.message ?? "",
       });
     });
+    // Register host/call BEFORE listen() so a subprocess that calls back
+    // during its own `activate` (which runs inside `initialize`) reaches a
+    // live handler — the host is still awaiting the initialize response but
+    // vscode-jsonrpc is duplex and serves inbound requests concurrently.
+    attachHostRpc(rpc, manifest, this.capabilities);
     rpc.listen();
 
     instance.transitionTo("handshaking");

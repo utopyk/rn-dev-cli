@@ -5,7 +5,7 @@ import {
   type MessageConnection,
 } from "vscode-jsonrpc/node.js";
 import type { ModuleManifest } from "./types.js";
-import type { Logger } from "./host-rpc.js";
+import type { AppInfo, HostApi, Logger } from "./host-rpc.js";
 import { SDK_VERSION } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +42,12 @@ export interface ModuleToolContext {
   hostVersion: string;
   /** Version of `@rn-dev/module-sdk` the module is linked against. */
   sdkVersion: string;
+  /**
+   * Host API surface — generic capability lookup. `log` and `appInfo` are
+   * synthesized locally (no RPC). Everything else proxies to the daemon
+   * over `host/call`.
+   */
+  host: HostApi;
 }
 
 export type ToolHandler<
@@ -140,11 +146,17 @@ export function runModule(opts: RunModuleOptions): RunModuleHandle {
 
   connection.onRequest("initialize", async (params: unknown) => {
     const parsed = normalizeInitializeParams(params);
+    const host = createHostApi(connection, {
+      log,
+      appInfo: parsed,
+      manifest: opts.manifest,
+    });
     ctx = {
       log,
       appInfo: parsed,
       hostVersion: parsed.hostVersion,
       sdkVersion: SDK_VERSION,
+      host,
     };
     const extras = opts.onInitialize ? await opts.onInitialize(parsed) : {};
     if (opts.activate) {
@@ -168,7 +180,12 @@ export function runModule(opts: RunModuleOptions): RunModuleHandle {
     connection.onRequest(wireMethod, async (params: unknown) => {
       const effective =
         ctx ??
-        fallbackContext(log, opts.manifest.contributes?.mcp?.tools?.length ?? 0);
+        fallbackContext(
+          log,
+          opts.manifest.contributes?.mcp?.tools?.length ?? 0,
+          connection,
+          opts.manifest,
+        );
       return handler(
         (params ?? {}) as Record<string, unknown>,
         effective,
@@ -242,11 +259,83 @@ function normalizeInitializeParams(raw: unknown): ModuleAppInfo {
  * handshakes first by contract). We surface a minimal context so handlers
  * can still log a diagnostic instead of crashing the subprocess.
  */
-function fallbackContext(log: Logger, _toolCount: number): ModuleToolContext {
+function fallbackContext(
+  log: Logger,
+  _toolCount: number,
+  connection: MessageConnection,
+  manifest: ModuleManifest,
+): ModuleToolContext {
+  const appInfo: ModuleAppInfo = { capabilities: [], hostVersion: "0.0.0" };
   return {
     log,
-    appInfo: { capabilities: [], hostVersion: "0.0.0" },
+    appInfo,
     hostVersion: "0.0.0",
     sdkVersion: SDK_VERSION,
+    host: createHostApi(connection, { log, appInfo, manifest }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// HostApi — ctx.host.capability<T>(id)
+// ---------------------------------------------------------------------------
+
+interface HostApiContext {
+  log: Logger;
+  appInfo: ModuleAppInfo;
+  manifest: ModuleManifest;
+}
+
+/**
+ * Build the `HostApi` surface exposed on `ctx.host`. Lookup is synchronous:
+ *   - `"log"` and `"appInfo"` are synthesized locally (no round-trip).
+ *   - Other ids are permission-checked against the descriptor set the host
+ *     sent at `initialize`. Pass → return a Proxy whose property access
+ *     dispatches `host/call` RPC. Fail (unknown id or missing permission)
+ *     → return `null`, matching `HostApi.capability`'s `T | null` contract.
+ *
+ * The daemon-side `attachHostRpc` enforces the same gate as a defense-in-
+ * depth check; a malicious module bypassing this SDK proxy still gets
+ * rejected server-side.
+ */
+function createHostApi(
+  connection: MessageConnection,
+  ctx: HostApiContext,
+): HostApi {
+  const granted = ctx.manifest.permissions ?? [];
+  const appInfo: AppInfo = {
+    hostVersion: ctx.appInfo.hostVersion,
+    platform: process.platform,
+    worktreeKey: null,
+  };
+
+  return {
+    capability<T>(id: string): T | null {
+      if (id === "log") return ctx.log as unknown as T;
+      if (id === "appInfo") return appInfo as unknown as T;
+
+      const descriptor = ctx.appInfo.capabilities.find((c) => c.id === id);
+      if (!descriptor) return null;
+      if (
+        descriptor.requiredPermission &&
+        !granted.includes(descriptor.requiredPermission)
+      ) {
+        return null;
+      }
+
+      return new Proxy(
+        {},
+        {
+          get(_target, prop) {
+            if (typeof prop !== "string") return undefined;
+            return (...args: unknown[]) =>
+              connection.sendRequest("host/call", {
+                capabilityId: id,
+                method: prop,
+                args,
+              });
+          },
+        },
+      ) as T;
+    },
   };
 }
