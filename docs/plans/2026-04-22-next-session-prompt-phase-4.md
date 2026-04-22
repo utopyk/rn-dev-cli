@@ -1,49 +1,42 @@
-# Next-Session Prompt — Module System Phase 3d / Phase 4
+# Next-Session Prompt — Module System Phase 4 (Electron panels)
 
 **Paste the block below at the start of the next session.**
 
 ---
 
-We're continuing the third-party module system for rn-dev-cli. PR [#2](https://github.com/utopyk/rn-dev-cli/pull/2) on `feat/module-system-phase-0` now contains **Phases 0, 0.5, 1, 2, 3a, 3b, 3c** — 17 commits, ~150 new tests, all shipped on 2026-04-22.
+We're continuing the third-party module system for rn-dev-cli. PR [#2](https://github.com/utopyk/rn-dev-cli/pull/2) on `feat/module-system-phase-0` now contains **Phases 0, 0.5, 1, 2, 3a, 3b, 3c, 3d** — 23 commits, ~170 new tests, all shipped on 2026-04-22. Phase 3d (`tools/listChanged` + SDK `runModule()`) unblocked the two Phase 4 prerequisites the earlier handoff called out.
 
 Before writing any code:
 
-1. Read `docs/plans/2026-04-22-module-system-phase-3c-handoff.md` for the latest state — it lists everything deferred and what remains.
-2. Skim the earlier per-phase handoffs only if you need to understand *why* a specific decision was made:
-   - `docs/plans/2026-04-22-module-system-phase-1-handoff.md` (SDK + manifest schema + registry)
-   - `docs/plans/2026-04-22-module-system-phase-2-handoff.md` (subprocess host — state machine, supervisor, lockfile, RPC, manager)
-   - `docs/plans/2026-04-22-module-system-phase-3a-handoff.md` (tool-namespacer + daemon IPC for read-only module lifecycle)
-   - `docs/plans/2026-04-22-module-system-phase-3b-handoff.md` (tools/call end-to-end + destructiveHint)
+1. Read `docs/plans/2026-04-22-module-system-phase-3d-handoff.md` for the latest state (what shipped, contract decisions, remaining deferred items).
+2. Skim earlier per-phase handoffs only if you need to understand *why* a specific decision was made:
+   - `docs/plans/2026-04-22-module-system-phase-2-handoff.md` (subprocess host, RPC, capability registry)
+   - `docs/plans/2026-04-22-module-system-phase-3b-handoff.md` (tools/call end-to-end)
    - `docs/plans/2026-04-22-module-system-phase-3c-handoff.md` (enable/disable persistence)
 3. Check the plan's Phase 4 section at `docs/plans/2026-04-21-feat-module-system-and-device-control-plan.md`.
 
-### Branching
+### Branching — FIRST QUESTION TO MARTIN
 
-PR #2 is stacked high (6 phases). First question to Martin: **"Do you want to squash-merge PR #2 to main and start Phase 4 on a fresh branch, or keep stacking?"** The Phase 3c handoff suggests splitting, but that's his call.
+PR #2 is stacked very high (8 phases, 23 commits). Martin already chose "keep stacking" for 3d. Before Phase 4, ask:
+
+> **"Phase 4 is ~3–5 days of Electron work. Squash-merge PR #2 to main and branch Phase 4 fresh, or keep stacking?"**
+
+The Phase 3d handoff suggests splitting now. If he splits:
+
+```bash
+# Assuming PR #2 gets squash-merged as commit X on main
+git checkout main && git pull
+git checkout -b feat/module-system-phase-4
+```
+
+If he continues to stack: stay on `feat/module-system-phase-0`.
 
 ```bash
 gh pr view 2 --json state -q .state
 ```
 
-- If `MERGED` already: `git checkout main && git pull && git checkout -b feat/module-system-phase-4`.
-- If `OPEN`: default to continuing on `feat/module-system-phase-0`. If he wants a split, branch from the merge commit.
-
-### Recommended Phase 3d (before Phase 4) — ~1 day
-
-**Ship these two items first; they unblock Phase 4's Electron work.**
-
-1. **`tools/listChanged` notification emission.**
-   - Add a subscribe-style IPC action `modules/subscribe` that streams `{ kind: 'changed' }` events.
-   - `ModuleHostManager` events (`crashed`, `failed`, new entry) trigger; `modules/enable` / `modules/disable` / `modules/restart` trigger.
-   - In `src/mcp/server.ts`, subscribe at startup; on each event, call `server.sendNotification("notifications/tools/list_changed")` per the MCP spec.
-   - Optional: re-snapshot the module tool list inside the server so subsequent `tools/list` returns fresh contributions.
-
-2. **SDK `module-runtime.ts`.**
-   - New file at `packages/module-sdk/src/module-runtime.ts`.
-   - Export `runModule({ manifest, tools, activate?, deactivate? })` that wires `process.stdin` / `process.stdout` → `ModuleRpc` (reuse host's `src/core/module-host/rpc.ts` types; import or copy as needed), registers `initialize` (returns `{ moduleId, toolCount, sdkVersion }`), and routes `tool/<name>` → `tools[<moduleId>__<name>]`.
-   - `ctx` passed to each tool handler should expose `{ log, appInfo, hostVersion, sdkVersion }`. `log` is a `Logger`-shape that sends `log` notifications to the host. `appInfo` comes from the `initialize` request params (capability list + hostVersion).
-   - Replace the echo fixture's hand-rolled jsonrpc setup with `runModule(...)` to validate the DX.
-   - No RPC-proxy for `metro`/`artifacts` yet — Phase 4+ tackles that.
+- If `MERGED`: split.
+- If `OPEN` + Martin says keep stacking: continue.
 
 ### Phase 4 scope — Electron panel contributions (~3–5 days)
 
@@ -69,12 +62,19 @@ Deliberate pivot from the brainstorm's `<webview>` to `WebContentsView` (Electro
    - Every cross-channel send audit-logged.
    - Matches the S1–S6 controls from the DevTools plan applied per-module.
 
+### Leverage Phase 3d work
+
+- **Module authors build panels using `runModule({ manifest, tools, onConnection? })`** — if a panel needs extra RPC methods beyond `tool/*`, `onConnection` is the escape hatch. The SDK already handles stdio framing; Phase 4 only adds the *Electron-side* plumbing.
+- **`tools/listChanged` already works** — when a new module installs or an existing one crashes, MCP clients re-handshake within ~10ms. Phase 4 should mirror this on the Electron side: the renderer's view map should rebuild when the daemon emits a module-change event. Reuse the `modules/subscribe` IPC the Phase 3d commit introduced; do NOT introduce a second subscription mechanism.
+
 ### Do NOT do
 
 - Marketplace / install flow / `@npmcli/arborist` — Phase 6.
 - Device Control adapters — Phase 7+.
 - Module signing (`manifest.signature`) — V2.
 - Sandbox enforcement (`manifest.sandbox`) — V2.
+- Progress-token streaming on cold-start — still deferred (low priority).
+- Per-activation-event routing (`onMcpTool:<pattern>`) — still deferred.
 
 ### Permanent contract rules (unchanged — do not drift)
 
@@ -85,25 +85,42 @@ Deliberate pivot from the brainstorm's `<webview>` to `WebContentsView` (Electro
 - `ModuleHostManager` lives in the daemon — Electron main + MCP server are clients.
 - Per-module Electron partition `persist:mod-<id>` + dedicated preload.
 - `destructiveHint: true` tools require confirmation (`--allow-destructive-tools` OR `permissionsAccepted[]`).
+- **NEW (Phase 3d):** `IpcMessageEvent.onClose` is required; subscription handlers detach on socket close.
+- **NEW (Phase 3d):** `runModule()` is the supported contribution surface for 3p authors; `onInitialize` + `onConnection` are escape hatches.
 
-### Success criteria for Phase 3d + 4
+### Success criteria for Phase 4
 
-**Phase 3d:**
-- `tools/listChanged` fires within 100ms of `modules/enable` / `modules/disable`.
-- Echo fixture rewritten using `runModule(...)` passes the existing `manager.integration.test.ts` suite (5+ tests) unchanged.
-- `runModule()` has its own unit tests.
-
-**Phase 4:**
 - A fixture module declaring `contributes.electron.panels[]` renders an embedded `WebContentsView` in the GUI.
 - `rnDev.<method>` calls from the panel reach the module subprocess over RPC.
 - Panel resize + focus work.
 - Manual playwright-electron smoke test (or `bun run dev:gui` manual check) confirms no regression to existing panels (Dev Space, Settings, Lint/Test, Metro Logs, DevTools Network).
+- Renderer sidebar re-renders when a module is installed / crashed / toggled (reuses `modules/subscribe`).
+
+### Verification commands
+
+```bash
+# Unit + integration tests
+npx vitest run
+
+# Type check (baseline: 154 errors, unchanged since Phase 0.5)
+npx tsc --noEmit | grep -c "error TS"
+
+# Production build
+bun run build
+
+# Sanity-check MCP stdio transport (from Phase 3d session):
+bun run src/index.tsx mcp   # pipe JSON-RPC; verify tools.listChanged: true capability
+
+# Echo fixture sanity check (validates SDK dist + runModule):
+# Write a minimal driver that spawns `node test/fixtures/echo-module/index.js`
+# and sends `initialize` over stdio. Expected: { moduleId: "echo", sdkVersion: "0.1.0", ... }.
+```
 
 ### When done
 
 Per phase:
 1. Commit with Conventional Commits + `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`.
-2. Write `docs/plans/2026-04-??-module-system-phase-{3d,4}-handoff.md` matching the existing format.
+2. Write `docs/plans/2026-04-??-module-system-phase-4-handoff.md` matching the existing format.
 3. Push; verify PR is clean.
 
 Remember:
@@ -112,5 +129,4 @@ Remember:
 - tsc baseline is 154 errors (unchanged since Phase 0.5). Any new errors in your own code = red flag.
 - 18 pre-existing test failures in `src/core/__tests__/{clean,preflight,project}.test.ts` — unrelated, chip tracked separately.
 - `.claude/` is gitignored.
-
-Total estimated effort for Phase 3d + Phase 4: 4–6 days.
+- SDK `dist/` is gitignored; `vitest.global-setup.ts` rebuilds it before each test run.
