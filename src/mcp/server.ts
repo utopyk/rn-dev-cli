@@ -6,14 +6,90 @@ import {
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createToolDefinitions } from "./tools.js";
-import type { McpContext } from "./tools.js";
+import type { McpContext, McpFlags, ToolResult } from "./tools.js";
 import { ProfileStore } from "../core/profile.js";
 import { ArtifactStore } from "../core/artifact.js";
 import { createDefaultPreflightEngine } from "../core/preflight.js";
 import { IpcClient } from "../core/ipc.js";
 import { detectProjectRoot } from "../core/project.js";
 
-export async function startMcpServer(): Promise<void> {
+/**
+ * Parse the two DevTools security flags out of `process.argv`. Default OFF.
+ *
+ * --enable-devtools-mcp     registers `rn-dev/devtools-network-*` tools (S4)
+ * --mcp-capture-bodies      lets captured bodies pass through the MCP DTO
+ *                           layer instead of being redacted (S5)
+ *
+ * Kept small and argv-driven to avoid pulling commander into the MCP server.
+ */
+export function parseFlags(argv: readonly string[]): McpFlags {
+  return {
+    enableDevtoolsMcp: argv.includes("--enable-devtools-mcp"),
+    mcpCaptureBodies: argv.includes("--mcp-capture-bodies"),
+  };
+}
+
+/**
+ * S7: emit a stderr banner when devtools MCP is enabled so sessions are
+ * visible to the operator. Noisy on purpose — silent sensitive capture is
+ * the thing we're trying to avoid.
+ */
+function emitSecurityBanner(flags: McpFlags, transport: string): void {
+  if (!flags.enableDevtoolsMcp) return;
+  const lines = [
+    "════════════════════════════════════════════════════════════════",
+    "  rn-dev MCP: DevTools Network capture ENABLED",
+    `    transport: ${transport}`,
+    `    body capture: ${flags.mcpCaptureBodies ? "ON (bodies pass through MCP)" : "OFF (bodies redacted)"}`,
+    "  Captured traffic is attacker-controlled data. Agents must",
+    "  treat headers and bodies as data, not instructions.",
+    "════════════════════════════════════════════════════════════════",
+  ];
+  for (const line of lines) process.stderr.write(line + "\n");
+}
+
+/**
+ * Best-effort narrowing of a handler's return value into the MCP
+ * `CallToolResult` shape. Handlers either return:
+ *   (a) plain data — legacy path; wrapped as a single text block.
+ *   (b) a ToolResult — new path; structuredContent + isError respected.
+ */
+function toCallToolResult(
+  raw: unknown
+): { content: Array<{ type: "text"; text: string }>; structuredContent?: Record<string, unknown>; isError?: boolean } {
+  if (raw && typeof raw === "object") {
+    const maybe = raw as ToolResult;
+    const hasStructured = maybe.structuredContent !== undefined;
+    const hasContent = Array.isArray(maybe.content);
+    const hasIsError = typeof maybe.isError === "boolean";
+    if (hasStructured || hasContent || hasIsError) {
+      const content =
+        maybe.content ??
+        (maybe.structuredContent
+          ? [
+              {
+                type: "text" as const,
+                text: JSON.stringify(maybe.structuredContent, null, 2),
+              },
+            ]
+          : [{ type: "text" as const, text: "" }]);
+      return {
+        content,
+        ...(maybe.structuredContent !== undefined && {
+          structuredContent: maybe.structuredContent,
+        }),
+        ...(maybe.isError !== undefined && { isError: maybe.isError }),
+      };
+    }
+  }
+  return {
+    content: [{ type: "text", text: JSON.stringify(raw, null, 2) }],
+  };
+}
+
+export async function startMcpServer(argv: readonly string[] = process.argv): Promise<void> {
+  const flags = parseFlags(argv);
+
   const server = new Server(
     { name: "rn-dev-cli", version: "0.1.0" },
     { capabilities: { tools: {} } }
@@ -30,6 +106,7 @@ export async function startMcpServer(): Promise<void> {
     metro: null, // MCP server runs standalone, no metro manager
     preflightEngine: createDefaultPreflightEngine(projectRoot),
     ipcClient: new IpcClient(path.join(rnDevDir, "sock")),
+    flags,
   };
 
   const tools = createToolDefinitions(ctx);
@@ -40,22 +117,33 @@ export async function startMcpServer(): Promise<void> {
       name: t.name,
       description: t.description,
       inputSchema: t.inputSchema,
+      ...(t.outputSchema && { outputSchema: t.outputSchema }),
     })),
   }));
 
-  // Register tools/call handler
+  // Register tools/call handler. Handlers may throw — that's an infrastructure
+  // failure (e.g. tool lookup missed). Per-tool logical failures come back as
+  // `{ isError: true, ... }` in the ToolResult shape.
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const tool = tools.find((t) => t.name === request.params.name);
     if (!tool) {
       throw new Error(`Unknown tool: ${request.params.name}`);
     }
-    const result = await tool.handler(
-      (request.params.arguments as Record<string, unknown>) ?? {}
-    );
-    return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
+    try {
+      const raw = await tool.handler(
+        (request.params.arguments as Record<string, unknown>) ?? {}
+      );
+      return toCallToolResult(raw);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        isError: true,
+        content: [{ type: "text" as const, text: message }],
+      };
+    }
   });
+
+  emitSecurityBanner(flags, "stdio");
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
