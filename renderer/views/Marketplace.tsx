@@ -19,6 +19,11 @@ interface ListReply {
   modules: MarketplaceRow[];
 }
 
+// Mirrors src/app/modules-ipc.ts:MarketplaceEntryRow. Declared locally so
+// the renderer doesn't reach across the src/renderer boundary (renderer
+// tsconfig doesn't include src/); a parity test in __tests__ could keep
+// these aligned if drift ever bites. For now the shapes are small enough
+// to eyeball.
 interface MarketplaceEntry extends ConsentRegistryEntry {
   installed: boolean;
   installedVersion?: string;
@@ -26,9 +31,16 @@ interface MarketplaceEntry extends ConsentRegistryEntry {
 }
 
 interface MarketplaceListReply {
+  kind: 'ok';
   registrySha256: string;
   registryUrl: string;
   entries: MarketplaceEntry[];
+}
+
+interface MarketplaceListError {
+  kind: 'error';
+  code: string;
+  message: string;
 }
 
 interface InstallOkReply {
@@ -88,7 +100,7 @@ export function Marketplace(): React.JSX.Element {
         setLoadError(err instanceof Error ? err.message : String(err));
       },
     );
-    invoke<MarketplaceListReply | { kind: 'error'; message: string } | null>(
+    invoke<MarketplaceListReply | MarketplaceListError | null>(
       'marketplace:list',
     ).then(
       (reply) => {
@@ -96,15 +108,14 @@ export function Marketplace(): React.JSX.Element {
           setRegistryError('marketplace:list returned empty');
           return;
         }
-        if ('kind' in reply && reply.kind === 'error') {
+        if (reply.kind === 'error') {
           setRegistryError(reply.message);
           return;
         }
-        const ok = reply as MarketplaceListReply;
         setRegistryError(null);
-        setRegistrySha256(ok.registrySha256);
-        setRegistryUrl(ok.registryUrl);
-        setAvailableEntries(ok.entries);
+        setRegistrySha256(reply.registrySha256);
+        setRegistryUrl(reply.registryUrl);
+        setAvailableEntries(reply.entries);
       },
       (err: unknown) => {
         setRegistryError(err instanceof Error ? err.message : String(err));

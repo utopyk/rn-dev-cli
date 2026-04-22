@@ -202,11 +202,21 @@ function registerModulesConfigHandlers(): void {
  * Phase 6 — install/uninstall/marketplace ipcMain handlers. Same eager
  * register / getDeps lazy-fill pattern as modules-config so the renderer
  * can safely invoke `marketplace:list` before services finish booting.
+ *
+ * Kieran + Security P1 (Phase 6 review): install/uninstall MUST gate
+ * through `PanelSenderRegistry.canWrite(MARKETPLACE_WRITE_PRINCIPAL)` so
+ * a sandboxed panel can't trigger pacote-backed installs on the user's
+ * behalf. We register the "marketplace" principal here so the host UI's
+ * webContents is the only sender the registrar accepts.
  */
 function registerModulesInstallHandlers(): void {
   let deps: ModulesInstallIpcDeps | null = null;
 
-  registerModulesInstallIpc(() => deps);
+  senderRegistry.allowHostWrite('marketplace');
+  registerModulesInstallIpc(
+    () => deps,
+    () => senderRegistry,
+  );
 
   let latestManager: ModuleHostManager | null = null;
   let latestRegistry: ModuleRegistry | null = null;

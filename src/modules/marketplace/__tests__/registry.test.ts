@@ -38,7 +38,7 @@ describe("RegistryFetcher", () => {
 
   it("accepts a valid registry and returns its parsed contents", async () => {
     const raw = validRegistryJson();
-    const url = "http://stub/modules.json";
+    const url = "http://localhost/modules.json";
     // Stub global fetch for this test.
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async (): Promise<Response> =>
@@ -70,7 +70,7 @@ describe("RegistryFetcher", () => {
     try {
       const fetcher = new RegistryFetcher();
       const result = await fetcher.fetch({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         cachePath,
         expectedSha: "b".repeat(64),
       });
@@ -93,7 +93,7 @@ describe("RegistryFetcher", () => {
     try {
       const fetcher = new RegistryFetcher();
       const result = await fetcher.fetch({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         cachePath,
         expectedSha: "",
       });
@@ -115,13 +115,13 @@ describe("RegistryFetcher", () => {
       const fetcher = new RegistryFetcher();
       const expectedSha = sha256(raw);
       const first = await fetcher.fetch({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         cachePath,
         expectedSha,
       });
       expect(first.kind).toBe("ok");
       const second = await fetcher.fetch({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         cachePath,
         expectedSha,
       });
@@ -139,7 +139,7 @@ describe("RegistryFetcher", () => {
     writeFileSync(
       cachePath,
       JSON.stringify({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         raw: validRegistryJson(),
         sha256: "deadbeef".repeat(8), // intentionally wrong
         fetchedAt: Date.now(),
@@ -152,7 +152,7 @@ describe("RegistryFetcher", () => {
     try {
       const fetcher = new RegistryFetcher();
       const result = await fetcher.fetch({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         cachePath,
         expectedSha: sha256(raw),
       });
@@ -183,7 +183,7 @@ describe("RegistryFetcher", () => {
     try {
       const fetcher = new RegistryFetcher();
       const result = await fetcher.fetch({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         cachePath,
         expectedSha: "",
       });
@@ -203,7 +203,7 @@ describe("RegistryFetcher", () => {
     try {
       const fetcher = new RegistryFetcher();
       const result = await fetcher.fetch({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         cachePath,
         expectedSha: "",
       });
@@ -223,7 +223,7 @@ describe("RegistryFetcher", () => {
     try {
       const fetcher = new RegistryFetcher();
       const result = await fetcher.fetch({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         cachePath,
         expectedSha: "",
       });
@@ -258,7 +258,7 @@ describe("RegistryFetcher", () => {
     try {
       const fetcher = new RegistryFetcher();
       const result = await fetcher.fetch({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         cachePath,
         expectedSha: "",
       });
@@ -287,7 +287,7 @@ describe("RegistryFetcher", () => {
     writeFileSync(
       cachePath,
       JSON.stringify({
-        url: "http://stub/modules.json",
+        url: "http://localhost/modules.json",
         raw,
         sha256: sha,
         fetchedAt: Date.now(),

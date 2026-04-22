@@ -802,17 +802,18 @@ export type ModuleUninstallReply =
   | { kind: "ok"; moduleId: string; removed: string; keptData: boolean }
   | { kind: "error"; code: string; message: string };
 
+export interface MarketplaceEntryRow extends RegistryEntry {
+  installed: boolean;
+  installedVersion?: string;
+  installedState?: string;
+}
+
 export interface MarketplaceListReply {
+  kind: "ok";
   registrySha256: string;
   /** Resolved URL the fetcher pulled from — shown in the consent dialog. */
   registryUrl: string;
-  entries: Array<
-    RegistryEntry & {
-      installed: boolean;
-      installedVersion?: string;
-      installedState?: string;
-    }
-  >;
+  entries: MarketplaceEntryRow[];
 }
 
 export type MarketplaceInfoReply =
@@ -853,6 +854,7 @@ export async function marketplaceList(opts: ModulesIpcOptions): Promise<Marketpl
   }
 
   return {
+    kind: "ok",
     registrySha256: reg.sha256,
     registryUrl: resolveRegistryUrl(),
     entries: reg.registry.modules.map((e) => {

@@ -101,6 +101,10 @@ export type FetchResult =
       message: string;
     };
 
+// Module-level flag — we want the "pin is empty" warning to fire once per
+// process, not once per RegistryFetcher instance.
+let warnedAboutEmptyPin = false;
+
 export class RegistryFetcher {
   private readonly defaultCachePath = join(
     homedir(),
@@ -112,6 +116,22 @@ export class RegistryFetcher {
     const url = resolveRegistryUrl(opts.url);
     const expectedSha = opts.expectedSha ?? EXPECTED_MODULES_JSON_SHA256;
     const cachePath = opts.cachePath ?? this.defaultCachePath;
+
+    if (!schemeAllowed(url)) {
+      return {
+        kind: "error",
+        code: "E_REGISTRY_FETCH_FAILED",
+        message: `registry URL scheme is not allowed: ${url} — production builds require https:, dev builds additionally allow file: and http://localhost.`,
+      };
+    }
+
+    if (!expectedSha && !warnedAboutEmptyPin) {
+      warnedAboutEmptyPin = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[rn-dev] EXPECTED_MODULES_JSON_SHA256 is empty — running in dev mode, modules.json is NOT pinned. Production host releases MUST bake a SHA-256.",
+      );
+    }
 
     // Try cache first unless explicitly skipped.
     if (!opts.skipCache) {
@@ -190,6 +210,36 @@ interface CachedRegistry {
   raw: string;
   sha256: string;
   fetchedAt: number;
+}
+
+/**
+ * Whitelist of URL schemes the registry fetcher will accept. Security P1-2
+ * (Phase 6 review): unrestricted scheme acceptance let a malicious env-var
+ * point at `file:///etc/passwd` or internal HTTP services. In production
+ * builds only https is allowed; dev builds add `file:` + http://localhost
+ * so tests and local-fixture flows keep working.
+ */
+const ALLOWED_SCHEMES_PRODUCTION: ReadonlyArray<string> = ["https:"];
+const ALLOWED_SCHEMES_DEV: ReadonlyArray<string> = ["https:", "http:", "file:"];
+
+function schemeAllowed(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const schemes =
+    process.env["NODE_ENV"] === "production"
+      ? ALLOWED_SCHEMES_PRODUCTION
+      : ALLOWED_SCHEMES_DEV;
+  if (!schemes.includes(parsed.protocol)) return false;
+  // Even in dev, plain http is only permitted for loopback targets.
+  if (parsed.protocol === "http:") {
+    const host = parsed.hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  }
+  return true;
 }
 
 export function resolveRegistryUrl(override?: string): string {
@@ -287,9 +337,15 @@ function parseAndValidate(
  * Defense-in-depth: reject registry entries whose `id` isn't a safe npm-style
  * identifier. The id is used as a directory name under `~/.rn-dev/modules/`,
  * so a compromised registry entry with `"../../etc/passwd"` could otherwise
- * escape. SHA-pinning is the primary defense; this is the belt.
+ * escape. SHA-pinning is the primary defense; this is the belt. Exported so
+ * other code paths that build install paths from moduleIds (uninstall) can
+ * re-check before `join()`.
  */
-const SAFE_MODULE_ID = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$/;
+export const SAFE_MODULE_ID = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$/;
+
+export function isSafeModuleId(id: string): boolean {
+  return typeof id === "string" && SAFE_MODULE_ID.test(id);
+}
 
 function validateEntry(
   raw: unknown,
@@ -369,7 +425,7 @@ function validateEntry(
     };
   }
   const id = obj["id"] as string;
-  if (!SAFE_MODULE_ID.test(id)) {
+  if (!isSafeModuleId(id)) {
     return {
       kind: "error",
       code: "E_REGISTRY_INVALID_SCHEMA",

@@ -29,6 +29,17 @@ import {
   acknowledgeThirdParty,
   hasAcknowledgedThirdParty,
 } from "../../src/modules/marketplace/installer.js";
+import type { PanelSenderRegistry } from "../panel-sender-registry.js";
+
+/**
+ * Sentinel moduleId the host UI must be granted `allowHostWrite(...)` for
+ * before install/uninstall channels accept its invocations. Not a real
+ * module — it's the "marketplace authority" principal the consent-dialog
+ * UX owns. Kieran P1-1 (Phase 6 review): the install channels were
+ * missing the sender gate that modules:config-set got, so a sandboxed
+ * panel could trigger pacote-backed install flows.
+ */
+const MARKETPLACE_WRITE_PRINCIPAL = "marketplace" as const;
 
 export interface ModulesInstallIpcDeps {
   manager: ModuleHostManager;
@@ -62,14 +73,27 @@ const PENDING_DEPS_REPLY = {
   message: "marketplace: services not ready yet",
 };
 
+const FORBIDDEN_REPLY = {
+  kind: "error" as const,
+  code: "E_SENDER_FORBIDDEN" as const,
+  message:
+    "modules:install/uninstall rejected: sender is not permitted to drive the marketplace. " +
+    "The host UI must be granted allowHostWrite(\"marketplace\") before it can invoke these channels.",
+};
+
 export function registerModulesInstallIpc(
   getDeps: () => ModulesInstallIpcDeps | null,
+  getSenderRegistry?: () => PanelSenderRegistry | null,
 ): ModulesInstallIpcHandle {
   ipcMain.handle(
     "modules:install",
-    async (_event, payload: ModuleInstallRequest) => {
+    async (event, payload: ModuleInstallRequest) => {
       const deps = getDeps();
       if (!deps) return PENDING_DEPS_REPLY;
+      const senderReg = getSenderRegistry?.();
+      if (senderReg && !senderReg.canWrite(event.sender, MARKETPLACE_WRITE_PRINCIPAL)) {
+        return FORBIDDEN_REPLY;
+      }
       const opts = toIpcOptions(deps);
       const result = await installAction(opts, payload);
       deps.auditInstall?.({
@@ -85,11 +109,15 @@ export function registerModulesInstallIpc(
   ipcMain.handle(
     "modules:uninstall",
     async (
-      _event,
+      event,
       payload: { moduleId: string; scopeUnit?: string; keepData?: boolean },
     ) => {
       const deps = getDeps();
       if (!deps) return PENDING_DEPS_REPLY;
+      const senderReg = getSenderRegistry?.();
+      if (senderReg && !senderReg.canWrite(event.sender, MARKETPLACE_WRITE_PRINCIPAL)) {
+        return FORBIDDEN_REPLY;
+      }
       const opts = toIpcOptions(deps);
       const result = await uninstallAction(opts, payload);
       deps.auditInstall?.({

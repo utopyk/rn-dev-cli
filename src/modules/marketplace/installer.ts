@@ -26,6 +26,7 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -37,7 +38,7 @@ import type {
 } from "@rn-dev/module-sdk";
 import type { ModuleHostManager } from "../../core/module-host/manager.js";
 import { ModuleRegistry, type RegisteredModule } from "../registry.js";
-import type { RegistryEntry } from "./registry.js";
+import { isSafeModuleId, type RegistryEntry } from "./registry.js";
 
 export const DEFAULT_MODULES_DIR = join(homedir(), ".rn-dev", "modules");
 const THIRD_PARTY_ACK_PATH = join(homedir(), ".rn-dev", ".third-party-acknowledged");
@@ -178,7 +179,7 @@ export async function installModule(opts: InstallOptions): Promise<InstallResult
   }
 
   const pacote = opts.pacote ?? (await defaultPacote());
-  const arboristFactory = opts.arboristFactory ?? defaultArboristFactory;
+  const arboristFactory = opts.arboristFactory ?? (await defaultArboristFactory());
 
   // 4. Download tarball + verify SHA.
   let tarballBuffer: Buffer;
@@ -203,9 +204,20 @@ export async function installModule(opts: InstallOptions): Promise<InstallResult
     };
   }
 
-  // 5. Extract via pacote into the install path.
+  // 5. Extract via pacote into the install path. Two-step (buffer → tmp
+  //    file → pacote.extract) so SHA-256 verification happens on the
+  //    verbatim buffer we fetched — `pacote.extract(spec)` with SSRI
+  //    integrity would be more idiomatic but requires sha512 and would
+  //    route through pacote's internal cache. A future contributor should
+  //    NOT collapse this back into a single extract() call without
+  //    replicating the SHA-256 check against the fetched bytes.
+  //
+  //    Tmp file lives inside an mkdtempSync'd dir so the name is
+  //    unpredictable to other processes on this host (Security P2-1
+  //    from the Phase 6 review).
   mkdirSync(installPath, { recursive: true });
-  const tmpFile = join(tmpdir(), `rn-dev-install-${opts.entry.id}-${Date.now()}.tgz`);
+  const tmpDir = mkdtempSync(join(tmpdir(), `rn-dev-install-${opts.entry.id}-`));
+  const tmpFile = join(tmpDir, "module.tgz");
   try {
     writeFileSync(tmpFile, tarballBuffer);
     await pacote.extract(`file:${tmpFile}`, installPath);
@@ -218,7 +230,7 @@ export async function installModule(opts: InstallOptions): Promise<InstallResult
     };
   } finally {
     try {
-      rmSync(tmpFile, { force: true });
+      rmSync(tmpDir, { recursive: true, force: true });
     } catch {
       /* best-effort */
     }
@@ -316,6 +328,19 @@ export async function installModule(opts: InstallOptions): Promise<InstallResult
 export async function uninstallModule(opts: UninstallOptions): Promise<UninstallResult> {
   const modulesDir = opts.modulesDir ?? DEFAULT_MODULES_DIR;
   const scopeUnit = opts.scopeUnit ?? "global";
+
+  // Defense-in-depth. Install-path registry entries already go through
+  // `isSafeModuleId` at load time, but uninstall accepts a `moduleId` from
+  // the MCP surface / Electron payload directly — re-check before join()
+  // to prevent `..` / absolute paths from escaping the modulesDir.
+  if (!isSafeModuleId(opts.moduleId)) {
+    return {
+      kind: "error",
+      code: "E_UNINSTALL_NOT_FOUND",
+      message: `module id "${opts.moduleId}" is not a safe identifier`,
+    };
+  }
+
   const installPath = join(modulesDir, opts.moduleId);
 
   if (!existsSync(installPath)) {
@@ -390,8 +415,14 @@ async function defaultPacote(): Promise<PacoteLike> {
   if (cachedPacote) return cachedPacote;
   // Dynamic import so test runs that inject a stub don't pay the cost of
   // loading the real pacote (which transitively pulls a lot of npm tooling).
-  const mod = (await import("pacote")) as unknown as PacoteLike;
-  cachedPacote = mod;
+  // Narrow the cast to exactly the two fields we call — if pacote ever
+  // reshapes, TS catches it instead of a runtime "undefined is not a
+  // function" (Kieran P1-3, Phase 6 review).
+  const mod = (await import("pacote")) as unknown as {
+    tarball: (spec: string) => Promise<Buffer>;
+    extract: (spec: string, target: string) => Promise<unknown>;
+  };
+  cachedPacote = { tarball: mod.tarball, extract: mod.extract };
   return cachedPacote;
 }
 
@@ -399,20 +430,23 @@ let cachedArboristCtor:
   | (new (opts: Record<string, unknown>) => ArboristLike)
   | null = null;
 
-function defaultArboristFactory(opts: {
-  path: string;
-  ignoreScripts: boolean;
-}): ArboristLike {
-  // Arborist's default export is a class constructor; we wrap it behind the
+async function defaultArboristFactory(): Promise<ArboristFactory> {
+  // Arborist's default export is a class constructor; wrap it behind the
   // ArboristLike surface so the rest of the installer stays typed without
-  // a direct dep on arborist types. The ctor is resolved via require() at
-  // first use so tests that inject `arboristFactory` never pay the cost of
-  // loading arborist.
+  // a direct dep on arborist types. Dynamic import keeps arborist's large
+  // transitive tree out of process memory when tests inject a stub.
+  // Kieran P1-2 (Phase 6 review): earlier revision used require() which
+  // was suspect under ESM NodeNext + bundler emit.
   if (!cachedArboristCtor) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    cachedArboristCtor = require("@npmcli/arborist") as new (
-      o: Record<string, unknown>,
-    ) => ArboristLike;
+    // @npmcli/arborist ships without .d.ts — treat the import as unknown
+    // then narrow to the ArboristLike constructor shape we actually use.
+    // @ts-expect-error — no types shipped with @npmcli/arborist
+    const mod = (await import("@npmcli/arborist")) as unknown as {
+      default?: new (o: Record<string, unknown>) => ArboristLike;
+    } & (new (o: Record<string, unknown>) => ArboristLike);
+    cachedArboristCtor =
+      mod.default ?? (mod as new (o: Record<string, unknown>) => ArboristLike);
   }
-  return new cachedArboristCtor(opts);
+  const Ctor = cachedArboristCtor;
+  return (opts) => new Ctor(opts);
 }
