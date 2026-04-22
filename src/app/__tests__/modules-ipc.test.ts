@@ -670,3 +670,48 @@ describe("dispatchModulesAction — modules/config", () => {
     expect(result.config).toEqual({ anything: { nested: "goes" } });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 5b — built-in-privileged modules are not spawnable through modules/call
+// ---------------------------------------------------------------------------
+
+describe("dispatchModulesAction — built-in-privileged guard", () => {
+  it("modules/call returns MODULE_UNAVAILABLE for built-in-privileged modules", async () => {
+    active = await setup();
+    // Register a built-in via the dedicated helper.
+    active.registry.registerBuiltIn({
+      id: "builtin-cap-only",
+      version: "0.1.0",
+      hostRange: ">=0.1.0",
+      scope: "global",
+    });
+
+    const result = (await dispatchModulesAction(
+      { registry: active.registry, manager: active.manager },
+      makeMsg("modules/call", {
+        moduleId: "builtin-cap-only",
+        scopeUnit: "global",
+        tool: "whatever",
+        args: {},
+      }),
+    )) as { kind: string; code?: string; message?: string };
+
+    expect(result.kind).toBe("error");
+    expect(result.code).toBe("MODULE_UNAVAILABLE");
+    expect(result.message).toMatch(/built-in-privileged/);
+  });
+
+  it("manager.acquire throws E_BUILT_IN_NOT_SPAWNABLE for built-ins", async () => {
+    active = await setup();
+    const reg = active.registry.registerBuiltIn({
+      id: "builtin-unspawnable",
+      version: "0.1.0",
+      hostRange: ">=0.1.0",
+      scope: "global",
+    });
+
+    await expect(active.manager.acquire(reg, "c1")).rejects.toThrow(
+      /E_BUILT_IN_NOT_SPAWNABLE/,
+    );
+  });
+});

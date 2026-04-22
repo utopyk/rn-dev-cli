@@ -199,6 +199,11 @@ export class ModuleHostManager extends EventEmitter {
     registered: RegisteredModule,
     consumerId: string,
   ): Promise<ManagedModule> {
+    if (registered.kind === "built-in-privileged") {
+      throw new Error(
+        `E_BUILT_IN_NOT_SPAWNABLE: module "${registered.manifest.id}" is a built-in-privileged module — it runs in-process and cannot be spawned via ModuleHostManager.acquire().`,
+      );
+    }
     const key = ModuleHostManager.keyFor(registered);
     const existing = this.entries.get(key);
     if (existing) {

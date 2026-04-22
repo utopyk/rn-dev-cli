@@ -471,6 +471,13 @@ async function callModuleTool(
       message: `Module "${payload.moduleId}" is not registered.`,
     };
   }
+  if (reg.kind === "built-in-privileged") {
+    return {
+      kind: "error",
+      code: "MODULE_UNAVAILABLE",
+      message: `Module "${reg.manifest.id}" is a built-in-privileged module and does not expose subprocess tools; call the host-native MCP surface directly.`,
+    };
+  }
 
   const live = opts.manager.inspect(reg.manifest.id, reg.scopeUnit);
   if (live?.state === "failed") {

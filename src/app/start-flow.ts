@@ -20,10 +20,15 @@ import { registerDevtoolsIpc } from "./devtools-ipc.js";
 import {
   ModuleRegistry,
   devSpaceModule,
+  devSpaceManifest,
   settingsModule,
+  settingsManifest,
   lintTestModule,
+  lintTestManifest,
   metroLogsModule,
+  metroLogsManifest,
   devtoolsNetworkModule,
+  registerMarketplaceBuiltIn,
 } from "../modules/index.js";
 import { firstRunSetup } from "./first-run.js";
 import { App } from "./App.js";
@@ -543,6 +548,19 @@ async function startServicesAsync(
   // startup — a broken 3p module shouldn't prevent the dev loop.
   const moduleRegistry = new ModuleRegistry();
   serviceBus.setModuleRegistry(moduleRegistry);
+
+  // Phase 5b: register the four existing built-ins (dev-space, metro-logs,
+  // lint-test, settings) + the Marketplace built-in as manifest-driven
+  // RegisteredModules. `registerBuiltIn` stamps `kind: "built-in-privileged"`
+  // on each; they never spawn via ModuleHostManager, but they DO appear in
+  // `modules/list`, the Marketplace capability, and share the `contributes.
+  // config.schema` surface with 3p modules.
+  moduleRegistry.registerBuiltIn(devSpaceManifest);
+  moduleRegistry.registerBuiltIn(metroLogsManifest);
+  moduleRegistry.registerBuiltIn(lintTestManifest);
+  moduleRegistry.registerBuiltIn(settingsManifest);
+  registerMarketplaceBuiltIn({ moduleRegistry, capabilities });
+
   const loadResult = moduleRegistry.loadUserGlobalModules({
     hostVersion,
     scopeUnit: worktreeKey,
