@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron';
+import type { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { serviceBus } from '../../src/app/service-bus.js';
 import type { ModuleHostManager } from '../../src/core/module-host/manager.js';
@@ -13,6 +14,8 @@ import { registerDevtoolsHandlers } from './devtools.js';
 import { installPanelBridge } from '../panel-bridge-electron.js';
 import { createBoundsCache, type ModulesPanelsIpcDeps } from './modules-panels.js';
 import { registerModulesPanelsIpc } from './modules-panels-register.js';
+import type { ModulesConfigIpcDeps } from './modules-config.js';
+import { registerModulesConfigIpc } from './modules-config-register.js';
 
 export { startRealServices } from './services.js';
 
@@ -42,6 +45,7 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
   registerWizardHandlers();
   registerDevtoolsHandlers();
   registerModulePanelsHandlers(window);
+  registerModulesConfigHandlers();
 }
 
 /**
@@ -109,6 +113,52 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
   });
   serviceBus.on('moduleRegistry', (r) => {
     latestRegistry = r;
+    tryInstall();
+  });
+}
+
+/**
+ * Phase 5a — install the module-config ipcMain channels. Same lazy-deps
+ * pattern as the panel-bridge: handlers register eagerly, deps fill in
+ * when `startRealServices` publishes moduleHost / moduleRegistry / the
+ * shared module-events bus. Audit sink routes to `service:log` — parity
+ * with the Phase 4 `modules:host-call` audit pattern. An HMAC-chained
+ * `AuditLog.append()` sink will replace both when it lands.
+ */
+function registerModulesConfigHandlers(): void {
+  let deps: ModulesConfigIpcDeps | null = null;
+
+  registerModulesConfigIpc(() => deps);
+
+  let latestManager: ModuleHostManager | null = null;
+  let latestRegistry: ModuleRegistry | null = null;
+  let latestEvents: EventEmitter | null = null;
+
+  const tryInstall = (): void => {
+    if (!latestManager || !latestRegistry || !latestEvents || deps) return;
+    deps = {
+      manager: latestManager,
+      registry: latestRegistry,
+      moduleEvents: latestEvents,
+      auditConfigSet: (event) => {
+        send(
+          'service:log',
+          `[modules-config] set ${event.moduleId}${event.scopeUnit ? `:${event.scopeUnit}` : ''} keys=[${event.patchKeys.join(',')}] ${event.outcome}${event.code ? ` (${event.code})` : ''}`,
+        );
+      },
+    };
+  };
+
+  serviceBus.on('moduleHost', (m) => {
+    latestManager = m;
+    tryInstall();
+  });
+  serviceBus.on('moduleRegistry', (r) => {
+    latestRegistry = r;
+    tryInstall();
+  });
+  serviceBus.on('moduleEventsBus', (bus) => {
+    latestEvents = bus;
     tryInstall();
   });
 }

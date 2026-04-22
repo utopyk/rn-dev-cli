@@ -568,6 +568,10 @@ async function startServicesAsync(
   modulesIpc.moduleEvents.on("modules-event", (event) => {
     serviceBus.emitModuleEvent(event);
   });
+  // Phase 5a — publish the shared bus so Electron's `modules:config-set`
+  // handler can emit `config-changed` into the same bus MCP subscribers
+  // listen on, even when it bypasses the unix-socket dispatcher.
+  serviceBus.setModuleEventsBus(modulesIpc.moduleEvents);
 
   emit("\u2714 All services started");
   emit("");

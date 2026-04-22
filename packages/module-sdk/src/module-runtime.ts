@@ -27,6 +27,14 @@ export interface ModuleAppInfo {
     requiredPermission?: string;
   }>;
   hostVersion: string;
+  /**
+   * Persisted per-module config blob loaded from
+   * `~/.rn-dev/modules/<id>/config.json`. Always present: `{}` when the
+   * module declares no `contributes.config.schema`, or when no config has
+   * been persisted yet. Updates in place via the `config/changed`
+   * notification — use `onConfigChanged` to react.
+   */
+  config: Record<string, unknown>;
 }
 
 /**
@@ -48,6 +56,12 @@ export interface ModuleToolContext {
    * over `host/call`.
    */
   host: HostApi;
+  /**
+   * Mirrors `appInfo.config` for ergonomics. Re-read on every tool call —
+   * the reference is replaced when the host sends `config/changed`, so
+   * handlers see the latest persisted value without an extra lookup.
+   */
+  config: Record<string, unknown>;
 }
 
 export type ToolHandler<
@@ -71,6 +85,16 @@ export interface RunModuleOptions {
   activate?: (ctx: ModuleToolContext) => void | Promise<void>;
   /** Invoked during `handle.dispose()`. Runs before the connection closes. */
   deactivate?: () => void | Promise<void>;
+  /**
+   * Invoked whenever the host writes a new config blob via
+   * `modules/config/set`. The module process receives a `config/changed`
+   * notification (vscode-jsonrpc); this callback fires after `ctx.config`
+   * and `ctx.appInfo.config` have been replaced in place so handlers that
+   * read the context see the latest values synchronously. Runs only after
+   * the initial `initialize` handshake — notifications arriving before
+   * handshake are buffered until activate completes.
+   */
+  onConfigChanged?: (config: Record<string, unknown>) => void | Promise<void>;
   /**
    * Contribute extra fields to the `initialize` response. Runs before
    * `activate`; whatever it returns is merged onto `{ moduleId, toolCount,
@@ -157,6 +181,7 @@ export function runModule(opts: RunModuleOptions): RunModuleHandle {
       hostVersion: parsed.hostVersion,
       sdkVersion: SDK_VERSION,
       host,
+      config: parsed.config,
     };
     const extras = opts.onInitialize ? await opts.onInitialize(parsed) : {};
     if (opts.activate) {
@@ -169,6 +194,21 @@ export function runModule(opts: RunModuleOptions): RunModuleHandle {
       sdkVersion: SDK_VERSION,
       ...extras,
     };
+  });
+
+  connection.onNotification("config/changed", (rawConfig: unknown) => {
+    const nextConfig = coerceConfig(rawConfig);
+    if (ctx) {
+      ctx.config = nextConfig;
+      ctx.appInfo = { ...ctx.appInfo, config: nextConfig };
+    }
+    if (opts.onConfigChanged) {
+      void Promise.resolve(opts.onConfigChanged(nextConfig)).catch((err) => {
+        log.error("onConfigChanged threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
   });
 
   const prefix = `${opts.manifest.id}__`;
@@ -251,7 +291,15 @@ function normalizeInitializeParams(raw: unknown): ModuleAppInfo {
     .filter((c) => c.id.length > 0);
   const hostVersion =
     typeof params.hostVersion === "string" ? params.hostVersion : "0.0.0";
-  return { capabilities, hostVersion };
+  const config = coerceConfig(params.config);
+  return { capabilities, hostVersion, config };
+}
+
+function coerceConfig(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  return {};
 }
 
 /**
@@ -265,13 +313,18 @@ function fallbackContext(
   connection: MessageConnection,
   manifest: ModuleManifest,
 ): ModuleToolContext {
-  const appInfo: ModuleAppInfo = { capabilities: [], hostVersion: "0.0.0" };
+  const appInfo: ModuleAppInfo = {
+    capabilities: [],
+    hostVersion: "0.0.0",
+    config: {},
+  };
   return {
     log,
     appInfo,
     hostVersion: "0.0.0",
     sdkVersion: SDK_VERSION,
     host: createHostApi(connection, { log, appInfo, manifest }),
+    config: {},
   };
 }
 

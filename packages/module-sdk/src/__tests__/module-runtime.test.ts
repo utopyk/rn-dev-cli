@@ -565,4 +565,118 @@ describe("runModule", () => {
       await handle.dispose();
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 5a — per-module config surface.
+  // -------------------------------------------------------------------------
+
+  it("initialize propagates params.config into ctx.config + appInfo.config", async () => {
+    const h = harness();
+    let seen: ModuleToolContext | null = null;
+
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": (_args, ctx) => {
+          seen = ctx;
+          return { ok: true };
+        },
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    try {
+      await client.sendRequest("initialize", {
+        capabilities: [],
+        hostVersion: "1.0.0",
+        config: { greeting: "hello", loud: true },
+      });
+      await client.sendRequest("tool/ping", {});
+
+      expect(seen).not.toBeNull();
+      expect(seen!.config).toEqual({ greeting: "hello", loud: true });
+      expect(seen!.appInfo.config).toEqual({ greeting: "hello", loud: true });
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
+
+  it("config/changed notification replaces ctx.config + fires onConfigChanged", async () => {
+    const h = harness();
+    const observed: Array<Record<string, unknown>> = [];
+    let ctxRef: ModuleToolContext | null = null;
+
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": (_args, ctx) => {
+          ctxRef = ctx;
+          return { config: ctx.config };
+        },
+      },
+      onConfigChanged: (config) => {
+        observed.push(config);
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    try {
+      await client.sendRequest("initialize", {
+        capabilities: [],
+        hostVersion: "1.0.0",
+        config: { v: 1 },
+      });
+      await client.sendRequest("tool/ping", {});
+      expect(ctxRef!.config).toEqual({ v: 1 });
+
+      client.sendNotification("config/changed", { v: 2 });
+
+      // Round-trip a tool call so the reader drains the pending notification
+      // first — vscode-jsonrpc processes inbound messages in order, so by the
+      // time the reply lands the notification handler has definitely run.
+      const follow = await client.sendRequest<unknown, {
+        config: Record<string, unknown>;
+      }>("tool/ping", {});
+      expect(follow.config).toEqual({ v: 2 });
+      expect(observed).toEqual([{ v: 2 }]);
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
+
+  it("initialize defaults config to {} when params.config is missing", async () => {
+    const h = harness();
+    let seen: ModuleToolContext | null = null;
+
+    const handle = runModule({
+      manifest: h.manifest,
+      tools: {
+        "sample__ping": (_args, ctx) => {
+          seen = ctx;
+          return {};
+        },
+      },
+      input: h.moduleInput,
+      output: h.moduleOutput,
+    });
+
+    const client = h.clientConnect();
+    try {
+      await client.sendRequest("initialize", {
+        capabilities: [],
+        hostVersion: "1.0.0",
+      });
+      await client.sendRequest("tool/ping", {});
+      expect(seen!.config).toEqual({});
+    } finally {
+      client.dispose();
+      await handle.dispose();
+    }
+  });
 });

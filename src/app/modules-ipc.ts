@@ -36,6 +36,7 @@ import type {
   RegisteredModule,
 } from "../modules/registry.js";
 import type { ModuleInstanceState } from "../core/module-host/instance.js";
+import type { ModuleConfigStore } from "../modules/config-store.js";
 import {
   defaultModulesRoot,
   isDisabled,
@@ -66,6 +67,12 @@ export interface ModulesIpcOptions {
    * event emission can pass one in and listen for `modules-event` events.
    */
   moduleEvents?: EventEmitter;
+  /**
+   * Per-module config store. Defaults to `manager.configStore` so every
+   * caller hits the same on-disk state. Tests can inject a custom store
+   * to isolate filesystem side effects.
+   */
+  configStore?: ModuleConfigStore;
 }
 
 /**
@@ -79,13 +86,19 @@ export interface ModulesEvent {
     | "restarted"
     | "crashed"
     | "failed"
-    | "state-changed";
+    | "state-changed"
+    | "config-changed";
   moduleId: string;
   scopeUnit?: string;
   /** Present on state-changed. */
   state?: string;
   /** Present on crashed / failed. */
   reason?: string;
+  /**
+   * Present on config-changed — the freshly persisted blob. Lets renderer
+   * subscribers rebuild their views without a second round-trip.
+   */
+  config?: Record<string, unknown>;
 }
 
 export type ModulesIpcAction =
@@ -95,7 +108,9 @@ export type ModulesIpcAction =
   | "modules/call"
   | "modules/enable"
   | "modules/disable"
-  | "modules/subscribe";
+  | "modules/subscribe"
+  | "modules/config/get"
+  | "modules/config/set";
 
 const MODULES_ACTIONS: ReadonlySet<string> = new Set<ModulesIpcAction>([
   "modules/list",
@@ -105,6 +120,8 @@ const MODULES_ACTIONS: ReadonlySet<string> = new Set<ModulesIpcAction>([
   "modules/enable",
   "modules/disable",
   "modules/subscribe",
+  "modules/config/get",
+  "modules/config/set",
 ]);
 
 export interface RegisteredModuleRow {
@@ -162,6 +179,16 @@ export async function dispatchModulesAction(
       return disableModule(
         opts,
         msg.payload as { moduleId: string; scopeUnit?: string },
+      );
+    case "modules/config/get":
+      return getModuleConfig(
+        opts,
+        msg.payload as { moduleId: string; scopeUnit?: string },
+      );
+    case "modules/config/set":
+      return setModuleConfig(
+        opts,
+        msg.payload as ModuleConfigSetRequest,
       );
     case "modules/subscribe":
       // Subscribe is stream-shaped — not routed through the request/response
@@ -306,6 +333,122 @@ async function disableModule(
   }
 
   return { status: "disabled", alreadyDisabled };
+}
+
+// ---------------------------------------------------------------------------
+// modules/config/get + modules/config/set — per-module persistent config.
+// Exported so the Electron IPC layer can call them directly (same process as
+// the daemon); routing through the unix-socket dispatch would be a no-op.
+// ---------------------------------------------------------------------------
+
+export interface ModuleConfigSetRequest {
+  moduleId: string;
+  scopeUnit?: string;
+  /**
+   * Shallow merge into the currently-persisted config. Use the full blob
+   * as the patch when a replace semantic is needed.
+   */
+  patch: Record<string, unknown>;
+}
+
+export interface ModuleConfigGetResult {
+  moduleId: string;
+  config: Record<string, unknown>;
+}
+
+export type ModuleConfigSetResult =
+  | { kind: "ok"; config: Record<string, unknown> }
+  | {
+      kind: "error";
+      code: "E_CONFIG_VALIDATION" | "E_CONFIG_MODULE_UNKNOWN" | "E_CONFIG_BAD_PATCH";
+      message: string;
+    };
+
+export function getModuleConfig(
+  opts: ModulesIpcOptions,
+  payload: { moduleId: string; scopeUnit?: string } | null,
+): ModuleConfigGetResult | { error: string } {
+  if (!payload || typeof payload.moduleId !== "string") {
+    return { error: "modules/config/get requires { moduleId: string }" };
+  }
+  const store = resolveStore(opts);
+  return {
+    moduleId: payload.moduleId,
+    config: store.get(payload.moduleId),
+  };
+}
+
+export function setModuleConfig(
+  opts: ModulesIpcOptions,
+  payload: ModuleConfigSetRequest | null,
+): ModuleConfigSetResult {
+  if (!payload || typeof payload.moduleId !== "string") {
+    return {
+      kind: "error",
+      code: "E_CONFIG_BAD_PATCH",
+      message: "modules/config/set requires { moduleId, patch }",
+    };
+  }
+  if (
+    !payload.patch ||
+    typeof payload.patch !== "object" ||
+    Array.isArray(payload.patch)
+  ) {
+    return {
+      kind: "error",
+      code: "E_CONFIG_BAD_PATCH",
+      message: "modules/config/set patch must be a JSON object",
+    };
+  }
+
+  const reg = resolveRegistered(opts, payload.moduleId, payload.scopeUnit);
+  if (!reg) {
+    return {
+      kind: "error",
+      code: "E_CONFIG_MODULE_UNKNOWN",
+      message: `Module "${payload.moduleId}" is not registered`,
+    };
+  }
+
+  const store = resolveStore(opts);
+  const current = store.get(reg.manifest.id);
+  const next = { ...current, ...payload.patch };
+
+  const schema = extractConfigSchema(reg);
+  const validation = store.validate(next, schema);
+  if (!validation.valid) {
+    const lines = validation.errors.map(
+      (e) => `  ${e.path}: ${e.message} (${e.keyword})`,
+    );
+    return {
+      kind: "error",
+      code: "E_CONFIG_VALIDATION",
+      message: `Config validation failed for "${reg.manifest.id}":\n${lines.join("\n")}`,
+    };
+  }
+
+  store.write(reg.manifest.id, next);
+  opts.manager.notifyConfigChanged(reg.manifest.id, reg.scopeUnit, next);
+  emitModuleEvent(opts, {
+    kind: "config-changed",
+    moduleId: reg.manifest.id,
+    scopeUnit: reg.scopeUnit,
+    config: next,
+  });
+  return { kind: "ok", config: next };
+}
+
+function resolveStore(opts: ModulesIpcOptions): ModuleConfigStore {
+  return opts.configStore ?? opts.manager.configStore;
+}
+
+function extractConfigSchema(
+  reg: RegisteredModule,
+): Record<string, unknown> | undefined {
+  const contributes = reg.manifest.contributes as
+    | { config?: { schema?: Record<string, unknown> } }
+    | undefined;
+  return contributes?.config?.schema;
 }
 
 async function callModuleTool(

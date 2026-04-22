@@ -53,6 +53,14 @@ export interface ServiceBusEvents {
    * subscription mechanism.
    */
   moduleEvent: (event: ModulesEvent) => void;
+  /**
+   * The shared `moduleEvents` EventEmitter owned by `registerModulesIpc`.
+   * Published so Electron-side handlers (e.g. `modules:config-set`) that
+   * bypass the unix-socket dispatcher can still emit into the same bus
+   * MCP `modules/subscribe` consumers listen on — one subscription path,
+   * no divergent event sources.
+   */
+  moduleEventsBus: (emitter: EventEmitter) => void;
 }
 
 class ServiceBus extends EventEmitter {
@@ -90,6 +98,10 @@ class ServiceBus extends EventEmitter {
 
   emitModuleEvent(event: ModulesEvent) {
     this.emit("moduleEvent", event);
+  }
+
+  setModuleEventsBus(emitter: EventEmitter) {
+    this.emit("moduleEventsBus", emitter);
   }
 }
 
