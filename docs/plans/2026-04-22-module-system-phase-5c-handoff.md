@@ -96,7 +96,7 @@ Three coherent units in one PR:
 - **vitest:** 707 passed / 0 failed (+26 since PR #3 merged).
 - **tsc (root):** 149 — unchanged baseline.
 - **bun run build:** green.
-- **Manual GUI smoke:** Electron app boots cleanly (`[electron] Services started successfully`). Interactive per-panel screenshots were **not** captured this session — `osascript` + `screencapture` on this host only grabbed the desktop, and the parent terminal lacks Accessibility / Screen-Recording permissions to drive the Electron window. Martin should smoke `bun run dev:gui` locally before merging — DevSpace + DevTools + LintTest + MetroLogs + Settings + Marketplace + sidebar Tab-cycle.
+- **Manual GUI smoke:** passed. First pass regressed on the preload split (see "In-session regression" below); second pass after the fix + Quick-Mode ship came back clean.
 
 ---
 
@@ -140,7 +140,43 @@ Each of these is tracked in the list below; the "Deferred items" section calls t
 - **Arch P1-2** — `ModuleConfigForm` mixes IPC with presentation. Extract a `useModuleConfig(moduleId, scope)` hook when the second consumer arrives (likely Phase 6's per-module settings drawer off a Marketplace row click).
 - **Security P1-1** — host UI `PanelSenderRegistry.trustHostSender(window.webContents)` grants wildcard cross-module config-write authority. A renderer XSS could rewrite any module's config. Mitigation: either split trust into `host:read` / `host:write-own` / `host:write-cross-module`, or scope cross-module writes to a declared allowlist per panel. Phase 6 consideration — compounds once 3p modules ship schemas with sensitive fields.
 
+---
 
+## In-session regression — preload split broke `window.rndev`
+
+Commit 2 split the renderer preload into `electron/preload.js` + `electron/preload-allowlist.cjs`, with preload.js doing `require('./preload-allowlist.cjs')`. Martin's first smoke pass showed the renderer running `useSimulatedLogs` output ("CompileC Module1.swift", "MovieNightsClub rootTag:30") — the browser-only fallback at `renderer/hooks/useSimulatedLogs.ts:23` fires when `window.rndev` is undefined.
+
+Root cause: project is `"type": "module"` in package.json, so Electron's preload loader treated `preload.js` as ESM. Either `require` wasn't available or the relative `.cjs` path didn't resolve; the require threw silently and `contextBridge.exposeInMainWorld('rndev', ...)` never ran.
+
+Fix (commit 5, `a8fd969`): renamed `electron/preload.js` → `electron/preload.cjs`, inlined the allowlist data + predicates, wrapped the `require('electron')` in try/catch so vitest can still require the same file for the 10 predicate tests. Deleted `preload-allowlist.cjs`. Updated `main.ts` preload path + test import path.
+
+**Lesson:** Electron preload files must be self-contained in ESM-typed projects, and should carry an explicit `.cjs` extension. The preload runs in an isolated context where silent failures don't reach stdout — a layered default fallback (the simulated logs here) can mask it for hours.
+
+---
+
+## Quick Mode landed same session
+
+Commit 6 (`c160620`) implemented the "Quick Mode" from the prior `docs/superpowers/specs/2026-04-13-tab-close-retry-continue-quick-mode-design.md` spec (was in a worktree, never merged). When `mode === "quick"`: skip clean + code-signing check + build trigger; Metro starts with `resetCache: false`. The already-installed app binary on the device/sim connects to Metro directly. Drops smoke-test startup from ~5min (xcodebuild) to ~3s.
+
+Step behavior by mode:
+
+| Step       | Quick | Dirty | Clean | Ultra-Clean |
+|------------|:-----:|:-----:|:-----:|:-----------:|
+| Preflight  |   Y   |   Y   |   Y   |      Y      |
+| Clean      |   -   |   -   |   Y   |      Y      |
+| Watchman   |   Y   |   Y   |   Y   |      Y      |
+| Metro      |   Y   |   Y   |   Y   |      Y      |
+| Build      |   -   |   Y   |   Y   |      Y      |
+
+Out-of-scope sections from that same spec doc (not this session) — tight independent pieces, worth a small follow-up PR if they're biting day-to-day:
+
+- **Section 1 — Tab close double-click UX + builder cancel leak** (bug). Close button requires confusing double-click; `instances:remove` only kills Metro, leaks the Builder subprocess.
+- **Section 2 — Retry & Continue chain + busy flag** (feature). Retry currently re-runs one step; users want it to continue the chain.
+- **Section 4 — Profile banner mode display** (bug). Banner hardcodes `dirty:true` because `ProfileInfo.dirty` is a boolean; should be a `mode: string`.
+
+---
+
+## Deferred items (Phase 5c → Phase 6 and beyond)
 
 1. **Real install / uninstall.** Phase 6. `@npmcli/arborist --ignore-scripts`, registry SHA pin, consent dialog. The Marketplace renderer panel's "Action" column is deliberately a placeholder for built-ins today; Phase 6 fills it in for `kind === "subprocess"` rows.
 2. **Option (b) sidebar — drive off `modules:list-panels` + branch on `kind`.** Needs the `electronPanel` manifest schema to grow a `kind: "webview" | "renderer-native"` discriminator (or make `webviewEntry` optional) so built-ins can contribute renderer-native panels declaratively. Defer until Phase 7 or whenever a third renderer-native panel joins Marketplace + Settings.
