@@ -97,9 +97,25 @@ export interface CallToolPayload {
   args: Record<string, unknown>;
   /** Per-call override for the cold-start SLO; rarely set. */
   callTimeoutMs?: number;
+  /**
+   * Pass `true` when the panel has walked a user-visible confirmation
+   * for a `destructiveHint: true` tool. `resolveCallTool` rejects
+   * destructive tools without this token — the MCP-side proxy enforces
+   * the same gate via `permissionsAccepted[tool]`, so Phase 7 keeps
+   * agent-native parity with the panel surface.
+   */
+  confirmed?: boolean;
 }
 
-export type CallToolReply = ModuleCallSuccess | ModuleCallError;
+export type CallToolError =
+  | ModuleCallError
+  | {
+      kind: "error";
+      code: "E_DESTRUCTIVE_REQUIRES_CONFIRM";
+      message: string;
+    };
+
+export type CallToolReply = ModuleCallSuccess | CallToolError;
 
 // ---------------------------------------------------------------------------
 // Pure resolution logic — exported for unit tests
@@ -226,6 +242,13 @@ function findRegistered(
  * Reuses the `callModuleTool` helper from `modules-ipc.ts` so the
  * MCP-side `modules/call` dispatch and the panel-side `modules:call-tool`
  * funnel through the same acquire → sendRequest → release flow.
+ *
+ * Destructive-tool gate (P0, Phase 7 review): tools declared with
+ * `destructiveHint: true` in the manifest REQUIRE `payload.confirmed ===
+ * true`. The MCP-proxy side (`src/mcp/module-proxy.ts`) applies the
+ * equivalent gate via `permissionsAccepted[toolName]`. Without this,
+ * a panel XSS or a misbehaving in-panel button could silently
+ * uninstall apps / wipe device data.
  */
 export async function resolveCallTool(
   manager: ModuleHostManager,
@@ -240,6 +263,22 @@ export async function resolveCallTool(
       message: "modules:call-tool requires { tool, args? }",
     };
   }
+
+  const reg = registry.getAllManifests().find((r) => r.manifest.id === moduleId);
+  const toolDecl = reg?.manifest.contributes?.mcp?.tools?.find((t) => {
+    // Match both the prefixed wire name and the bare name — panels
+    // typically pass the bare form (`"uninstall-app"`), tests may
+    // pass either.
+    return t.name === payload.tool || t.name === `${moduleId}__${payload.tool}`;
+  });
+  if (toolDecl?.destructiveHint === true && payload.confirmed !== true) {
+    return {
+      kind: "error",
+      code: "E_DESTRUCTIVE_REQUIRES_CONFIRM",
+      message: `Tool "${payload.tool}" is marked destructiveHint: true. Re-invoke with { confirmed: true } after walking a user-visible confirmation.`,
+    };
+  }
+
   return callModuleTool(
     { manager, registry },
     {

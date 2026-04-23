@@ -28,7 +28,7 @@ import {
   screenshot,
   swipe,
   tap,
-  type,
+  typeText,
   uninstallApp,
 } from "./tools.js";
 
@@ -82,7 +82,7 @@ if (invokedAsEntry) {
       "device-control__swipe": (args) =>
         swipe(args as Parameters<typeof swipe>[0], deps),
       "device-control__type": (args) =>
-        type(args as Parameters<typeof type>[0], deps),
+        typeText(args as Parameters<typeof typeText>[0], deps),
       "device-control__launch-app": (args) =>
         launchApp(args as Parameters<typeof launchApp>[0], deps),
       "device-control__logs-tail": (args) =>

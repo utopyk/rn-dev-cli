@@ -40,8 +40,23 @@ describe("registerModuleCommands", () => {
     expect(flags).toContain("--permissions <list>");
     expect(flags).toContain("--registry-url <url>");
     expect(flags).toContain("--accept-registry-sha <sha>");
-    // `--yes, -y` commander renders as "--yes, -y" — just assert the long form.
-    expect(flags.some((f) => f.includes("--yes"))).toBe(true);
+    // `-y, --yes` — short form must come first so commander binds the
+    // short alias; the earlier `--yes, -y` shape silently swallowed -y.
+    expect(flags).toContain("-y, --yes");
+  });
+
+  it("install --yes parses onto opts.yes (catches the -y, --yes ordering trap)", () => {
+    const program = buildProgram();
+    const install = program.commands
+      .find((c) => c.name() === "module")!
+      .commands.find((c) => c.name() === "install")!;
+    // Prevent the action handler from running (it would hit the live
+    // installer); we only care about commander's opts parsing.
+    install.action(() => {});
+    program.parse(["node", "rn-dev", "module", "install", "foo", "-y"], {
+      from: "node",
+    });
+    expect(install.opts()["yes"]).toBe(true);
   });
 
   it("uninstall sub-command declares --keep-data", () => {

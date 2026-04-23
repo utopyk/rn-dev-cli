@@ -7,7 +7,7 @@
 // grpc device control, swap in appium-adb + adbkit — the DeviceAdapter
 // interface doesn't change.
 
-import { execBinary, execBinaryText } from "./exec.js";
+import { execBinary, execBinaryText, execErrorToError } from "./exec.js";
 import type { Device, DeviceAdapter, ListOutcome } from "./adapter.js";
 
 export interface AndroidAdapterOptions {
@@ -34,10 +34,7 @@ export function createAndroidAdapter(
   async function adbBuf(argv: readonly string[], timeoutMs?: number): Promise<Buffer> {
     const outcome = await execBinary(binary, argv, timeoutMs ? { timeoutMs } : undefined);
     if (outcome.kind === "ok") return outcome.stdout;
-    if (outcome.kind === "not-found") {
-      throw new Error(`${binary} is not installed or not on PATH`);
-    }
-    throw new Error(formatExecError(binary, outcome));
+    throw execErrorToError(outcome);
   }
 
   return {
@@ -92,12 +89,27 @@ export function createAndroidAdapter(
       ]);
     },
 
-    async type(udid, text) {
-      // `adb input text` treats spaces as field separators. %s is the
-      // documented workaround — replace spaces with `%s` so the shell
-      // hands a single argv entry to input.
-      const escaped = text.replace(/ /g, "%s");
-      await adb(["-s", udid, "shell", "input", "text", escaped]);
+    async typeText(udid, text) {
+      // `adb shell <argv>` re-parses its arguments through the device's
+      // shell. Passing free-form text naively (even after space→%s) lets
+      // an agent smuggle metacharacters — `"$(...)"`, backticks, `;cmd` —
+      // into arbitrary command execution as the adb shell user.
+      //
+      // Defense:
+      //   1. Single-quote the payload for the device shell. Embedded
+      //      single quotes are escaped via the POSIX `'\''` trick so a
+      //      closing quote can't terminate our wrapper.
+      //   2. Inside the quoted span, adb's `input text` still treats
+      //      spaces as arg separators — substitute `%s` per the adb
+      //      convention. The substitution happens AFTER quoting so an
+      //      attacker-supplied `%s` literal can't inject a space.
+      //
+      // Result: the device shell sees exactly one argument; `input text`
+      // receives it as a single payload; `$`, `` ` ``, `;`, `|`, `&`,
+      // redirects, and subshells are all inert.
+      const quoteSafe = text.replace(/'/g, "'\\''");
+      const inputSafe = quoteSafe.replace(/ /g, "%s");
+      await adb(["-s", udid, "shell", "input", "text", `'${inputSafe}'`]);
     },
 
     async launchApp(udid, appId) {
@@ -186,21 +198,3 @@ function mapState(raw: string): Device["state"] {
   return "unknown";
 }
 
-function formatExecError(
-  binary: string,
-  err: Exclude<
-    Awaited<ReturnType<typeof execBinary>>,
-    { kind: "ok" }
-  >,
-): string {
-  switch (err.kind) {
-    case "non-zero":
-      return `${binary} exited ${err.code ?? "null"}: ${err.stderr.trim() || "(no stderr)"}`;
-    case "timeout":
-      return `${binary} timed out after ${err.timeoutMs}ms`;
-    case "oversize":
-      return `${binary} stdout exceeded ${err.limitBytes} bytes`;
-    case "not-found":
-      return `${binary}: ${err.message}`;
-  }
-}

@@ -132,12 +132,12 @@ export async function swipe(
   return { ok: true };
 }
 
-export async function type(
+export async function typeText(
   args: { udid: string; text: string },
   deps: ToolDeps,
 ): Promise<{ ok: true }> {
   const adapter = await adapterFor(args.udid, deps);
-  await adapter.type(args.udid, args.text);
+  await adapter.typeText(args.udid, args.text);
   return { ok: true };
 }
 

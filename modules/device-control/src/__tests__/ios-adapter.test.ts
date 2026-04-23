@@ -87,6 +87,23 @@ describe("IosAdapter (via runSimctl stub)", () => {
     await expect(adapter.tap("AAAA", 10, 20)).rejects.toThrow(/not implemented/);
   });
 
+  it("typeText() also throws (simctl has no text-input primitive)", async () => {
+    const adapter = createIosAdapter({ runSimctl: async () => "" });
+    await expect(adapter.typeText("AAAA", "hello")).rejects.toThrow(/not implemented/);
+  });
+
+  it("humanRuntime maps iOS-17-4 → 'iOS 17.4' on parsed entries", () => {
+    const raw = JSON.stringify({
+      devices: {
+        "com.apple.CoreSimulator.SimRuntime.iOS-17-4": [
+          { udid: "AAAA", name: "iPhone 15", state: "Booted" },
+        ],
+      },
+    });
+    const devices = parseDevices(raw);
+    expect(devices[0]?.runtime).toBe("iOS 17.4");
+  });
+
   it("uninstallApp() invokes `simctl uninstall`", async () => {
     const runSimctl = vi.fn(async () => "");
     const adapter = createIosAdapter({ runSimctl });

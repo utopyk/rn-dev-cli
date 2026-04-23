@@ -1,10 +1,11 @@
 // `rn-dev module {install, uninstall, list, enable, disable, restart}` CLI.
 // Split from commands.ts so the sub-commands + their helpers stay in one
 // file. Commands that operate on live state (list/enable/disable/restart)
-// talk to a running daemon over the unix-socket `IpcClient`. Install/
-// uninstall work standalone — the marketplace installer only needs file-
-// system access + pacote/arborist — and best-effort notify any running
-// daemon so its ModuleRegistry picks the new module up without a restart.
+// talk to a running daemon over the unix-socket `IpcClient`. Install and
+// uninstall prefer the daemon too — so the running session's
+// ModuleRegistry stays in sync + the `install` / `uninstall` event bus
+// fires — and fall back to the standalone installer only when no daemon
+// is reachable.
 
 import { Command } from "commander";
 import path from "node:path";
@@ -15,7 +16,6 @@ import { ModuleRegistry } from "../modules/registry.js";
 import {
   installModule,
   uninstallModule,
-  type InstallResult,
 } from "../modules/marketplace/installer.js";
 import { RegistryFetcher } from "../modules/marketplace/registry.js";
 
@@ -28,20 +28,20 @@ export function registerModuleCommands(program: Command): void {
     .command("list")
     .description("List registered modules (requires a running rn-dev daemon)")
     .action(async () => {
-      const client = await getDaemonClient();
-      const reply = await client.request({
+      const client = await getDaemonClientOrExit();
+      const reply = await send(client, {
         type: "command",
         action: "modules/list",
         payload: {},
         id: newId(),
       });
-      const rows = extract<{ modules: Array<Record<string, unknown>> }>(reply, "modules");
-      if (!rows || rows.modules.length === 0) {
+      const rows = (reply.payload as { modules?: Array<Record<string, unknown>> })?.modules;
+      if (!rows || rows.length === 0) {
         console.log("No modules registered.");
         return;
       }
       console.log("\nModules:\n");
-      for (const row of rows.modules) {
+      for (const row of rows) {
         const id = String(row["id"] ?? "?");
         const version = String(row["version"] ?? "?");
         const kind = String(row["kind"] ?? "?");
@@ -64,8 +64,17 @@ export function registerModuleCommands(program: Command): void {
       "Override the registry URL (file://... or https://...)",
     )
     .option("--accept-registry-sha <sha>", "Accept a specific modules.json SHA-256")
-    .option("--yes, -y", "Skip the confirmation prompt")
+    .option("-y, --yes", "Skip the confirmation prompt")
     .action(async (moduleId: string, opts: InstallCliOptions) => {
+      // Security: surface the SHA-pin override explicitly so --yes
+      // --accept-registry-sha=<attacker-sha> isn't silent-bypass.
+      if (opts.acceptRegistrySha) {
+        process.stderr.write(
+          `[rn-dev] WARNING: --accept-registry-sha overrides the baked modules.json SHA pin. ` +
+            `Only proceed if you trust the registry URL (${opts.registryUrl ?? "<default>"}).\n`,
+        );
+      }
+
       const fetcher = new RegistryFetcher();
       const fetchOpts = {
         ...(opts.registryUrl !== undefined ? { url: opts.registryUrl } : {}),
@@ -108,11 +117,39 @@ export function registerModuleCommands(program: Command): void {
         process.exit(1);
       }
 
-      // Thread `thirdPartyAcknowledged: true` by default from the CLI —
-      // an explicit --yes on a terminal is the acknowledgment moment
-      // mirroring the GUI consent dialog's toggle.
+      // Prefer the daemon — that way the running ModuleRegistry sees
+      // the new module immediately + the `install` event fans out to
+      // MCP subscribers + the panel bridge. Standalone install is a
+      // fallback for when no session is up.
+      const daemon = await tryDaemonClient();
+      if (daemon) {
+        const reply = await send(daemon, {
+          type: "command",
+          action: "modules/install",
+          payload: {
+            moduleId: entry.id,
+            permissionsAccepted,
+            thirdPartyAcknowledged: true,
+          },
+          id: newId(),
+        });
+        const payload = reply.payload as InstallReplyShape;
+        if (payload?.kind === "ok") {
+          console.log(
+            `installed ${payload.moduleId} v${payload.version} at ${payload.installPath}`,
+          );
+          return;
+        }
+        console.error(
+          `install failed${payload?.code ? ` (${payload.code})` : ""}: ${payload?.message ?? "unknown"}`,
+        );
+        process.exit(1);
+      }
+
+      // Standalone path — no daemon is running, so we install directly
+      // and print a hint about the next startup picking up the module.
       const registry = new ModuleRegistry();
-      const result: InstallResult = await installModule({
+      const result = await installModule({
         entry,
         permissionsAccepted,
         registry,
@@ -126,18 +163,9 @@ export function registerModuleCommands(program: Command): void {
       console.log(
         `installed ${result.module.manifest.id} v${result.module.manifest.version} at ${result.installPath}`,
       );
-
-      // Best-effort notify a running daemon so the new module shows up
-      // immediately. Refresh via the `modules/list` round-trip — the
-      // daemon will have re-scanned `~/.rn-dev/modules/` on startup, but
-      // a running session needs a manual nudge. For now we just print
-      // a note; Phase 8 wires a `modules/rescan` action.
-      const daemon = await tryDaemonClient();
-      if (daemon) {
-        console.log(
-          "note: a daemon is running — restart it to pick up the new module (rescan is deferred).",
-        );
-      }
+      console.log(
+        "note: no daemon was running — start one with `rn-dev start` to load the new module.",
+      );
     });
 
   module
@@ -145,18 +173,15 @@ export function registerModuleCommands(program: Command): void {
     .description("Uninstall a module and remove its files")
     .option("--keep-data", "Preserve ~/.rn-dev/modules/<id>/data/ (retention GC: Phase 8)")
     .action(async (moduleId: string, opts: { keepData?: boolean }) => {
-      // Prefer the daemon's uninstall path — it tears down the live
-      // subprocess in addition to removing the files. Fall back to the
-      // standalone installer if no daemon is reachable.
       const daemon = await tryDaemonClient();
       if (daemon) {
-        const reply = await daemon.request({
+        const reply = await send(daemon, {
           type: "command",
           action: "modules/uninstall",
           payload: { moduleId, keepData: !!opts.keepData },
           id: newId(),
         });
-        const payload = reply.payload as { kind?: string; code?: string; message?: string; removed?: string };
+        const payload = reply.payload as UninstallReplyShape;
         if (payload?.kind === "ok") {
           console.log(`uninstalled ${moduleId} (removed ${payload.removed ?? ""})`);
           return;
@@ -184,8 +209,8 @@ export function registerModuleCommands(program: Command): void {
     .command("enable <moduleId>")
     .description("Enable a previously disabled module")
     .action(async (moduleId: string) => {
-      const client = await getDaemonClient();
-      const reply = await client.request({
+      const client = await getDaemonClientOrExit();
+      const reply = await send(client, {
         type: "command",
         action: "modules/enable",
         payload: { moduleId },
@@ -203,8 +228,8 @@ export function registerModuleCommands(program: Command): void {
     .command("disable <moduleId>")
     .description("Disable a module — shuts down its subprocess + skips on reload")
     .action(async (moduleId: string) => {
-      const client = await getDaemonClient();
-      const reply = await client.request({
+      const client = await getDaemonClientOrExit();
+      const reply = await send(client, {
         type: "command",
         action: "modules/disable",
         payload: { moduleId },
@@ -222,8 +247,8 @@ export function registerModuleCommands(program: Command): void {
     .command("restart <moduleId>")
     .description("Restart a module's subprocess")
     .action(async (moduleId: string) => {
-      const client = await getDaemonClient();
-      const reply = await client.request({
+      const client = await getDaemonClientOrExit();
+      const reply = await send(client, {
         type: "command",
         action: "modules/restart",
         payload: { moduleId },
@@ -249,21 +274,30 @@ interface InstallCliOptions {
   yes?: boolean;
 }
 
+interface InstallReplyShape {
+  kind?: string;
+  code?: string;
+  message?: string;
+  moduleId?: string;
+  version?: string;
+  installPath?: string;
+}
+
+interface UninstallReplyShape {
+  kind?: string;
+  code?: string;
+  message?: string;
+  removed?: string;
+}
+
 function newId(): string {
   return `cli-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function extract<T>(msg: IpcMessage, key: keyof T): T | null {
-  if (
-    msg &&
-    typeof msg === "object" &&
-    msg.payload &&
-    typeof msg.payload === "object" &&
-    key in (msg.payload as Record<string, unknown>)
-  ) {
-    return msg.payload as unknown as T;
-  }
-  return null;
+async function send(client: IpcClient, msg: IpcMessage): Promise<IpcMessage> {
+  const reply = await client.send(msg);
+  if (!reply) throw new Error("daemon returned no reply");
+  return reply;
 }
 
 /**
@@ -284,12 +318,11 @@ function candidateSockets(): string[] {
   return out;
 }
 
-async function tryDaemonClient(): Promise<DaemonClient | null> {
+async function tryDaemonClient(): Promise<IpcClient | null> {
   for (const socketPath of candidateSockets()) {
     const client = new IpcClient(socketPath);
     try {
-      const running = await client.isServerRunning();
-      if (running) return new DaemonClient(client);
+      if (await client.isServerRunning()) return client;
     } catch {
       /* try next */
     }
@@ -297,23 +330,11 @@ async function tryDaemonClient(): Promise<DaemonClient | null> {
   return null;
 }
 
-async function getDaemonClient(): Promise<DaemonClient> {
+async function getDaemonClientOrExit(): Promise<IpcClient> {
   const client = await tryDaemonClient();
   if (client) return client;
   console.error(
     "No running rn-dev daemon. Start one via `rn-dev start` (or set RN_DEV_DAEMON_SOCK to an existing socket).",
   );
   process.exit(1);
-}
-
-class DaemonClient {
-  constructor(private client: IpcClient) {}
-
-  async request(message: IpcMessage): Promise<IpcMessage> {
-    const reply = await this.client.send(message);
-    if (!reply) {
-      throw new Error("daemon returned no reply");
-    }
-    return reply;
-  }
 }

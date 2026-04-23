@@ -7,7 +7,7 @@ import {
   logsTail,
   screenshot,
   tap,
-  type,
+  typeText,
 } from "../tools.js";
 
 function stubAdapter(partial: Partial<DeviceAdapter> & { platform: Platform }): DeviceAdapter {
@@ -16,7 +16,7 @@ function stubAdapter(partial: Partial<DeviceAdapter> & { platform: Platform }): 
     screenshot: async () => ({ pngBase64: "" }),
     tap: async () => undefined,
     swipe: async () => undefined,
-    type: async () => undefined,
+    typeText: async () => undefined,
     launchApp: async () => undefined,
     logsTail: async () => ({ lines: [] }),
     uninstallApp: async () => undefined,
@@ -101,13 +101,13 @@ describe("screenshot() / tap() / type()", () => {
     expect(adapter.tap).toHaveBeenCalledWith("em-1", 100, 200);
   });
 
-  it("type() threads text verbatim", async () => {
+  it("typeText() threads text verbatim", async () => {
     const adapter = stubAdapter({
       platform: "android",
-      type: vi.fn(async () => undefined),
+      typeText: vi.fn(async () => undefined),
     });
-    await type({ udid: device.udid, text: "hi there" }, depsWith(adapter));
-    expect(adapter.type).toHaveBeenCalledWith("em-1", "hi there");
+    await typeText({ udid: device.udid, text: "hi there" }, depsWith(adapter));
+    expect(adapter.typeText).toHaveBeenCalledWith("em-1", "hi there");
   });
 
   it("logsTail() passes the lines count", async () => {

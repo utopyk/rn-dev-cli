@@ -4,7 +4,7 @@
 // only handles simulators in v0.1.0. Physical-device coverage is the
 // natural Phase 8 scope.
 
-import { execBinary, execBinaryText } from "./exec.js";
+import { execBinary, execBinaryText, execErrorToError } from "./exec.js";
 import type { Device, DeviceAdapter, ListOutcome } from "./adapter.js";
 
 export interface IosAdapterOptions {
@@ -29,10 +29,7 @@ export function createIosAdapter(options: IosAdapterOptions = {}): DeviceAdapter
       timeoutMs ? { timeoutMs } : undefined,
     );
     if (outcome.kind === "ok") return outcome.stdout;
-    if (outcome.kind === "not-found") {
-      throw new Error(`${binary} is not installed or not on PATH`);
-    }
-    throw new Error(formatSimctlError(binary, outcome));
+    throw execErrorToError(outcome);
   }
 
   return {
@@ -72,7 +69,7 @@ export function createIosAdapter(options: IosAdapterOptions = {}): DeviceAdapter
       );
     },
 
-    async type(_udid, _text) {
+    async typeText(_udid, _text) {
       throw new Error(
         "text input is not implemented for iOS simulators in v0.1.0 — use the hardware keyboard or Phase 8 adapter",
       );
@@ -157,24 +154,8 @@ function mapState(raw: string): Device["state"] {
 function humanRuntime(runtimeId: string): string {
   const idx = runtimeId.lastIndexOf(".");
   if (idx === -1) return runtimeId;
-  return runtimeId.slice(idx + 1).replace(/-/g, " ").replace("iOS ", "iOS ");
+  // `iOS-17-4` → `iOS 17.4`. Split the platform prefix off the version
+  // digits so the space-vs-dot distinction survives multiple hyphens.
+  return runtimeId.slice(idx + 1).replace(/^([A-Za-z]+)-/, "$1 ").replace(/-/g, ".");
 }
 
-function formatSimctlError(
-  binary: string,
-  err: Exclude<
-    Awaited<ReturnType<typeof execBinary>>,
-    { kind: "ok" }
-  >,
-): string {
-  switch (err.kind) {
-    case "non-zero":
-      return `${binary} simctl exited ${err.code ?? "null"}: ${err.stderr.trim() || "(no stderr)"}`;
-    case "timeout":
-      return `${binary} simctl timed out after ${err.timeoutMs}ms`;
-    case "oversize":
-      return `${binary} simctl stdout exceeded ${err.limitBytes} bytes`;
-    case "not-found":
-      return `${binary}: ${err.message}`;
-  }
-}

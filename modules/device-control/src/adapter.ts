@@ -41,7 +41,7 @@ export interface DeviceAdapter {
     durationMs: number,
   ): Promise<void>;
 
-  type(udid: string, text: string): Promise<void>;
+  typeText(udid: string, text: string): Promise<void>;
 
   launchApp(udid: string, appId: string): Promise<void>;
 

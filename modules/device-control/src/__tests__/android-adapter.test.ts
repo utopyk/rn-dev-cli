@@ -75,10 +75,10 @@ describe("AndroidAdapter (via runAdb stub)", () => {
     );
   });
 
-  it("type() escapes spaces as %s (adb convention)", async () => {
+  it("typeText() single-quotes the payload and escapes spaces as %s inside the quotes", async () => {
     const runAdb = vi.fn(async () => "");
     const adapter = createAndroidAdapter({ runAdb });
-    await adapter.type("emulator-5554", "hello world and more");
+    await adapter.typeText("emulator-5554", "hello world and more");
     expect(runAdb).toHaveBeenCalledWith(
       "adb",
       [
@@ -87,10 +87,33 @@ describe("AndroidAdapter (via runAdb stub)", () => {
         "shell",
         "input",
         "text",
-        "hello%sworld%sand%smore",
+        "'hello%sworld%sand%smore'",
       ],
       undefined,
     );
+  });
+
+  it("typeText() neutralizes shell metacharacters (defense against device-side re-parse)", async () => {
+    const runAdb = vi.fn(async () => "");
+    const adapter = createAndroidAdapter({ runAdb });
+    // The bytes `"$(id)"`, backticks, and `;cmd` must survive unchanged
+    // inside the single-quoted shell argument. `'\''` splices an escaped
+    // single quote without closing the wrapper.
+    await adapter.typeText("udid", "$(id)`reboot`;pm list\\'n");
+    const argv = runAdb.mock.calls[0]?.[1] as string[];
+    const payload = argv[argv.length - 1];
+    // Must be single-quoted at both ends.
+    expect(payload?.startsWith("'")).toBe(true);
+    expect(payload?.endsWith("'")).toBe(true);
+    // Embedded single quote is escaped as '\''.
+    expect(payload).toContain("'\\''");
+    // Dangerous sequences still appear inside the quotes (spaces become
+    // %s per adb's `input text` convention, but the metacharacters that
+    // mattered for shell re-parsing — $(), backticks, ; — survive
+    // verbatim where they're now inert because of the quoting.
+    expect(payload).toContain("$(id)");
+    expect(payload).toContain("`reboot`");
+    expect(payload).toContain(";pm%slist");
   });
 
   it("swipe() passes correct argv with durationMs", async () => {
