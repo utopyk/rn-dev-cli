@@ -37,6 +37,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
+  createReadStream,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -48,6 +49,7 @@ import {
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 
 export type AuditOutcome = "ok" | "error" | "denied";
 
@@ -213,45 +215,58 @@ export class AuditLog extends EventEmitter {
    * Paired rotation files: call `verify({ tailHash })` on the fresh log
    * with the `tailHash` from the rotated file's verification to continue
    * the chain.
+   *
+   * Streams line-by-line via `createReadStream` + `readline` so memory
+   * stays bounded even on multi-hundred-MB logs (Phase 8 review flagged
+   * the whole-file read as a DoS risk on a long-running daemon). The
+   * return shape is unchanged — callers just `await` now.
    */
-  verify(options: { tailHash?: string } = {}): VerifyResult {
+  async verify(options: { tailHash?: string } = {}): Promise<VerifyResult> {
     this.ensureInitialized();
     if (!existsSync(this.path)) {
       return { ok: true, entriesRead: 0, tailHash: options.tailHash ?? "" };
     }
-    const raw = readFileSync(this.path, "utf-8");
-    const lines = raw.split("\n").filter((l) => l.length > 0);
+
     let prevHash = options.tailHash ?? "";
     let entriesRead = 0;
-    for (const line of lines) {
-      let entry: AuditEntry;
-      try {
-        entry = JSON.parse(line) as AuditEntry;
-      } catch {
-        return { ok: false, failedAt: entriesRead, reason: "invalid JSON" };
+
+    const stream = createReadStream(this.path, { encoding: "utf-8" });
+    const rl = createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+      for await (const line of rl) {
+        if (line.length === 0) continue;
+        let entry: AuditEntry;
+        try {
+          entry = JSON.parse(line) as AuditEntry;
+        } catch {
+          return { ok: false, failedAt: entriesRead, reason: "invalid JSON" };
+        }
+        if (entry.prevHash !== prevHash) {
+          return {
+            ok: false,
+            failedAt: entry.seq,
+            reason: `prevHash mismatch (expected "${prevHash}", got "${entry.prevHash}")`,
+          };
+        }
+        // Canonicalize the entry WITHOUT its own `hash` field — otherwise
+        // the HMAC includes its own output and verify can never match
+        // append's computation. `Omit<AuditEntry, "hash">` is a type-level
+        // hint, not a runtime strip; destructure explicitly.
+        const { hash: _stored, ...withoutHash } = entry;
+        const expectedHash = this.computeHash(withoutHash, entry.prevHash);
+        if (entry.hash !== expectedHash) {
+          return {
+            ok: false,
+            failedAt: entry.seq,
+            reason: "hash mismatch — entry has been tampered",
+          };
+        }
+        prevHash = entry.hash;
+        entriesRead++;
       }
-      if (entry.prevHash !== prevHash) {
-        return {
-          ok: false,
-          failedAt: entry.seq,
-          reason: `prevHash mismatch (expected "${prevHash}", got "${entry.prevHash}")`,
-        };
-      }
-      // Canonicalize the entry WITHOUT its own `hash` field — otherwise
-      // the HMAC includes its own output and verify can never match
-      // append's computation. `Omit<AuditEntry, "hash">` is a type-level
-      // hint, not a runtime strip; destructure explicitly.
-      const { hash: _stored, ...withoutHash } = entry;
-      const expectedHash = this.computeHash(withoutHash, entry.prevHash);
-      if (entry.hash !== expectedHash) {
-        return {
-          ok: false,
-          failedAt: entry.seq,
-          reason: "hash mismatch — entry has been tampered",
-        };
-      }
-      prevHash = entry.hash;
-      entriesRead++;
+    } finally {
+      rl.close();
+      stream.destroy();
     }
     return { ok: true, entriesRead, tailHash: prevHash };
   }
