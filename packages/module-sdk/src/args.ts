@@ -52,6 +52,14 @@ export function boundedInt(
   key: string,
   opts: { min: number; max: number },
 ): number | undefined {
+  if (opts.min > opts.max) {
+    // Caller-config bug, not wire-data. Fail loud so a dynamically-
+    // computed `max` that drops below `min` surfaces at test time
+    // rather than silently returning `undefined` for every input.
+    throw new Error(
+      `boundedInt: min (${opts.min}) > max (${opts.max})`,
+    );
+  }
   const v = args[key];
   if (typeof v !== "number" || !Number.isInteger(v)) return undefined;
   if (v < opts.min || v > opts.max) return undefined;

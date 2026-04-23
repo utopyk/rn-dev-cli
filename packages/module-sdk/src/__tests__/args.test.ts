@@ -143,11 +143,10 @@ describe("boundedInt", () => {
     expect(boundedInt({ limit: null }, "limit", opts)).toBeUndefined();
   });
 
-  it("accepts min === max (single-value range)", () => {
-    expect(boundedInt({ limit: 5 }, "limit", { min: 5, max: 5 })).toBe(5);
-    expect(
-      boundedInt({ limit: 4 }, "limit", { min: 5, max: 5 }),
-    ).toBeUndefined();
+  it("throws when min > max (caller-config bug, not wire data)", () => {
+    expect(() =>
+      boundedInt({ limit: 5 }, "limit", { min: 10, max: 1 }),
+    ).toThrow("boundedInt: min (10) > max (1)");
   });
 });
 

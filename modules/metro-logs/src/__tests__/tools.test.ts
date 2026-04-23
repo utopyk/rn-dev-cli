@@ -116,10 +116,12 @@ describe("metro-logs tools — handler dispatch", () => {
     });
   });
 
-  it("list() passes an empty filter when no knobs supplied", async () => {
-    // Post Phase 12.1 — handler spreads the narrowed ListArgs directly;
-    // an empty filter is functionally identical to `undefined` for the
-    // host-side capability (every field access uses optional chaining).
+  it("list() passes an empty-shaped filter when no knobs supplied", async () => {
+    // The handler builds a fresh literal with every filter field
+    // explicitly listed. When args carry no knobs, every field is
+    // `undefined`; vitest `toEqual` ignores undefined properties, so
+    // the shape is structurally `{}`. Host-side `filter?.x` optional
+    // chaining makes this equivalent to `filter: undefined`.
     const { cap, calls } = makeCap();
     await list({ worktree: "wk" }, makeCtx(cap));
     expect(calls.list).toHaveBeenCalledWith({
@@ -142,10 +144,7 @@ describe("metro-logs tools — handler dispatch", () => {
   });
 });
 
-// Post Phase 12.1 — narrowing lives in `index.ts::toListArgs` (SDK
-// narrowers + `boundedInt`) and is covered by the SDK's `args.test.ts`.
-// The prior `extractFilter` tests (invalid cursor / invalid stream /
-// out-of-range limit / empty substring) are now exercised by
-// `packages/module-sdk/src/__tests__/args.test.ts` for the shared
-// primitives, and by `modules/metro-logs/src/__tests__/parity.test.ts`
-// for the host↔module shape invariants.
+// Arg narrowing lives in `index.ts::toListArgs` (SDK narrowers +
+// `boundedInt`) and is covered by the SDK's `args.test.ts`. The
+// host↔module shape invariants are covered by
+// `modules/metro-logs/src/__tests__/parity.test.ts`.

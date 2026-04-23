@@ -57,9 +57,8 @@ function readCaptureBodies(ctx: ModuleToolContext): boolean {
 // ---------------------------------------------------------------------------
 // Input shapes — typed precisely at the boundary. The manifest's
 // `inputSchema` is the source of truth; these mirror it. MCP validates
-// against the schema, the module's `index.ts` narrows defensively at
-// the wire boundary via SDK helpers (post Phase 12.1), and handlers
-// below trust both layers.
+// against the schema, `index.ts` narrows defensively at the wire
+// boundary via SDK helpers, and handlers below trust both layers.
 // ---------------------------------------------------------------------------
 
 export interface StatusArgs {
@@ -112,8 +111,18 @@ export async function list(
   ctx: ModuleToolContext
 ): Promise<DevToolsListDto> {
   const cap = resolveCapability(ctx);
-  const { worktree, ...filter } = args;
-  const result = await cap.list({ worktreeKey: worktree, filter });
+  // Explicit literal rebuild (not `{ worktree, ...filter } = args`) so
+  // that a future non-filter field on `ListArgs` doesn't silently leak
+  // to the capability via the structural rest-spread — TS's excess-
+  // property check only fires on fresh object literals, not on
+  // computed rest objects. Named destructure also drops any
+  // `__proto__` own-data-property a wire payload may carry (JSON.parse
+  // creates it as own data, not prototype link).
+  const { worktree, urlRegex, methods, statusRange, since, limit } = args;
+  const result = await cap.list({
+    worktreeKey: worktree,
+    filter: { urlRegex, methods, statusRange, since, limit },
+  });
   return toListDto(result, { captureBodies: readCaptureBodies(ctx) });
 }
 

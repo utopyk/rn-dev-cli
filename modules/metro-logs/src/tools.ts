@@ -46,9 +46,9 @@ function resolveCapability(ctx: ModuleToolContext): MetroLogsHostCapability {
 
 // ---------------------------------------------------------------------------
 // Input shapes — mirror the manifest's `inputSchema`. These are the
-// already-narrowed types produced by `index.ts::toListArgs` &c. — MCP
-// validates upstream, the module's `index.ts` narrows defensively at
-// the wire boundary, and handlers below trust both layers.
+// already-narrowed types produced by `index.ts::toListArgs` et al.
+// MCP validates upstream, `index.ts` narrows defensively at the wire
+// boundary, and handlers below trust both layers.
 // ---------------------------------------------------------------------------
 
 export interface StatusArgs {
@@ -84,8 +84,18 @@ export async function list(
   ctx: ModuleToolContext,
 ): Promise<MetroLogsListResult> {
   const cap = resolveCapability(ctx);
-  const { worktree, ...filter } = args;
-  return cap.list({ worktreeKey: worktree, filter });
+  // Explicit literal rebuild (not `{ worktree, ...filter } = args`) so
+  // that a future non-filter field on `ListArgs` doesn't silently leak
+  // to the capability via the structural rest-spread — TS's excess-
+  // property check only fires on fresh object literals, not on
+  // computed rest objects. Named destructure also drops any
+  // `__proto__` own-data-property a wire payload may carry (JSON.parse
+  // creates it as own data, not prototype link).
+  const { worktree, substring, stream, since, limit } = args;
+  return cap.list({
+    worktreeKey: worktree,
+    filter: { substring, stream, since, limit },
+  });
 }
 
 export async function clear(

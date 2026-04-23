@@ -43,9 +43,8 @@ export const MODULE_ID = "metro-logs" as const;
 // General-purpose narrowers (`str`, `boundedInt`, `ringCursor`, `Args`)
 // live in the SDK — imported via `@rn-dev/module-sdk`. Module-specific
 // narrowers (the `"stdout" | "stderr"` `stream` union) stay local.
-//
-// Post Phase 12.1 the narrowers here produce a `ListArgs` that's already
-// bounds-checked — `tools.ts` no longer re-validates.
+// The narrowers here produce a bounds-checked `ListArgs`; `tools.ts`
+// handlers trust the narrowed shape and don't re-validate.
 // ---------------------------------------------------------------------------
 
 function stream(args: Args): MetroLogStream | undefined {

@@ -54,9 +54,8 @@ export const MODULE_ID = "devtools-network" as const;
 // `requireStr`, `Args`) live in the SDK — imported via
 // `@rn-dev/module-sdk`. The `statusRange` tuple narrower is specific to
 // HTTP status-range filters, so it stays local.
-//
-// Post Phase 12.1 the narrowers here produce a `ListArgs` that's already
-// bounds-checked — `tools.ts` no longer re-validates.
+// The narrowers here produce a bounds-checked `ListArgs`; `tools.ts`
+// handlers trust the narrowed shape and don't re-validate.
 // ---------------------------------------------------------------------------
 
 function statusRange(args: Args): [number, number] | undefined {
