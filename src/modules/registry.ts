@@ -543,6 +543,7 @@ export const SENSITIVE_PERMISSION_PREFIXES: ReadonlyArray<string> = [
   "devtools:capture",
   "exec:adb",
   "exec:simctl",
+  "metro:logs",
 ];
 
 /** Shared matcher for both the manifest lint and the startup banner. */

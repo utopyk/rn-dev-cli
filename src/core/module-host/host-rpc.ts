@@ -1,5 +1,6 @@
 import type { ModuleManifest } from "@rn-dev/module-sdk";
 import type { CapabilityRegistry } from "./capabilities.js";
+import { expandPermissionAliases } from "./capabilities.js";
 import type { ModuleRpc } from "./rpc.js";
 
 export const HostRpcErrorCode = {
@@ -9,47 +10,12 @@ export const HostRpcErrorCode = {
   METHOD_DENIED: "HOST_METHOD_DENIED",
 } as const;
 
-/**
- * Phase 10 P2-7 — permission aliases. Map a legacy umbrella permission to
- * the set it now grants, so v1 manifests keep working during the grace
- * period while we migrate 3p modules to declare the granular permissions
- * explicitly. Aliases expand at `host/call` time (not at register time) —
- * the capability registry stores the real permission names; the
- * RPC layer widens the granted set for modules still using the umbrella.
- */
-const PERMISSION_ALIASES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "devtools:capture": ["devtools:capture:read", "devtools:capture:mutate"],
-};
-
-let warnedAliases = new Set<string>();
-
-function expandPermissionAliases(
-  grantedPermissions: readonly string[],
-  moduleId: string,
-): readonly string[] {
-  const out = new Set<string>(grantedPermissions);
-  for (const legacy of grantedPermissions) {
-    const expansion = PERMISSION_ALIASES[legacy];
-    if (!expansion) continue;
-    for (const p of expansion) out.add(p);
-    const warnKey = `${moduleId}:${legacy}`;
-    if (!warnedAliases.has(warnKey)) {
-      warnedAliases.add(warnKey);
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[module-host] module "${moduleId}" holds legacy permission "${legacy}" — deprecated, will be removed in a future version. Update the manifest to declare ${expansion
-          .map((p) => `"${p}"`)
-          .join(" + ")} explicitly.`,
-      );
-    }
-  }
-  return [...out];
-}
-
-/** Reset the warning set — tests only. */
-export function resetPermissionAliasWarningsForTests(): void {
-  warnedAliases = new Set<string>();
-}
+// Phase 11 Arch P2 — `PERMISSION_ALIASES` + `expandPermissionAliases`
+// moved to `./capabilities.js` (alongside `KNOWN_PERMISSIONS`) so the
+// alias table lives with the rest of the permission policy, not in the
+// transport layer. `resetPermissionAliasWarningsForTests` is re-exported
+// from `./capabilities.js` too; tests that used to import it from here
+// should update their imports.
 
 export type HostRpcErrorCodeValue =
   (typeof HostRpcErrorCode)[keyof typeof HostRpcErrorCode];
