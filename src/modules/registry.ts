@@ -235,10 +235,29 @@ export class ModuleRegistry {
    *
    * Manifests that fail schema validation, `hostRange`, or the 3p tool-prefix
    * policy are returned in `rejected[]` and skipped — never thrown.
+   *
+   * Composes `ModuleRegistry.scanUserGlobalModules()` (pure — returns the
+   * set of valid manifests on disk) with `applyScan()` (instance —
+   * registers each manifest, dedup errors become rejections). Callers
+   * that already have a scan result should call `applyScan()` directly
+   * rather than re-scanning.
    */
   loadUserGlobalModules(options: LoadManifestsOptions): LoadManifestsResult {
-    const scan = ModuleRegistry.scanUserGlobalModules(options);
-    const result: LoadManifestsResult = { modules: [], rejected: scan.rejected };
+    return this.applyScan(ModuleRegistry.scanUserGlobalModules(options));
+  }
+
+  /**
+   * Phase 10 P1-5 — instance half of the scan/apply split. Takes a
+   * `LoadManifestsResult` from `scanUserGlobalModules()` (or any other
+   * caller that produces pre-validated manifests) and registers each one.
+   * Duplicate-registration failures become rejections in the returned
+   * result so callers don't have to try/catch around the loop.
+   */
+  applyScan(scan: LoadManifestsResult): LoadManifestsResult {
+    const result: LoadManifestsResult = {
+      modules: [],
+      rejected: [...scan.rejected],
+    };
     for (const candidate of scan.modules) {
       try {
         this.registerManifest(candidate);
