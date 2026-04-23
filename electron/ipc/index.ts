@@ -4,6 +4,7 @@ import path from 'node:path';
 import { serviceBus } from '../../src/app/service-bus.js';
 import type { ModuleHostManager } from '../../src/core/module-host/manager.js';
 import type { ModuleRegistry } from '../../src/modules/registry.js';
+import { getDefaultAuditLog, type AuditEntry } from '../../src/core/audit-log.js';
 import { state, send } from './state.js';
 import { registerInstanceHandlers } from './instance.js';
 import { registerMetroHandlers } from './metro.js';
@@ -54,6 +55,16 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
 
   // Forward service bus events to renderer (legacy, for global logs)
   serviceBus.on('log', (text: string) => send('service:log', text));
+
+  // Phase 8 — every privileged host action funnels through the
+  // HMAC-chained AuditLog. The service-log pane UX is preserved via a
+  // single subscription that renders each audit entry as a human-
+  // readable line; the structured record persists at `~/.rn-dev/audit.log`
+  // and survives across daemon restarts (chain verifies post-hoc).
+  const auditLog = getDefaultAuditLog();
+  auditLog.on('appended', (entry: AuditEntry) => {
+    send('service:log', formatAuditEntry(entry));
+  });
 
   // Forward module-system events to the renderer so the sidebar rebuilds
   // when a 3p module installs / crashes / toggles + Settings + Marketplace
@@ -117,7 +128,12 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
       getBounds: () =>
         handleGetActiveBounds?.() ?? { x: 0, y: 0, width: 0, height: 0 },
       auditLog: (event) => {
-        send('service:log', `[panel-bridge] ${event.kind} ${event.moduleId}:${event.panelId}`);
+        void auditLog.append({
+          kind: 'panel-bridge',
+          moduleId: event.moduleId,
+          outcome: 'ok',
+          data: { action: event.kind, panelId: event.panelId },
+        });
       },
       senderRegistry,
     });
@@ -128,10 +144,12 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
       registry,
       bounds: boundsCache,
       auditHostCall: (event) => {
-        send(
-          'service:log',
-          `[host-call] ${event.moduleId}/${event.capabilityId}.${event.method} ${event.outcome}`,
-        );
+        void auditLog.append({
+          kind: 'host-call',
+          moduleId: event.moduleId,
+          outcome: mapHostCallOutcome(event.outcome),
+          data: { capabilityId: event.capabilityId, method: event.method },
+        });
       },
     };
 
@@ -176,10 +194,16 @@ function registerModulesConfigHandlers(): void {
       registry: latestRegistry,
       moduleEvents: latestEvents,
       auditConfigSet: (event) => {
-        send(
-          'service:log',
-          `[modules-config] set ${event.moduleId}${event.scopeUnit ? `:${event.scopeUnit}` : ''} keys=[${event.patchKeys.join(',')}] ${event.outcome}${event.code ? ` (${event.code})` : ''}`,
-        );
+        void auditLog.append({
+          kind: 'config-set',
+          moduleId: event.moduleId,
+          outcome: event.outcome === 'ok' ? 'ok' : 'error',
+          ...(event.code ? { code: event.code } : {}),
+          data: {
+            ...(event.scopeUnit ? { scopeUnit: event.scopeUnit } : {}),
+            patchKeys: event.patchKeys,
+          },
+        });
       },
     };
   };
@@ -233,10 +257,13 @@ function registerModulesInstallHandlers(): void {
       moduleEvents: latestEvents,
       hostVersion: latestHostVersion,
       auditInstall: (event) => {
-        send(
-          'service:log',
-          `[modules-${event.kind}] ${event.moduleId}${event.version ? ` v${event.version}` : ''} ${event.outcome}${event.code ? ` (${event.code})` : ''}`,
-        );
+        void auditLog.append({
+          kind: event.kind,
+          moduleId: event.moduleId,
+          outcome: event.outcome === 'ok' ? 'ok' : 'error',
+          ...(event.code ? { code: event.code } : {}),
+          ...(event.version ? { data: { version: event.version } } : {}),
+        });
       },
     };
   };
@@ -257,4 +284,44 @@ function registerModulesInstallHandlers(): void {
     latestHostVersion = v;
     tryInstall();
   });
+}
+
+/**
+ * Render a structured audit entry as a service-log line so the existing
+ * log pane UX doesn't regress. Mirrors the pre-Phase-8 format loosely
+ * (subsystem tag + id + outcome) with one tweak: the data payload's
+ * most-relevant fields are inlined.
+ */
+function formatAuditEntry(entry: AuditEntry): string {
+  const data = entry.data ?? {};
+  const tag = `[${entry.kind}]`;
+  const id = entry.moduleId || '(host)';
+  const extras: string[] = [];
+  for (const [k, v] of Object.entries(data)) {
+    if (v === undefined) continue;
+    extras.push(`${k}=${formatAuditValue(v)}`);
+  }
+  const codeSuffix = entry.code ? ` (${entry.code})` : '';
+  const extrasSuffix = extras.length > 0 ? ` ${extras.join(' ')}` : '';
+  return `${tag} ${id} ${entry.outcome}${codeSuffix}${extrasSuffix}`;
+}
+
+function formatAuditValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.join(',')}]`;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Map the Phase 4 host-call audit outcomes (unavailable | denied |
+ * method-not-found | ok | error) onto the AuditLog's 3-value `AuditOutcome`.
+ */
+function mapHostCallOutcome(
+  outcome: 'ok' | 'unavailable' | 'denied' | 'method-not-found' | 'error',
+): 'ok' | 'error' | 'denied' {
+  if (outcome === 'ok') return 'ok';
+  if (outcome === 'denied') return 'denied';
+  return 'error';
 }
