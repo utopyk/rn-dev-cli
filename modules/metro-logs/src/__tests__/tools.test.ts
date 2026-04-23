@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { ModuleToolContext } from "@rn-dev/module-sdk";
-import { clear, extractFilter, list, status } from "../tools.js";
+import { clear, list, status } from "../tools.js";
 import type {
   MetroLogsHostCapability,
   MetroLogsListArgs,
@@ -116,12 +116,15 @@ describe("metro-logs tools — handler dispatch", () => {
     });
   });
 
-  it("list() omits filter entirely when no knobs supplied", async () => {
+  it("list() passes an empty filter when no knobs supplied", async () => {
+    // Post Phase 12.1 — handler spreads the narrowed ListArgs directly;
+    // an empty filter is functionally identical to `undefined` for the
+    // host-side capability (every field access uses optional chaining).
     const { cap, calls } = makeCap();
     await list({ worktree: "wk" }, makeCtx(cap));
     expect(calls.list).toHaveBeenCalledWith({
       worktreeKey: "wk",
-      filter: undefined,
+      filter: {},
     });
   });
 
@@ -139,39 +142,10 @@ describe("metro-logs tools — handler dispatch", () => {
   });
 });
 
-describe("metro-logs tools — extractFilter", () => {
-  it("drops invalid cursor shapes", () => {
-    const f = extractFilter({
-      worktree: "wk",
-      since: { bufferEpoch: "oops" } as unknown as {
-        bufferEpoch: number;
-        sequence: number;
-      },
-    });
-    expect(f?.since).toBeUndefined();
-  });
-
-  it("drops invalid stream", () => {
-    const f = extractFilter({
-      stream: "stdin" as unknown as "stdout",
-    });
-    expect(f?.stream).toBeUndefined();
-  });
-
-  it("clamps/drops out-of-range limits", () => {
-    expect(extractFilter({ limit: 0 })?.limit).toBeUndefined();
-    expect(extractFilter({ limit: -5 })?.limit).toBeUndefined();
-    expect(extractFilter({ limit: 1.5 })?.limit).toBeUndefined();
-    expect(extractFilter({ limit: 10_000 })?.limit).toBeUndefined();
-    expect(extractFilter({ limit: 500 })?.limit).toBe(500);
-  });
-
-  it("drops empty substring", () => {
-    expect(extractFilter({ substring: "" })?.substring).toBeUndefined();
-    expect(extractFilter({ substring: "warn" })?.substring).toBe("warn");
-  });
-
-  it("returns undefined when no filter fields are present", () => {
-    expect(extractFilter({ worktree: "wk" })).toBeUndefined();
-  });
-});
+// Post Phase 12.1 — narrowing lives in `index.ts::toListArgs` (SDK
+// narrowers + `boundedInt`) and is covered by the SDK's `args.test.ts`.
+// The prior `extractFilter` tests (invalid cursor / invalid stream /
+// out-of-range limit / empty substring) are now exercised by
+// `packages/module-sdk/src/__tests__/args.test.ts` for the shared
+// primitives, and by `modules/metro-logs/src/__tests__/parity.test.ts`
+// for the host↔module shape invariants.
