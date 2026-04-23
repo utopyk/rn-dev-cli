@@ -1037,67 +1037,87 @@ async function applyManifestChange(
   opts: ModulesIpcOptions,
   change: ManifestChange,
 ): Promise<void> {
-  if (change.kind === "install") {
-    opts.registry.registerManifest(change.candidate);
-    emitModuleEvent(opts, {
-      kind: "install",
-      moduleId: change.candidate.manifest.id,
-      scopeUnit: change.candidate.scopeUnit,
-      version: change.candidate.manifest.version,
-    });
-    return;
-  }
+  switch (change.kind) {
+    case "install": {
+      opts.registry.registerManifest(change.candidate);
+      emitModuleEvent(opts, {
+        kind: "install",
+        moduleId: change.candidate.manifest.id,
+        scopeUnit: change.candidate.scopeUnit,
+        version: change.candidate.manifest.version,
+      });
+      return;
+    }
 
-  if (change.kind === "uninstall") {
-    // Tear down any live subprocess before unregistering so acquire()
-    // never finds a dangling manifest with no running process.
-    try {
-      await opts.manager.shutdown(
+    case "uninstall": {
+      // Tear down any live subprocess before unregistering so acquire()
+      // never finds a dangling manifest with no running process.
+      try {
+        await opts.manager.shutdown(
+          change.existing.manifest.id,
+          change.existing.scopeUnit,
+        );
+      } catch {
+        /* acceptable — module may not have been acquired */
+      }
+      opts.registry.unregisterManifest(
         change.existing.manifest.id,
         change.existing.scopeUnit,
       );
-    } catch {
-      /* acceptable — module may not have been acquired */
+      emitModuleEvent(opts, {
+        kind: "uninstall",
+        moduleId: change.existing.manifest.id,
+        scopeUnit: change.existing.scopeUnit,
+      });
+      return;
     }
-    opts.registry.unregisterManifest(
-      change.existing.manifest.id,
-      change.existing.scopeUnit,
-    );
-    emitModuleEvent(opts, {
-      kind: "uninstall",
-      moduleId: change.existing.manifest.id,
-      scopeUnit: change.existing.scopeUnit,
-    });
-    return;
-  }
 
-  // update — a version bump. Tear down + re-register with the new
-  // manifest. Agents see tools/listChanged because we fire an
-  // uninstall + install pair.
-  try {
-    await opts.manager.shutdown(
-      change.existing.manifest.id,
-      change.existing.scopeUnit,
-    );
-  } catch {
-    /* acceptable */
+    case "update": {
+      // update — a version bump. Tear down + re-register with the new
+      // manifest. Agents see tools/listChanged because we fire an
+      // uninstall + install pair.
+      try {
+        await opts.manager.shutdown(
+          change.existing.manifest.id,
+          change.existing.scopeUnit,
+        );
+      } catch {
+        /* acceptable */
+      }
+      opts.registry.unregisterManifest(
+        change.existing.manifest.id,
+        change.existing.scopeUnit,
+      );
+      opts.registry.registerManifest(change.candidate);
+      emitModuleEvent(opts, {
+        kind: "uninstall",
+        moduleId: change.existing.manifest.id,
+        scopeUnit: change.existing.scopeUnit,
+      });
+      emitModuleEvent(opts, {
+        kind: "install",
+        moduleId: change.candidate.manifest.id,
+        scopeUnit: change.candidate.scopeUnit,
+        version: change.candidate.manifest.version,
+      });
+      return;
+    }
+
+    default: {
+      // Phase 10 reviewer follow-up (Kieran TS P1-b): exhaustiveness
+      // anchor. If `ManifestChange` grows a new kind, TS rejects this
+      // assignment at compile time so the new branch can't be silently
+      // omitted. Keeps the dispatcher honest as the module lifecycle
+      // expands (e.g. a future `"reload"` for manifest edits without a
+      // version bump).
+      const _exhaustive: never = change;
+      throw new Error(
+        `applyManifestChange: unreachable — got unexpected change ${JSON.stringify(
+          _exhaustive,
+        )}`,
+      );
+    }
   }
-  opts.registry.unregisterManifest(
-    change.existing.manifest.id,
-    change.existing.scopeUnit,
-  );
-  opts.registry.registerManifest(change.candidate);
-  emitModuleEvent(opts, {
-    kind: "uninstall",
-    moduleId: change.existing.manifest.id,
-    scopeUnit: change.existing.scopeUnit,
-  });
-  emitModuleEvent(opts, {
-    kind: "install",
-    moduleId: change.candidate.manifest.id,
-    scopeUnit: change.candidate.scopeUnit,
-    version: change.candidate.manifest.version,
-  });
 }
 
 export async function installAction(

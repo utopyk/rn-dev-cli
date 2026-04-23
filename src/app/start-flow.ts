@@ -28,6 +28,7 @@ import {
   settingsModule,
   lintTestModule,
   metroLogsModule,
+  isSensitivePermission,
 } from "../modules/index.js";
 import {
   createModuleSystem,
@@ -568,16 +569,11 @@ async function startServicesAsync(
   // ambient signal that a data-sensitive module is live. Emit one warning
   // line per module carrying a sensitive permission so tailing operators
   // see "devtools-network active" without running `rn-dev module list`.
-  const SENSITIVE_PERMS: ReadonlySet<string> = new Set([
-    "devtools:capture",
-    "devtools:capture:read",
-    "devtools:capture:mutate",
-    "exec:adb",
-    "exec:simctl",
-  ]);
+  // Uses `isSensitivePermission` from `src/modules/registry.ts` so the
+  // manifest lint (Phase 10 P2-12) and this banner stay on the same list.
   for (const mod of loadResult.modules) {
-    const sensitive = (mod.manifest.permissions ?? []).filter((p) =>
-      SENSITIVE_PERMS.has(p),
+    const sensitive = (mod.manifest.permissions ?? []).filter(
+      isSensitivePermission,
     );
     if (sensitive.length > 0) {
       emit(

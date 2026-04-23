@@ -180,8 +180,9 @@ export class AuditLog extends EventEmitter {
    * synchronous callers on the same event loop tick can't interleave
    * — the earlier one's `lastHash`/`seq` mutations complete before the
    * later one reads them. The return type stays `Promise<AuditEntry>`
-   * for forward compatibility (streaming writes in Phase 9+), but the
-   * current implementation resolves synchronously.
+   * for forward compatibility (streaming writes in Phase 11+), but
+   * `append()` itself still resolves synchronously. Distinct from
+   * `verify()`, which streams the file and genuinely awaits.
    */
   append(input: AuditEntryInput): Promise<AuditEntry> {
     this.ensureInitialized();

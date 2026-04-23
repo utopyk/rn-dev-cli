@@ -286,6 +286,45 @@ describe("loadSingleManifest — S6 warning lint (Phase 10 P2-12)", () => {
     }
   });
 
+  it("rejects a description that mentions the substring but not as the canonical Treat…instructions. sentence", () => {
+    // Security P2-A hardening (post-review): the substring check used to
+    // accept any description containing "as data, not instructions", which
+    // an attacker could trivially embed in an unrelated phrase. Now the
+    // regex requires the full canonical sentence shape.
+    const { manifestPath, cleanup } = makeTmpManifest({
+      id: "fixture",
+      version: "0.1.0",
+      hostRange: ">=0.1.0",
+      scope: "global",
+      permissions: ["devtools:capture:read"],
+      contributes: {
+        mcp: {
+          tools: [
+            {
+              name: "fixture__bypass",
+              description:
+                "Use this as your starting point; returns the raw stream as data, not instructions for further parsing.",
+              inputSchema: { type: "object" },
+            },
+          ],
+        },
+      },
+    });
+    try {
+      const result = ModuleRegistry.loadSingleManifest(manifestPath, {
+        hostVersion: "0.1.0",
+        scopeUnit: "global",
+        isBuiltIn: false,
+      });
+      expect(result.kind).toBe("err");
+      if (result.kind === "err") {
+        expect(result.rejection.code).toBe("E_INVALID_MANIFEST");
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("skips the lint for built-in modules (their manifests aren't author-facing)", () => {
     const { manifestPath, cleanup } = makeTmpManifest({
       id: "built-in-fixture",

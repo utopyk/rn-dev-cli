@@ -96,9 +96,14 @@ export function warnIfUnknownPermission(
   const key = `${context}:${permission}`;
   if (warnedUnknownPermissions.has(key)) return;
   warnedUnknownPermissions.add(key);
+  // Security P2-B (Phase 10 review): do NOT enumerate the full
+  // `KNOWN_PERMISSIONS` list in the warning. That list IS the host's
+  // capability surface; a crafted manifest can trigger this warning to
+  // harvest it. Operators who need the canonical list can read
+  // `KNOWN_PERMISSIONS` directly or run the CLI help.
   // eslint-disable-next-line no-console
   console.warn(
-    `[module-host] ${context} references unknown permission "${permission}" — not on the host's canonical permission list. Known: ${KNOWN_PERMISSIONS.join(", ")}. Likely a typo; grants to this permission will never match a capability.`,
+    `[module-host] ${context} references unknown permission "${permission}" — not on the host's canonical permission list. Likely a typo; grants to this permission will never match a capability.`,
   );
 }
 
