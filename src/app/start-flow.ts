@@ -17,7 +17,8 @@ import { CapabilityRegistry } from "../core/module-host/capabilities.js";
 import {
   createDevtoolsHostCapability,
   DEVTOOLS_CAPABILITY_ID,
-  DEVTOOLS_CAPABILITY_PERMISSION,
+  DEVTOOLS_CAPABILITY_READ_PERMISSION,
+  DEVTOOLS_METHOD_PERMISSIONS,
 } from "../core/devtools/host-capability.js";
 import { registerModulesIpc } from "./modules-ipc.js";
 import { loadTheme, getThemeEffects } from "../ui/theme-provider.js";
@@ -546,7 +547,10 @@ async function startServicesAsync(
   capabilities.register(
     DEVTOOLS_CAPABILITY_ID,
     createDevtoolsHostCapability(devtools, worktreeKey),
-    { requiredPermission: DEVTOOLS_CAPABILITY_PERMISSION },
+    {
+      requiredPermission: DEVTOOLS_CAPABILITY_READ_PERMISSION,
+      methodPermissions: DEVTOOLS_METHOD_PERMISSIONS,
+    },
   );
   const { moduleHost } = createModuleSystem({
     hostVersion,
@@ -575,6 +579,8 @@ async function startServicesAsync(
   // see "devtools-network active" without running `rn-dev module list`.
   const SENSITIVE_PERMS: ReadonlySet<string> = new Set([
     "devtools:capture",
+    "devtools:capture:read",
+    "devtools:capture:mutate",
     "exec:adb",
     "exec:simctl",
   ]);

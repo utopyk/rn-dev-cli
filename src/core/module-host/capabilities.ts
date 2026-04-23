@@ -8,6 +8,17 @@
 export interface RegisterOptions {
   requiredPermission?: string;
   /**
+   * Phase 10 P2-7 — optional per-method permission overrides. Layered on
+   * top of `requiredPermission`: the capability-level permission is the
+   * baseline gate for `resolve()` (you need the baseline to see the
+   * impl at all), and each method can demand a stricter permission
+   * checked by `resolveMethod()`. Used by the devtools capability to
+   * split read-only (list/get/status) from mutating (clear/selectTarget)
+   * methods — a module with read-only grants can't drop the worktree's
+   * capture buffer.
+   */
+  methodPermissions?: Readonly<Record<string, string>>;
+  /**
    * Opt-in override for reserved id enforcement. Only `startFlow` /
    * `startRealServices` use this when wiring the host's own `"log"` /
    * `"appInfo"` implementations; every other caller (3p + built-in
@@ -19,12 +30,14 @@ export interface RegisterOptions {
 export interface CapabilityDescriptor {
   id: string;
   requiredPermission?: string;
+  methodPermissions?: Readonly<Record<string, string>>;
 }
 
 interface StoredCapability<T = unknown> {
   id: string;
   impl: T;
   requiredPermission?: string;
+  methodPermissions?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -56,6 +69,9 @@ export class CapabilityRegistry {
       id,
       impl,
       requiredPermission: options.requiredPermission,
+      ...(options.methodPermissions !== undefined
+        ? { methodPermissions: options.methodPermissions }
+        : {}),
     });
   }
 
@@ -75,6 +91,18 @@ export class CapabilityRegistry {
     return entry.impl as T;
   }
 
+  /**
+   * Phase 10 P2-7 — second-level permission check. Callers that already
+   * `resolve()`'d a capability (baseline permission granted) can use this
+   * to gate individual methods on stricter permissions. Returns the
+   * stricter permission required for `method` (or undefined if the method
+   * has no override). The RPC layer uses this to reject calls like
+   * `devtools.clear()` from a read-only-permissioned module.
+   */
+  requiredPermissionForMethod(id: string, method: string): string | undefined {
+    return this.entries.get(id)?.methodPermissions?.[method];
+  }
+
   ids(): string[] {
     return [...this.entries.keys()];
   }
@@ -84,14 +112,24 @@ export class CapabilityRegistry {
     if (!entry) return null;
     return {
       id: entry.id,
-      requiredPermission: entry.requiredPermission,
+      ...(entry.requiredPermission !== undefined
+        ? { requiredPermission: entry.requiredPermission }
+        : {}),
+      ...(entry.methodPermissions !== undefined
+        ? { methodPermissions: entry.methodPermissions }
+        : {}),
     };
   }
 
   describeAll(): CapabilityDescriptor[] {
     return [...this.entries.values()].map((e) => ({
       id: e.id,
-      requiredPermission: e.requiredPermission,
+      ...(e.requiredPermission !== undefined
+        ? { requiredPermission: e.requiredPermission }
+        : {}),
+      ...(e.methodPermissions !== undefined
+        ? { methodPermissions: e.methodPermissions }
+        : {}),
     }));
   }
 }
