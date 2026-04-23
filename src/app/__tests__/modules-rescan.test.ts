@@ -192,7 +192,7 @@ describe("rescanAction", () => {
       const result = await rescanAction(opts);
       expect(result.added).toEqual(["valid"]);
       expect(result.rejected.length).toBeGreaterThan(0);
-      expect(result.rejected[0]?.path).toContain("broken");
+      expect(result.rejected[0]).toContain("broken");
       expect(registry.getManifest("broken", "global")).toBeUndefined();
     } finally {
       rmSync(modulesDir, { recursive: true, force: true });

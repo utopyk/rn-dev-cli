@@ -22,12 +22,16 @@
 // needs to audit, route through the daemon's IPC.
 //
 // Rotation: when the active log exceeds `rotateBytes` (default 10MB), the
-// NEXT append rotates. `audit.log` → `audit.log.1` (overwriting any prior
-// rotated file), then a fresh `audit.log` starts with a genesis entry
-// whose `prevHash` is the rotated file's tail hash. The chain therefore
-// continues across rotation boundaries — `verify()` can walk a pair of
-// files by feeding the `audit.log.1` tail hash into the `audit.log` head
-// verification.
+// NEXT append rotates. Rotation shifts files up the numbered suffix:
+//   audit.log.2 → audit.log.3
+//   audit.log.1 → audit.log.2
+//   audit.log   → audit.log.1
+// Retention is bounded by `rotateKeep` (default 3) so a chatty daemon
+// doesn't fill the disk; the oldest file is deleted when the shift would
+// otherwise create a new suffix past the limit. Fresh `audit.log` starts
+// with the rotated tail's hash as `prevHash`, so the chain continues
+// across rotation boundaries — `verify()` walks the pair by feeding the
+// `audit.log.1` tail hash into the `audit.log` head verification.
 
 import { createHmac, randomBytes } from "node:crypto";
 import {
@@ -37,6 +41,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -46,25 +51,68 @@ import { dirname, join } from "node:path";
 
 export type AuditOutcome = "ok" | "error" | "denied";
 
-export interface AuditEntryInput {
-  /**
-   * Event kind. Namespaced by subsystem:
-   *   - `"install"` / `"uninstall"` — Marketplace install flow
-   *   - `"config-set"` — per-module config mutations
-   *   - `"host-call"` — cross-module capability invocations
-   *   - `"panel-bridge"` — WebContentsView register/unregister
-   */
-  kind: string;
-  /** Module the event applies to. Empty string for host-level events. */
+/**
+ * Discriminated union over `kind` so every subsystem's audit payload is
+ * typed at the call site and exhaustively handled by `formatAuditEntry`
+ * + post-mortem tools. Satisfies the project rule "no `Record<string,
+ * unknown>` in production" — each kind's extra fields are declared
+ * explicitly. New subsystems add a variant here; canonicalization +
+ * HMAC are structure-agnostic and keep working.
+ */
+export type AuditEntryInput =
+  | AuditInstallInput
+  | AuditUninstallInput
+  | AuditHostCallInput
+  | AuditConfigSetInput
+  | AuditPanelBridgeInput;
+
+export interface AuditInstallInput {
+  kind: "install";
+  /** 3p module id from the curated registry. */
   moduleId: string;
   outcome: AuditOutcome;
-  /** Error code for `outcome === "error"` — optional for success paths. */
   code?: string;
-  /** Anything else. Must be JSON-clonable. */
-  data?: Record<string, unknown>;
+  /** Version from the installed manifest — absent on error paths. */
+  version?: string;
 }
 
-export interface AuditEntry extends AuditEntryInput {
+export interface AuditUninstallInput {
+  kind: "uninstall";
+  moduleId: string;
+  outcome: AuditOutcome;
+  code?: string;
+}
+
+export interface AuditHostCallInput {
+  kind: "host-call";
+  moduleId: string;
+  outcome: AuditOutcome;
+  /** Capability id resolved via `host.capability<T>(id)`. */
+  capabilityId: string;
+  method: string;
+}
+
+export interface AuditConfigSetInput {
+  kind: "config-set";
+  moduleId: string;
+  outcome: AuditOutcome;
+  code?: string;
+  /** Worktree key or `"global"`; omitted for the default. */
+  scopeUnit?: string;
+  /** Keys from the patch object — never values (config may be sensitive). */
+  patchKeys: string[];
+}
+
+export interface AuditPanelBridgeInput {
+  kind: "panel-bridge";
+  moduleId: string;
+  outcome: AuditOutcome;
+  /** `"register"` / `"unregister"` / `"show"` / `"hide"`. */
+  action: string;
+  panelId: string;
+}
+
+export type AuditEntry = AuditEntryInput & {
   /** Epoch ms — `Date.now()` at append time. */
   ts: number;
   /** Monotonic sequence number within the active file. Reset on rotation. */
@@ -73,7 +121,7 @@ export interface AuditEntry extends AuditEntryInput {
   prevHash: string;
   /** HMAC-SHA256(key, canonical(entry without hash) + prevHash). Hex. */
   hash: string;
-}
+};
 
 export interface AuditLogOptions {
   /** Override the log file path. Defaults to `~/.rn-dev/audit.log`. */
@@ -87,6 +135,15 @@ export interface AuditLogOptions {
   key?: Buffer;
   /** Size in bytes that triggers rotation. Defaults to 10 MiB. */
   rotateBytes?: number;
+  /**
+   * Number of rotated-file generations to retain. The active
+   * `audit.log` plus `audit.log.1` ... `audit.log.N` are kept; files
+   * older than `audit.log.N` are deleted on rotation. Defaults to 3.
+   * Operators wanting long-term retention should archive to a
+   * dedicated pipeline on each rotation (e.g. a syslog bridge
+   * subscribing to `rotated`).
+   */
+  rotateKeep?: number;
   /** Clock override (tests). Defaults to `Date.now`. */
   now?: () => number;
 }
@@ -95,12 +152,11 @@ export class AuditLog extends EventEmitter {
   private readonly path: string;
   private readonly keyPath: string;
   private readonly rotateBytes: number;
+  private readonly rotateKeep: number;
   private readonly now: () => number;
   private key: Buffer | null = null;
   private seq = 0;
   private lastHash = "";
-  /** Promise chain so concurrent `append()`s serialize. */
-  private tail: Promise<void> = Promise.resolve();
   private initialized = false;
 
   constructor(opts: AuditLogOptions = {}) {
@@ -108,39 +164,45 @@ export class AuditLog extends EventEmitter {
     this.path = opts.path ?? defaultLogPath();
     this.keyPath = opts.keyPath ?? defaultKeyPath();
     this.rotateBytes = opts.rotateBytes ?? 10 * 1024 * 1024;
+    this.rotateKeep = opts.rotateKeep ?? 3;
     this.now = opts.now ?? (() => Date.now());
     if (opts.key) this.key = opts.key;
   }
 
   /**
-   * Append an entry. Serializes with any in-flight append. Resolves
-   * once the entry is flushed to disk. Emits `"appended"` with the full
-   * entry (including `hash`) so listeners (e.g. the Electron service-log
-   * mirror) can react without re-reading the file.
+   * Append an entry. Emits `"appended"` with the full entry (including
+   * `hash`) so listeners (e.g. the Electron service-log mirror) can
+   * react without re-reading the file.
+   *
+   * Concurrency: `appendFileSync` is a blocking Node syscall, so two
+   * synchronous callers on the same event loop tick can't interleave
+   * — the earlier one's `lastHash`/`seq` mutations complete before the
+   * later one reads them. The return type stays `Promise<AuditEntry>`
+   * for forward compatibility (streaming writes in Phase 9+), but the
+   * current implementation resolves synchronously.
    */
   append(input: AuditEntryInput): Promise<AuditEntry> {
-    const run = this.tail.then(async () => {
-      this.ensureInitialized();
-      // Rotate BEFORE building so the new entry's `seq` reflects the
-      // fresh file (reset to 1) instead of continuing the pre-rotation
-      // counter. The chain (prevHash) continues across rotation; seq
-      // resets per-file so operators can locate entries within a single
-      // log.
-      this.rotateIfNeeded();
-      const entry = this.buildEntry(input);
+    this.ensureInitialized();
+    // Rotate BEFORE building so the new entry's `seq` reflects the
+    // fresh file (reset to 1) instead of continuing the pre-rotation
+    // counter. The chain (prevHash) continues across rotation; seq
+    // resets per-file so operators can locate entries within a single
+    // log.
+    this.rotateIfNeeded();
+    const entry = this.buildEntry(input);
+    try {
       appendFileSync(this.path, JSON.stringify(entry) + "\n", { mode: 0o600 });
-      this.lastHash = entry.hash;
-      this.seq = entry.seq;
-      this.emit("appended", entry);
-      return entry;
-    });
-    // Chain tail onto the promise, swallowing errors so one failure doesn't
-    // poison every subsequent append (the caller still sees their error).
-    this.tail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+    } catch (err) {
+      // Surface write failures via the emitter so the Electron service
+      // log can flag them — the audit record is dropped, but we don't
+      // want the host UI to be blind.
+      this.emit("append-failed", { entry, error: err });
+      return Promise.reject(err);
+    }
+    this.lastHash = entry.hash;
+    this.seq = entry.seq;
+    this.emit("appended", entry);
+    return Promise.resolve(entry);
   }
 
   /**
@@ -233,8 +295,25 @@ export class AuditLog extends EventEmitter {
     if (!existsSync(this.path)) return;
     const size = statSync(this.path).size;
     if (size < this.rotateBytes) return;
-    const rotated = this.path + ".1";
-    renameSync(this.path, rotated);
+    // Shift generations up one slot: .(keep-1) → .keep, ... .1 → .2.
+    // The file currently at .keep would shift off the end of the kept
+    // window, so drop it instead. Active → .1 after the shift.
+    for (let i = this.rotateKeep; i >= 1; i--) {
+      const from = `${this.path}.${i}`;
+      if (!existsSync(from)) continue;
+      try {
+        if (i === this.rotateKeep) {
+          // Past the retention limit — delete rather than rename.
+          rmSync(from, { force: true });
+        } else {
+          renameSync(from, `${this.path}.${i + 1}`);
+        }
+      } catch {
+        /* best-effort — rotation should never block an append */
+      }
+    }
+    renameSync(this.path, `${this.path}.1`);
+    this.emit("rotated", { active: this.path, rotatedTo: `${this.path}.1` });
     // Next append starts fresh — `lastHash` carries across so the chain
     // continues. Seq resets per-file so operators can locate entries
     // within the active log.
@@ -242,18 +321,18 @@ export class AuditLog extends EventEmitter {
   }
 
   private buildEntry(input: AuditEntryInput): AuditEntry {
-    const base: Omit<AuditEntry, "hash"> = {
+    // Spread the input verbatim so each discriminated-union variant's
+    // extra fields (version, capabilityId, method, scopeUnit, patchKeys,
+    // action, panelId) land on the entry. Canonicalization sorts keys
+    // so the field order of the spread doesn't affect the HMAC.
+    const base = {
+      ...input,
       ts: this.now(),
       seq: this.seq + 1,
-      kind: input.kind,
-      moduleId: input.moduleId,
-      outcome: input.outcome,
       prevHash: this.lastHash,
-      ...(input.code !== undefined ? { code: input.code } : {}),
-      ...(input.data !== undefined ? { data: input.data } : {}),
-    };
+    } as Omit<AuditEntry, "hash">;
     const hash = this.computeHash(base, base.prevHash);
-    return { ...base, hash };
+    return { ...base, hash } as AuditEntry;
   }
 
   private computeHash(entry: Omit<AuditEntry, "hash">, prevHash: string): string {

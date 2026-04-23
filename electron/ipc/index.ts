@@ -6,6 +6,18 @@ import type { ModuleHostManager } from '../../src/core/module-host/manager.js';
 import type { ModuleRegistry } from '../../src/modules/registry.js';
 import { getDefaultAuditLog, type AuditEntry } from '../../src/core/audit-log.js';
 import { state, send } from './state.js';
+
+// Phase 8 — AuditLog is a process-wide singleton so the four audit sinks
+// below (panel-bridge, host-call, config-set, install/uninstall) can
+// reach it without every registrar threading it in. The three
+// `registerModule*Handlers` functions are invoked from inside
+// `setupIpcBridge` but live at module scope, so they can't close over a
+// local variable there — the previous attempt put `auditLog` inside
+// `setupIpcBridge` and tripped the P0 caught in the Phase 8 review
+// (`ReferenceError: auditLog is not defined` at every audit callback,
+// silently swallowed by `void`). Module scope makes the closure chain
+// explicit + visible to every reader.
+const auditLog = getDefaultAuditLog();
 import { registerInstanceHandlers } from './instance.js';
 import { registerMetroHandlers } from './metro.js';
 import { registerToolsHandlers } from './tools.js';
@@ -61,7 +73,13 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
   // single subscription that renders each audit entry as a human-
   // readable line; the structured record persists at `~/.rn-dev/audit.log`
   // and survives across daemon restarts (chain verifies post-hoc).
-  const auditLog = getDefaultAuditLog();
+  //
+  // The `appended` listener attaches HERE rather than at module load
+  // because `send()` requires `state.mainWindow` to be set. Any audit
+  // entry logged before `setupIpcBridge` runs (unusual — it runs before
+  // any module-related IPC could fire) lands on disk but not in the
+  // service-log pane. Not a correctness hazard; it's a late-subscriber
+  // UX note the architecture reviewer flagged.
   auditLog.on('appended', (entry: AuditEntry) => {
     send('service:log', formatAuditEntry(entry));
   });
@@ -132,7 +150,8 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
           kind: 'panel-bridge',
           moduleId: event.moduleId,
           outcome: 'ok',
-          data: { action: event.kind, panelId: event.panelId },
+          action: event.kind,
+          panelId: event.panelId,
         });
       },
       senderRegistry,
@@ -148,7 +167,8 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
           kind: 'host-call',
           moduleId: event.moduleId,
           outcome: mapHostCallOutcome(event.outcome),
-          data: { capabilityId: event.capabilityId, method: event.method },
+          capabilityId: event.capabilityId,
+          method: event.method,
         });
       },
     };
@@ -198,11 +218,9 @@ function registerModulesConfigHandlers(): void {
           kind: 'config-set',
           moduleId: event.moduleId,
           outcome: event.outcome === 'ok' ? 'ok' : 'error',
+          patchKeys: event.patchKeys,
           ...(event.code ? { code: event.code } : {}),
-          data: {
-            ...(event.scopeUnit ? { scopeUnit: event.scopeUnit } : {}),
-            patchKeys: event.patchKeys,
-          },
+          ...(event.scopeUnit ? { scopeUnit: event.scopeUnit } : {}),
         });
       },
     };
@@ -262,7 +280,7 @@ function registerModulesInstallHandlers(): void {
           moduleId: event.moduleId,
           outcome: event.outcome === 'ok' ? 'ok' : 'error',
           ...(event.code ? { code: event.code } : {}),
-          ...(event.version ? { data: { version: event.version } } : {}),
+          ...(event.version ? { version: event.version } : {}),
         });
       },
     };
@@ -288,30 +306,29 @@ function registerModulesInstallHandlers(): void {
 
 /**
  * Render a structured audit entry as a service-log line so the existing
- * log pane UX doesn't regress. Mirrors the pre-Phase-8 format loosely
- * (subsystem tag + id + outcome) with one tweak: the data payload's
- * most-relevant fields are inlined.
+ * log pane UX doesn't regress. Switches on the `kind` discriminator so
+ * each subsystem gets a tailored one-liner; the default branch exists
+ * only to keep this exhaustive for a TS-never guarantee.
  */
 function formatAuditEntry(entry: AuditEntry): string {
-  const data = entry.data ?? {};
-  const tag = `[${entry.kind}]`;
   const id = entry.moduleId || '(host)';
-  const extras: string[] = [];
-  for (const [k, v] of Object.entries(data)) {
-    if (v === undefined) continue;
-    extras.push(`${k}=${formatAuditValue(v)}`);
+  const tag = `[${entry.kind}]`;
+  const codeSuffix = 'code' in entry && entry.code ? ` (${entry.code})` : '';
+  switch (entry.kind) {
+    case 'install':
+    case 'uninstall': {
+      const v = 'version' in entry && entry.version ? ` v${entry.version}` : '';
+      return `${tag} ${id}${v} ${entry.outcome}${codeSuffix}`;
+    }
+    case 'host-call':
+      return `${tag} ${id}/${entry.capabilityId}.${entry.method} ${entry.outcome}`;
+    case 'config-set': {
+      const scope = entry.scopeUnit ? `:${entry.scopeUnit}` : '';
+      return `${tag} ${id}${scope} keys=[${entry.patchKeys.join(',')}] ${entry.outcome}${codeSuffix}`;
+    }
+    case 'panel-bridge':
+      return `${tag} ${entry.action} ${id}:${entry.panelId} ${entry.outcome}`;
   }
-  const codeSuffix = entry.code ? ` (${entry.code})` : '';
-  const extrasSuffix = extras.length > 0 ? ` ${extras.join(' ')}` : '';
-  return `${tag} ${id} ${entry.outcome}${codeSuffix}${extrasSuffix}`;
-}
-
-function formatAuditValue(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.join(',')}]`;
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  return JSON.stringify(value);
 }
 
 /**

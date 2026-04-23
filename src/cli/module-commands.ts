@@ -263,7 +263,7 @@ export function registerModuleCommands(program: Command): void {
         added?: string[];
         removed?: string[];
         updated?: string[];
-        rejected?: Array<{ path: string; code: string; message: string }>;
+        rejected?: string[];
       };
       if (payload?.kind !== "ok") {
         console.error("rescan failed");
@@ -276,9 +276,7 @@ export function registerModuleCommands(program: Command): void {
       if (added.length > 0) console.log(`  added:   ${added.join(", ")}`);
       if (removed.length > 0) console.log(`  removed: ${removed.join(", ")}`);
       if (updated.length > 0) console.log(`  updated: ${updated.join(", ")}`);
-      for (const r of rejected) {
-        console.log(`  rejected ${r.path} (${r.code}): ${r.message}`);
-      }
+      for (const r of rejected) console.log(`  ${r}`);
     });
 
   module

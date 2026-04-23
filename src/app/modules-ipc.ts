@@ -930,10 +930,12 @@ export async function marketplaceInfo(
 
 export interface ModuleRescanResult {
   kind: "ok";
+  /** Module ids, sorted — platform-stable order across filesystems. */
   added: string[];
   removed: string[];
   updated: string[];
-  rejected: Array<{ path: string; code: string; message: string }>;
+  /** `"${path}: ${code} - ${message}"` per rejected manifest. */
+  rejected: string[];
 }
 
 export async function rescanAction(
@@ -1019,14 +1021,15 @@ export async function rescanAction(
 
   return {
     kind: "ok",
-    added,
-    removed,
-    updated,
-    rejected: scan.rejected.map((r) => ({
-      path: r.manifestPath,
-      code: r.code,
-      message: r.message,
-    })),
+    // Sort — `readdirSync` iteration order is filesystem-dependent,
+    // and the result arrays otherwise become flaky across platforms +
+    // leak into tests that assert exact order.
+    added: [...added].sort(),
+    removed: [...removed].sort(),
+    updated: [...updated].sort(),
+    rejected: scan.rejected
+      .map((r) => `${r.manifestPath}: ${r.code} - ${r.message}`)
+      .sort(),
   };
 }
 

@@ -53,7 +53,12 @@ describe("AuditLog", () => {
   it("verify() returns ok for a clean chain", async () => {
     const log = makeLog();
     for (let i = 0; i < 10; i++) {
-      await log.append({ kind: "config-set", moduleId: `m${i}`, outcome: "ok" });
+      await log.append({
+        kind: "config-set",
+        moduleId: `m${i}`,
+        outcome: "ok",
+        patchKeys: ["k"],
+      });
     }
     expect(log.verify()).toEqual({
       ok: true,
@@ -94,7 +99,13 @@ describe("AuditLog", () => {
   it("concurrent append()s serialize onto deterministic seq ordering", async () => {
     const log = makeLog();
     const appends = [0, 1, 2, 3, 4].map((i) =>
-      log.append({ kind: "host-call", moduleId: `m${i}`, outcome: "ok" }),
+      log.append({
+        kind: "host-call",
+        moduleId: `m${i}`,
+        outcome: "ok",
+        capabilityId: "math",
+        method: "add",
+      }),
     );
     const results = await Promise.all(appends);
     const seqs = results.map((r) => r.seq);
@@ -161,16 +172,59 @@ describe("AuditLog", () => {
     expect(result.entriesRead).toBe(3);
   });
 
-  it("data payload round-trips through the HMAC (canonical key sort)", async () => {
+  it("discriminated-union fields round-trip through the HMAC (canonical key sort)", async () => {
     const log = makeLog();
-    // Key insertion order shouldn't matter — canonicalize sorts.
+    // Field insertion order shouldn't matter — canonicalize sorts.
     const e = await log.append({
       kind: "config-set",
       moduleId: "settings",
       outcome: "ok",
-      data: { z: 1, a: 2, m: { y: 3, x: 4 } },
+      patchKeys: ["theme", "logLevel"],
+      scopeUnit: "wt-1",
     });
-    expect(e.data).toEqual({ z: 1, a: 2, m: { y: 3, x: 4 } });
+    expect(e.kind).toBe("config-set");
+    if (e.kind === "config-set") {
+      expect(e.patchKeys).toEqual(["theme", "logLevel"]);
+      expect(e.scopeUnit).toBe("wt-1");
+    }
     expect(log.verify().ok).toBe(true);
+  });
+
+  it("rotates through generations + deletes files older than rotateKeep", async () => {
+    // Small budget + keep=2 so each append forces a shift.
+    const log = new AuditLog({
+      path: logPath,
+      key,
+      rotateBytes: 150,
+      rotateKeep: 2,
+    });
+    // Entry → file grows past 150b → next append rotates.
+    await log.append({ kind: "install", moduleId: "a", outcome: "ok" });
+    await log.append({ kind: "install", moduleId: "b", outcome: "ok" }); // rotate #1
+    await log.append({ kind: "install", moduleId: "c", outcome: "ok" }); // rotate #2
+    await log.append({ kind: "install", moduleId: "d", outcome: "ok" }); // rotate #3
+    await log.append({ kind: "install", moduleId: "e", outcome: "ok" }); // rotate #4 — deletes .3
+
+    // With keep=2: we should see active + .1 + .2, NOT .3.
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(logPath)).toBe(true);
+    expect(existsSync(logPath + ".1")).toBe(true);
+    expect(existsSync(logPath + ".2")).toBe(true);
+    expect(existsSync(logPath + ".3")).toBe(false);
+  });
+
+  it("emits 'rotated' when the active log shifts", async () => {
+    const log = new AuditLog({
+      path: logPath,
+      key,
+      rotateBytes: 150,
+    });
+    const rotations: Array<{ active: string; rotatedTo: string }> = [];
+    log.on("rotated", (ev) => rotations.push(ev));
+    await log.append({ kind: "install", moduleId: "a", outcome: "ok" });
+    await log.append({ kind: "install", moduleId: "b", outcome: "ok" });
+    await log.append({ kind: "install", moduleId: "c", outcome: "ok" });
+    expect(rotations.length).toBeGreaterThanOrEqual(1);
+    expect(rotations[0]?.rotatedTo).toBe(logPath + ".1");
   });
 });
