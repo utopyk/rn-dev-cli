@@ -22,6 +22,11 @@ import type {
   RegisteredModule,
 } from "../../src/modules/registry.js";
 import type { PanelBridge, PanelBounds } from "../panel-bridge.js";
+import {
+  callModuleTool,
+  type ModuleCallError,
+  type ModuleCallSuccess,
+} from "../../src/app/modules-ipc.js";
 
 // ---------------------------------------------------------------------------
 // Wire-format types
@@ -75,6 +80,26 @@ export type HostCallReply =
         | "HOST_CALL_FAILED";
       message: string;
     };
+
+/**
+ * Payload for `modules:call-tool` — panels invoking their own subprocess
+ * tools. Different from `modules:host-call` (which resolves against the
+ * host `CapabilityRegistry` for cross-module capabilities). `moduleId`
+ * is the panel's bound module — the Electron registrar derives it from
+ * the sender identity, not from the renderer.
+ */
+export interface CallToolPayload {
+  /**
+   * Tool name WITHOUT the `<moduleId>__` prefix. Matches the manifest's
+   * declared tool after `runModule` strips the prefix.
+   */
+  tool: string;
+  args: Record<string, unknown>;
+  /** Per-call override for the cold-start SLO; rarely set. */
+  callTimeoutMs?: number;
+}
+
+export type CallToolReply = ModuleCallSuccess | ModuleCallError;
 
 // ---------------------------------------------------------------------------
 // Pure resolution logic — exported for unit tests
@@ -190,6 +215,42 @@ function findRegistered(
   moduleId: string,
 ): RegisteredModule | undefined {
   return registry.getAllManifests().find((r) => r.manifest.id === moduleId);
+}
+
+/**
+ * Pure resolution for `modules:call-tool` — a panel invoking one of its
+ * own module's subprocess tools. The moduleId comes from the sender's
+ * panel registration (caller-supplied), not from the renderer payload, so
+ * a panel can't ask another module to run a tool on its behalf.
+ *
+ * Reuses the `callModuleTool` helper from `modules-ipc.ts` so the
+ * MCP-side `modules/call` dispatch and the panel-side `modules:call-tool`
+ * funnel through the same acquire → sendRequest → release flow.
+ */
+export async function resolveCallTool(
+  manager: ModuleHostManager,
+  registry: ModuleRegistry,
+  moduleId: string,
+  payload: CallToolPayload | null,
+): Promise<CallToolReply> {
+  if (!payload || typeof payload.tool !== "string") {
+    return {
+      kind: "error",
+      code: "E_MODULE_CALL_FAILED",
+      message: "modules:call-tool requires { tool, args? }",
+    };
+  }
+  return callModuleTool(
+    { manager, registry },
+    {
+      moduleId,
+      tool: payload.tool,
+      args: payload.args ?? {},
+      ...(payload.callTimeoutMs !== undefined
+        ? { callTimeoutMs: payload.callTimeoutMs }
+        : {}),
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
