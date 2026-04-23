@@ -492,23 +492,17 @@ async function startServicesAsync(
   // 7a. Metro log ring buffer — backs the metro-logs 3p module's host
   // capability. Must be attached BEFORE `metro.start()` so the very first
   // log event from Metro lands in the ring. Status events bump the
-  // buffer epoch on restart so agent cursors don't bleed across sessions.
+  // buffer epoch on restart so agent cursors don't bleed across
+  // sessions. The store owns the status vocabulary — `setMetroStatus`
+  // normalizes a raw string via an internal `Set`, closing the
+  // prototype-walk hole a plain `Record<string, ...>` lookup would
+  // have (Phase 11 Security review P1).
   const metroLogsStore = new MetroLogsStore();
   metro.on("log", (event: { worktreeKey: string; line: string; stream: "stdout" | "stderr" }) => {
     metroLogsStore.append(event.worktreeKey, event.stream, event.line);
   });
   metro.on("status", (event: { worktreeKey: string; status: string }) => {
-    // Normalize to the ProcessStatus union — anything unrecognized falls
-    // back to `stopped` so a misspelled emit can't keep a dead buffer
-    // flagged "running".
-    const known: Record<string, "idle" | "starting" | "running" | "stopped" | "error"> = {
-      idle: "idle",
-      starting: "starting",
-      running: "running",
-      stopped: "stopped",
-      error: "error",
-    };
-    metroLogsStore.setMetroStatus(event.worktreeKey, known[event.status] ?? "stopped");
+    metroLogsStore.setMetroStatus(event.worktreeKey, event.status);
   });
 
   metro.start({
@@ -663,6 +657,14 @@ interface HostCapabilityDeps {
 
 function registerHostCapabilities(deps: HostCapabilityDeps): CapabilityRegistry {
   const capabilities = new CapabilityRegistry();
+  // TODO(phase-12): wrap `deps.metro` in a typed host-capability
+  // façade like `metro-logs` and `devtools` do, instead of handing
+  // the raw `MetroManager` to 3p modules. A module with
+  // `exec:react-native` currently reaches every public method on the
+  // class (start / stop / killProcessOnPort / the EventEmitter
+  // surface). The other two capabilities hide this behind a purpose-
+  // built interface; `metro` is the outlier. Flagged in Phase 11
+  // Architecture review P1-A.
   capabilities.register("metro", deps.metro, {
     requiredPermission: "exec:react-native",
   });

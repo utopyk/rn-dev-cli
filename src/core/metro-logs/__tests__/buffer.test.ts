@@ -114,14 +114,11 @@ describe("MetroLogsStore — clear + epoch", () => {
     expect(nextLine.sequence).toBe(3);
   });
 
-  it("setMetroStatus flips to running bumps epoch when prior lines exist", () => {
+  it("setMetroStatus stopped→running bumps epoch and drops held lines (Metro restart)", () => {
     const store = new MetroLogsStore();
     store.setMetroStatus(WK, "running");
     store.append(WK, "stdout", "a");
     expect(store.size(WK)).toBe(1);
-    // Simulate Metro stopping and starting again — ring must drop stale
-    // lines so a cursor held during the first session doesn't bleed
-    // into the second.
     store.setMetroStatus(WK, "stopped");
     store.setMetroStatus(WK, "running");
     expect(store.size(WK)).toBe(0);
@@ -130,13 +127,89 @@ describe("MetroLogsStore — clear + epoch", () => {
     expect(status.meta.metroStatus).toBe("running");
   });
 
-  it("setMetroStatus does not bump epoch when ring is already empty", () => {
+  it("setMetroStatus error→running bumps epoch too (Metro crash recovery)", () => {
     const store = new MetroLogsStore();
+    store.setMetroStatus(WK, "running");
+    store.append(WK, "stdout", "a");
+    store.setMetroStatus(WK, "error");
+    store.setMetroStatus(WK, "running");
+    expect(store.size(WK)).toBe(0);
+    expect(store.status(WK).meta.bufferEpoch).toBe(2);
+  });
+
+  it("setMetroStatus idle→running (first boot) KEEPS pre-banner stderr lines — Phase 11 Architecture P1-B", () => {
+    // MetroManager emits stderr lines before the "Metro is running" banner
+    // that triggers the status=running transition. Those lines must survive
+    // the idle→running flip; only restart transitions (stopped|error→running)
+    // should clear the ring.
+    const store = new MetroLogsStore();
+    store.append(WK, "stderr", "node warning on boot");
+    store.append(WK, "stdout", "Metro loading...");
     store.setMetroStatus(WK, "starting");
     store.setMetroStatus(WK, "running");
-    const status = store.status(WK);
-    // No lines existed across the transition — no cursors to invalidate.
-    expect(status.meta.bufferEpoch).toBe(1);
+    expect(store.size(WK)).toBe(2);
+    expect(store.status(WK).meta.bufferEpoch).toBe(1);
+    expect(store.list(WK).entries.map((e) => e.line)).toEqual([
+      "node warning on boot",
+      "Metro loading...",
+    ]);
+  });
+
+  it("setMetroStatus normalizes unknown strings to 'stopped' — prototype walk closed (Phase 11 Security P1)", () => {
+    const store = new MetroLogsStore();
+    store.setMetroStatus(WK, "__proto__");
+    expect(store.status(WK).meta.metroStatus).toBe("stopped");
+    store.setMetroStatus(WK, "constructor");
+    expect(store.status(WK).meta.metroStatus).toBe("stopped");
+    store.setMetroStatus(WK, "hasOwnProperty");
+    expect(store.status(WK).meta.metroStatus).toBe("stopped");
+    store.setMetroStatus(WK, "unknown-state");
+    expect(store.status(WK).meta.metroStatus).toBe("stopped");
+  });
+});
+
+describe("MetroLogsStore — list() cursor advancement (Phase 11 Kieran P1-1)", () => {
+  it("advances meta.lastEventSequence to the last RETURNED entry when filter+limit truncate", () => {
+    const store = new MetroLogsStore({ capacity: 100 });
+    // 10 error lines + 10 info lines, interleaved — so with limit=3 +
+    // filter(error), the ring has 10 matches but only 3 are returned.
+    for (let i = 0; i < 10; i++) {
+      store.append(WK, "stdout", `info ${i}`);
+      store.append(WK, "stderr", `error ${i}`);
+    }
+    const result = store.list(WK, { substring: "error", limit: 3 });
+    expect(result.entries.length).toBe(3);
+    // The last 3 errors are the newest-3 "error" lines — last is
+    // `error 9`'s sequence. Cursor must advance to THAT, not to the
+    // ring's latest (`error 9` is sequence 20, `info 9` was 19, but
+    // appendsare interleaved — the LAST appended was `error 9`, seq 20).
+    const lastReturned = result.entries[result.entries.length - 1]!;
+    expect(result.meta.lastEventSequence).toBe(lastReturned.sequence);
+  });
+
+  it("falls back to ring's lastEventSequence when entries are empty", () => {
+    const store = new MetroLogsStore();
+    store.append(WK, "stdout", "only-one");
+    const empty = store.list(WK, { substring: "no-match" });
+    expect(empty.entries.length).toBe(0);
+    expect(empty.meta.lastEventSequence).toBe(1);
+  });
+});
+
+describe("MetroLogsStore — per-line length cap (Phase 11 Security P2)", () => {
+  it("truncates lines longer than MAX_LINE_BYTES and marks them [truncated]", () => {
+    const store = new MetroLogsStore();
+    const huge = "x".repeat(70_000);
+    store.append(WK, "stdout", huge);
+    const entry = store.list(WK).entries[0]!;
+    expect(entry.line.length).toBeLessThan(huge.length);
+    expect(entry.line.endsWith(" [truncated]")).toBe(true);
+  });
+
+  it("leaves short lines unchanged", () => {
+    const store = new MetroLogsStore();
+    store.append(WK, "stdout", "short");
+    expect(store.list(WK).entries[0]!.line).toBe("short");
   });
 });
 

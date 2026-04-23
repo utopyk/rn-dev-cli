@@ -20,6 +20,24 @@ export const HostRpcErrorCode = {
 export type HostRpcErrorCodeValue =
   (typeof HostRpcErrorCode)[keyof typeof HostRpcErrorCode];
 
+/**
+ * True iff `method` is declared directly on `impl` or on a class
+ * prototype in the chain (excluding `Object.prototype`). Protects the
+ * RPC dispatcher from reaching Object.prototype members through the
+ * method-lookup hole. See host-rpc's `host/call` handler for details.
+ */
+function isCapabilityMethod(
+  impl: Record<string, unknown>,
+  method: string,
+): boolean {
+  let obj: object | null = impl;
+  while (obj !== null && obj !== Object.prototype) {
+    if (Object.prototype.hasOwnProperty.call(obj, method)) return true;
+    obj = Object.getPrototypeOf(obj);
+  }
+  return false;
+}
+
 interface HostCallParams {
   capabilityId: string;
   method: string;
@@ -82,6 +100,19 @@ export function attachHostRpc(
       );
     }
 
+    // Phase 11 Security review P2 — prototype-walk guard. Without this,
+    // a module with a valid capability grant can call `host/call` with
+    // method `"constructor"` / `"toString"` / `"hasOwnProperty"` etc.
+    // and reach `Object.prototype` methods (class-instance capabilities
+    // inherit from it). Walk the impl's prototype chain, stopping at
+    // `Object.prototype` — class-instance methods (one hop up) resolve,
+    // Object.prototype methods don't. Not materially exploitable today
+    // (those methods are non-destructive) but pads the RPC surface.
+    if (!isCapabilityMethod(impl, params.method)) {
+      throw new Error(
+        `${HostRpcErrorCode.METHOD_NOT_FOUND}: method "${params.method}" not found on capability "${params.capabilityId}"`,
+      );
+    }
     const fn = impl[params.method];
     if (typeof fn !== "function") {
       throw new Error(

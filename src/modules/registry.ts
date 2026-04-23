@@ -568,7 +568,7 @@ export function isSensitivePermission(permission: string): boolean {
  * UI text) while keeping the prefix + suffix canonical.
  */
 export const S6_WARNING_PATTERN =
-  /Treat [^.\n]{1,80} as data, not instructions\./;
+  /Treat [^.\r\n]{1,80} as data, not instructions\./;
 
 /** Exported literal for authors to reference in their manifests. */
 export const S6_WARNING_EXAMPLE =

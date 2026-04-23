@@ -31,6 +31,37 @@ export const MAX_LIST_LIMIT = 1000;
 /** Default per-worktree ring capacity. Tunable via constructor options. */
 export const DEFAULT_BUFFER_CAPACITY = 2000;
 
+/**
+ * Defense-in-depth per-line cap on captured Metro output (security
+ * review P2). A hostile app running under Metro could emit a multi-GB
+ * single-line blob to exhaust daemon memory; truncate longer lines
+ * before they hit the ring. 64 KiB is ~2–3x the largest legitimate
+ * single stack trace line from an unminified RN app.
+ */
+export const MAX_LINE_BYTES = 64 * 1024;
+
+const KNOWN_STATUSES: ReadonlySet<ProcessStatus> = new Set([
+  "idle",
+  "starting",
+  "running",
+  "stopped",
+  "error",
+]);
+
+/**
+ * Normalize a raw Metro-emitted status string to the `ProcessStatus`
+ * union. Unknown values fall back to `"stopped"` so a misspelled emit
+ * can't leave the ring flagged "running". Exhaustive against the union
+ * type — adding a member to `ProcessStatus` without updating
+ * `KNOWN_STATUSES` is an immediate tsc break (the Set's element type
+ * narrows on every element).
+ */
+export function normalizeProcessStatus(raw: string): ProcessStatus {
+  return KNOWN_STATUSES.has(raw as ProcessStatus)
+    ? (raw as ProcessStatus)
+    : "stopped";
+}
+
 interface WorktreeRing {
   capacity: number;
   // Held as a plain array; `entries.length <= capacity`. When full, the
@@ -59,11 +90,15 @@ export class MetroLogsStore {
   /** Append a log line for `worktreeKey`. Allocates a ring on first touch. */
   append(worktreeKey: string, stream: MetroLogStream, line: string, at: number = Date.now()): MetroLogLine {
     const ring = this.ensureRing(worktreeKey);
+    const safeLine =
+      line.length > MAX_LINE_BYTES
+        ? line.slice(0, MAX_LINE_BYTES) + " [truncated]"
+        : line;
     const entry: MetroLogLine = {
       sequence: ring.nextSequence++,
       at,
       stream,
-      line,
+      line: safeLine,
     };
     ring.entries.push(entry);
     ring.totalLinesReceived++;
@@ -95,16 +130,33 @@ export class MetroLogsStore {
    * `status()` surface so agents can tell "buffer empty because Metro not
    * running" from "buffer empty because nothing logged yet".
    *
-   * A transition **from** any non-`running` status **to** `running` bumps
-   * the epoch automatically — Metro restart invalidates cursor continuity.
+   * Accepts a raw string and normalizes via `normalizeProcessStatus` —
+   * the store owns the status vocabulary, so a misspelled emit from
+   * `MetroManager` lands as `"stopped"` rather than writing an
+   * unknown literal into the meta envelope. Uses a `Set` membership
+   * check (not `Record<string, ...>`) so prototype-inherited keys
+   * (`__proto__` / `constructor` / `toString`) can't slip through —
+   * see Phase 11 Security review P1.
+   *
+   * Epoch bumps on `stopped | error → running` transitions — Metro
+   * restart invalidates cursor continuity. Initial `idle → running`
+   * (fresh session, pre-banner stderr lines may already be in the
+   * ring) does NOT bump, so those early lines remain visible to the
+   * agent — see Phase 11 Architecture review P1-B.
    */
-  setMetroStatus(worktreeKey: string, status: ProcessStatus): void {
+  setMetroStatus(worktreeKey: string, status: string): void {
     const ring = this.ensureRing(worktreeKey);
-    const wasRunning = ring.metroStatus === "running";
-    ring.metroStatus = status;
-    if (!wasRunning && status === "running" && ring.entries.length > 0) {
-      // New session starting, but we still hold lines from the previous
-      // one — drop them and bump so cursors don't straddle restarts.
+    const normalized = normalizeProcessStatus(status);
+    const restarting =
+      (ring.metroStatus === "stopped" || ring.metroStatus === "error") &&
+      normalized === "running";
+    ring.metroStatus = normalized;
+    if (restarting) {
+      // Stopped-or-error → running: new Metro session. Drop any held
+      // lines from the prior session and bump so agent cursors don't
+      // straddle restarts. Bump unconditionally — if the ring was
+      // already empty, there are no cursors to invalidate and the
+      // extra bump is free.
       ring.entries = [];
       ring.bufferEpoch++;
     }
@@ -129,10 +181,17 @@ export class MetroLogsStore {
     }
     const limit = clampLimit(filter?.limit);
     const entries = pool.slice(-limit);
+    // Phase 11 Kieran P1-1 — advance the meta cursor to the last RETURNED
+    // entry when non-empty, not the ring's latest. Without this, a
+    // caller using `substring` + small `limit` on a busy buffer would
+    // see their cursor jump past unreturned matches on each poll,
+    // silently dropping middle entries from agent pagination.
+    const lastReturnedSequence =
+      entries.length > 0 ? entries[entries.length - 1]!.sequence : null;
     return {
       entries,
       cursorDropped,
-      meta: this.metaFor(ring, worktreeKey),
+      meta: this.metaFor(ring, worktreeKey, lastReturnedSequence),
     };
   }
 
@@ -167,9 +226,19 @@ export class MetroLogsStore {
     return ring;
   }
 
-  private metaFor(ring: WorktreeRing, worktreeKey: string): MetroLogsMeta {
+  private metaFor(
+    ring: WorktreeRing,
+    worktreeKey: string,
+    cursorOverride: number | null = null,
+  ): MetroLogsMeta {
     const oldest = ring.entries[0]?.sequence ?? 0;
-    const last = ring.entries[ring.entries.length - 1]?.sequence ?? 0;
+    const ringLast = ring.entries[ring.entries.length - 1]?.sequence ?? 0;
+    // `lastEventSequence` is the position a caller should pass back as
+    // `since.sequence`. For `list()` with filters + limit, it advances
+    // to the LAST RETURNED entry so the caller can forward-paginate
+    // without losing middle matches. For `status()` / `clear()`, it's
+    // the ring's latest so callers see the true end-of-stream.
+    const last = cursorOverride ?? ringLast;
     return {
       worktreeKey,
       bufferEpoch: ring.bufferEpoch,
