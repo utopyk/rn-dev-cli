@@ -982,58 +982,21 @@ export async function rescanAction(
   for (const [id, candidate] of onDisk) {
     const existing = registered.get(id);
     if (!existing) {
-      opts.registry.registerManifest(candidate);
+      await applyManifestChange(opts, { kind: "install", candidate });
       added.push(id);
-      emitModuleEvent(opts, {
-        kind: "install",
-        moduleId: id,
-        scopeUnit: candidate.scopeUnit,
-        version: candidate.manifest.version,
-      });
       continue;
     }
     if (existing.manifest.version !== candidate.manifest.version) {
-      // Tear down the running subprocess (if any) + re-register with
-      // the new manifest. Agents see tools/listChanged because we fire
-      // an uninstall + install pair.
-      try {
-        await opts.manager.shutdown(existing.manifest.id, existing.scopeUnit);
-      } catch {
-        /* acceptable — module may not have been acquired */
-      }
-      opts.registry.unregisterManifest(existing.manifest.id, existing.scopeUnit);
-      opts.registry.registerManifest(candidate);
+      await applyManifestChange(opts, { kind: "update", existing, candidate });
       updated.push(id);
-      emitModuleEvent(opts, {
-        kind: "uninstall",
-        moduleId: id,
-        scopeUnit: existing.scopeUnit,
-      });
-      emitModuleEvent(opts, {
-        kind: "install",
-        moduleId: id,
-        scopeUnit: candidate.scopeUnit,
-        version: candidate.manifest.version,
-      });
     }
   }
 
-  // Removes — in registry, not on disk. Shut down any live subprocess
-  // before unregistering so acquire() never finds a dangling manifest.
+  // Removes — in registry, not on disk.
   for (const [id, existing] of registered) {
     if (onDisk.has(id)) continue;
-    try {
-      await opts.manager.shutdown(existing.manifest.id, existing.scopeUnit);
-    } catch {
-      /* acceptable */
-    }
-    opts.registry.unregisterManifest(existing.manifest.id, existing.scopeUnit);
+    await applyManifestChange(opts, { kind: "uninstall", existing });
     removed.push(id);
-    emitModuleEvent(opts, {
-      kind: "uninstall",
-      moduleId: id,
-      scopeUnit: existing.scopeUnit,
-    });
   }
 
   return {
@@ -1048,6 +1011,93 @@ export async function rescanAction(
       .map((r) => `${r.manifestPath}: ${r.code} - ${r.message}`)
       .sort(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// applyManifestChange — Phase 10 P1-6 dedup of the register/unregister +
+// event-emission dance across `rescanAction`. installAction /
+// uninstallAction delegate the filesystem + register/unregister to
+// `installModule` / `uninstallModule` and only emit afterwards — they
+// deliberately don't go through this helper, since that would double-
+// register. This helper owns the in-process branch of the lifecycle:
+// scan discovered a new manifest / a version bump / a removed directory,
+// and the registry + event bus need to be reconciled.
+// ---------------------------------------------------------------------------
+
+type ManifestChange =
+  | { kind: "install"; candidate: RegisteredModule }
+  | {
+      kind: "update";
+      existing: RegisteredModule;
+      candidate: RegisteredModule;
+    }
+  | { kind: "uninstall"; existing: RegisteredModule };
+
+async function applyManifestChange(
+  opts: ModulesIpcOptions,
+  change: ManifestChange,
+): Promise<void> {
+  if (change.kind === "install") {
+    opts.registry.registerManifest(change.candidate);
+    emitModuleEvent(opts, {
+      kind: "install",
+      moduleId: change.candidate.manifest.id,
+      scopeUnit: change.candidate.scopeUnit,
+      version: change.candidate.manifest.version,
+    });
+    return;
+  }
+
+  if (change.kind === "uninstall") {
+    // Tear down any live subprocess before unregistering so acquire()
+    // never finds a dangling manifest with no running process.
+    try {
+      await opts.manager.shutdown(
+        change.existing.manifest.id,
+        change.existing.scopeUnit,
+      );
+    } catch {
+      /* acceptable — module may not have been acquired */
+    }
+    opts.registry.unregisterManifest(
+      change.existing.manifest.id,
+      change.existing.scopeUnit,
+    );
+    emitModuleEvent(opts, {
+      kind: "uninstall",
+      moduleId: change.existing.manifest.id,
+      scopeUnit: change.existing.scopeUnit,
+    });
+    return;
+  }
+
+  // update — a version bump. Tear down + re-register with the new
+  // manifest. Agents see tools/listChanged because we fire an
+  // uninstall + install pair.
+  try {
+    await opts.manager.shutdown(
+      change.existing.manifest.id,
+      change.existing.scopeUnit,
+    );
+  } catch {
+    /* acceptable */
+  }
+  opts.registry.unregisterManifest(
+    change.existing.manifest.id,
+    change.existing.scopeUnit,
+  );
+  opts.registry.registerManifest(change.candidate);
+  emitModuleEvent(opts, {
+    kind: "uninstall",
+    moduleId: change.existing.manifest.id,
+    scopeUnit: change.existing.scopeUnit,
+  });
+  emitModuleEvent(opts, {
+    kind: "install",
+    moduleId: change.candidate.manifest.id,
+    scopeUnit: change.candidate.scopeUnit,
+    version: change.candidate.manifest.version,
+  });
 }
 
 export async function installAction(
