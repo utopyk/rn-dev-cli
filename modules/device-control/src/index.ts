@@ -12,7 +12,7 @@
 
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   runModule,
   type ModuleManifest,
@@ -174,14 +174,16 @@ function toUninstallAppArgs(args: Args): UninstallAppArgs {
 }
 
 // Only run when invoked as a subprocess (`node dist/index.js`). Importing
-// the module for tests bypasses the runModule() call.
+// the module for tests bypasses the runModule() call. Canonical Node-ESM
+// idiom: compare the file:// URL of our own module against the
+// CLI-entry path. Replaces the fragile regex-on-argv[1] check from
+// Phase 9 (which would break if the module got relocated) with a
+// location-independent equality. Phase 10 P3-16.
 const invokedAsEntry =
   typeof process !== "undefined" &&
   Array.isArray(process.argv) &&
-  process.argv[1] &&
-  // When bundled into dist/index.js, process.argv[1] ends in index.js.
-  // When TS is running under tsx for tests, it points elsewhere.
-  /device-control[\\/](dist|src)[\\/]index\.(js|ts)$/.test(process.argv[1]);
+  typeof process.argv[1] === "string" &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (invokedAsEntry) {
   const entryDir = dirname(fileURLToPath(import.meta.url));
