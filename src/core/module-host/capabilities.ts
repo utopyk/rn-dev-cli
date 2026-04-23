@@ -53,6 +53,60 @@ export const RESERVED_CAPABILITY_IDS: ReadonlyArray<string> = [
   "appInfo",
 ];
 
+/**
+ * Phase 10 P2-11 — canonical permission names the host understands. Used
+ * as a typo detector at capability-register time and manifest-load time.
+ * Not a security boundary (advisory permissions are surfaced in the
+ * consent dialog, not enforced by the host), just a lint to catch the
+ * kind of typo that used to silently drop a capability's grant —
+ * "devtools:captures" vs. "devtools:capture", "exec:addb" vs. "exec:adb".
+ *
+ * Extended when a new capability ships. Keep the full set here rather
+ * than per-capability because a capability's `requiredPermission` /
+ * `methodPermissions` are what a manifest needs to declare, and tooling
+ * wants a single source of truth.
+ */
+export const KNOWN_PERMISSIONS: ReadonlyArray<string> = [
+  "devtools:capture", // legacy umbrella (Phase 10 grace period)
+  "devtools:capture:read",
+  "devtools:capture:mutate",
+  "exec:adb",
+  "exec:simctl",
+  "exec:react-native",
+  "fs:artifacts",
+  "network:outbound",
+];
+
+const KNOWN_PERMISSION_SET = new Set<string>(KNOWN_PERMISSIONS);
+
+/**
+ * Emit a console warning for any permission string that isn't on the
+ * canonical list. Called by `CapabilityRegistry.register()` for
+ * capability-side declarations and by the module registry at manifest
+ * load for module-side grants. One warning per unique permission name;
+ * the caller deduplicates via `warnedUnknownPermissions`.
+ */
+const warnedUnknownPermissions = new Set<string>();
+
+export function warnIfUnknownPermission(
+  permission: string,
+  context: string,
+): void {
+  if (KNOWN_PERMISSION_SET.has(permission)) return;
+  const key = `${context}:${permission}`;
+  if (warnedUnknownPermissions.has(key)) return;
+  warnedUnknownPermissions.add(key);
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[module-host] ${context} references unknown permission "${permission}" — not on the host's canonical permission list. Known: ${KNOWN_PERMISSIONS.join(", ")}. Likely a typo; grants to this permission will never match a capability.`,
+  );
+}
+
+/** Reset the warning dedup set — tests only. */
+export function resetUnknownPermissionWarningsForTests(): void {
+  warnedUnknownPermissions.clear();
+}
+
 export class CapabilityRegistry {
   private readonly entries = new Map<string, StoredCapability>();
 
@@ -64,6 +118,17 @@ export class CapabilityRegistry {
       throw new Error(
         `Capability id "${id}" is reserved (SDK synthesizes it client-side); pass { allowReserved: true } only from host startup.`,
       );
+    }
+    if (options.requiredPermission) {
+      warnIfUnknownPermission(
+        options.requiredPermission,
+        `capability "${id}"`,
+      );
+    }
+    if (options.methodPermissions) {
+      for (const perm of Object.values(options.methodPermissions)) {
+        warnIfUnknownPermission(perm, `capability "${id}"`);
+      }
     }
     this.entries.set(id, {
       id,

@@ -12,6 +12,7 @@ import {
 } from "@rn-dev/module-sdk";
 import type { RnDevModule } from "../core/types.js";
 import { isDisabled as isModuleDisabled } from "./disabled-flag.js";
+import { warnIfUnknownPermission } from "../core/module-host/capabilities.js";
 
 // ---------------------------------------------------------------------------
 // Manifest-based module types (Phase 1)
@@ -475,6 +476,16 @@ export class ModuleRegistry {
         };
       }
       throw err;
+    }
+
+    // Phase 10 P2-11 — typo detector for manifest permissions. Advisory
+    // only; doesn't reject the manifest. Catches "devtools:captures" or
+    // "exec:addb" at load time so the operator sees the issue before the
+    // module's tools silently fail at runtime.
+    if (!opts.isBuiltIn) {
+      for (const perm of manifest.permissions ?? []) {
+        warnIfUnknownPermission(perm, `module "${manifest.id}"`);
+      }
     }
 
     const scopeUnit =
