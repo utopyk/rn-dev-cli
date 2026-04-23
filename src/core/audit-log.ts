@@ -438,18 +438,51 @@ function generateKey(keyPath: string): Buffer {
  * HMAC must be reproducible for `verify()` on a different process.
  * `JSON.stringify` preserves insertion order, which is unstable across
  * environments, so we sort keys explicitly.
+ *
+ * Cycle guard (Phase 10 P2-8): if the input self-references (shouldn't
+ * happen for audit entries, but the function is callable from tests and
+ * future log formats), throw an explicit `AuditCanonicalizationError`
+ * rather than blowing up with `RangeError: Maximum call stack size
+ * exceeded`. Makes the failure traceable back to canonicalize() instead
+ * of looking like a generic recursion bug.
  */
-function canonicalize(value: unknown): string {
+function canonicalize(value: unknown, seen: WeakSet<object> = new WeakSet()): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }
-  if (Array.isArray(value)) {
-    return "[" + value.map(canonicalize).join(",") + "]";
+  if (seen.has(value)) {
+    throw new AuditCanonicalizationError(
+      "canonicalize(): input contains a cycle (self-reference) and cannot be deterministically serialized",
+    );
   }
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  const parts = keys.map(
-    (k) => JSON.stringify(k) + ":" + canonicalize(obj[k]),
-  );
-  return "{" + parts.join(",") + "}";
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return "[" + value.map((v) => canonicalize(v, seen)).join(",") + "]";
+    }
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    const parts = keys.map(
+      (k) => JSON.stringify(k) + ":" + canonicalize(obj[k], seen),
+    );
+    return "{" + parts.join(",") + "}";
+  } finally {
+    seen.delete(value);
+  }
 }
+
+export class AuditCanonicalizationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuditCanonicalizationError";
+  }
+}
+
+/**
+ * Test-only re-export of `canonicalize`. Not part of the public API —
+ * internal call sites use the one inside `computeHash`. Exposed so the
+ * cycle-guard test (Phase 10 P2-8) can exercise the guard without
+ * reaching through a full `append()` call that TS wouldn't let pass a
+ * cyclic input anyway.
+ */
+export const _canonicalizeForTests = canonicalize;

@@ -3,7 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { AuditLog } from "../audit-log.js";
+import {
+  AuditCanonicalizationError,
+  AuditLog,
+  _canonicalizeForTests,
+} from "../audit-log.js";
 
 describe("AuditLog", () => {
   let tmp: string;
@@ -226,6 +230,39 @@ describe("AuditLog", () => {
     await log.append({ kind: "install", moduleId: "c", outcome: "ok" });
     expect(rotations.length).toBeGreaterThanOrEqual(1);
     expect(rotations[0]?.rotatedTo).toBe(logPath + ".1");
+  });
+
+  // Phase 10 P2-8 — cycle guard. canonicalize() used to blow the stack
+  // with RangeError if the input had a self-reference (shouldn't happen
+  // for typed audit inputs, but the defense-in-depth matters because
+  // append() was close to the hot path).
+  describe("canonicalize cycle guard (Phase 10 P2-8)", () => {
+    it("throws AuditCanonicalizationError on a direct self-reference", () => {
+      const obj: Record<string, unknown> = { a: 1 };
+      obj["self"] = obj;
+      expect(() => _canonicalizeForTests(obj)).toThrow(
+        AuditCanonicalizationError,
+      );
+      expect(() => _canonicalizeForTests(obj)).toThrow(/cycle/);
+    });
+
+    it("throws on an indirect cycle through an array", () => {
+      const a: unknown[] = [];
+      const b: Record<string, unknown> = { inner: a };
+      a.push(b);
+      expect(() => _canonicalizeForTests({ root: a })).toThrow(
+        AuditCanonicalizationError,
+      );
+    });
+
+    it("still works for the non-cyclic shapes canonicalize sees from append()", () => {
+      const out = _canonicalizeForTests({
+        b: 2,
+        a: [1, { x: "y" }],
+      });
+      // Keys sorted, nested structure preserved.
+      expect(out).toBe('{"a":[1,{"x":"y"}],"b":2}');
+    });
   });
 
   // Phase 10 P1-4 — guard against the whole-file-read regression. A
