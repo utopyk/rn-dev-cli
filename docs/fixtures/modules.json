@@ -10,6 +10,16 @@
       "author": "rn-dev",
       "permissions": ["exec:adb", "exec:simctl", "network:outbound"],
       "homepage": "https://github.com/rn-dev/rn-dev-modules/tree/main/device-control"
+    },
+    {
+      "id": "devtools-network",
+      "npmPackage": "@rn-dev-modules/devtools-network",
+      "version": "0.1.0",
+      "tarballSha256": "f781ea5a073b323a3b2c3707dd9573aa63018566c458250e9e37b21ec0c781dc",
+      "description": "Agent-native DevTools Network capture — list, inspect, and switch CDP targets over MCP.",
+      "author": "rn-dev",
+      "permissions": ["devtools:capture"],
+      "homepage": "https://github.com/rn-dev/rn-dev-modules/tree/main/devtools-network"
     }
   ]
 }

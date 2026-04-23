@@ -14,16 +14,19 @@ import { FileWatcher } from "../core/watcher.js";
 import { IpcServer } from "../core/ipc.js";
 import type { ModuleHostManager } from "../core/module-host/manager.js";
 import { CapabilityRegistry } from "../core/module-host/capabilities.js";
+import {
+  createDevtoolsHostCapability,
+  DEVTOOLS_CAPABILITY_ID,
+  DEVTOOLS_CAPABILITY_PERMISSION,
+} from "../core/devtools/host-capability.js";
 import { registerModulesIpc } from "./modules-ipc.js";
 import { loadTheme, getThemeEffects } from "../ui/theme-provider.js";
-import { registerDevtoolsIpc } from "./devtools-ipc.js";
 import {
   ModuleRegistry,
   devSpaceModule,
   settingsModule,
   lintTestModule,
   metroLogsModule,
-  devtoolsNetworkModule,
 } from "../modules/index.js";
 import {
   createModuleSystem,
@@ -84,7 +87,6 @@ export async function startFlow(options: StartOptions): Promise<void> {
   registry.register(devSpaceModule);
   registry.register(lintTestModule);
   registry.register(metroLogsModule);
-  registry.register(devtoolsNetworkModule);
   registry.register(settingsModule);
 
   // 6. Determine if we need the wizard
@@ -519,7 +521,6 @@ async function startServicesAsync(
     emit(`ℹ DevTools: deferred (${err instanceof Error ? err.message : String(err)})`);
   }
   serviceBus.setDevTools(devtools);
-  registerDevtoolsIpc(ipc, { manager: devtools, defaultWorktreeKey: worktreeKey });
 
   // 11. Create builder
   const { Builder } = await import("../core/builder.js");
@@ -542,6 +543,11 @@ async function startServicesAsync(
   capabilities.register("artifacts", artifactStore, {
     requiredPermission: "fs:artifacts",
   });
+  capabilities.register(
+    DEVTOOLS_CAPABILITY_ID,
+    createDevtoolsHostCapability(devtools, worktreeKey),
+    { requiredPermission: DEVTOOLS_CAPABILITY_PERMISSION },
+  );
   const { moduleHost } = createModuleSystem({
     hostVersion,
     worktreeKey,
