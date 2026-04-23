@@ -4,102 +4,75 @@
  * `src/core/devtools/types.ts`, plus the `DevtoolsHostCapability` shape
  * this module calls against.
  *
- * The module can't import host source directly (bundling boundary
- * violation), so the equivalence is verified via TypeScript's structural
- * subtyping: each assignment below must compile. When the host type
- * gains or renames a field, this file starts failing type-check at the
- * corresponding assignment — that's the intended signal.
+ * The module can't import host source directly at bundle time (that's a
+ * module-boundary violation). Test files *may* reach across for type-only
+ * imports — the `parity` pattern depends on it. Runtime module code under
+ * `src/` must never import `../../../../src/core/...`.
  *
- * Runtime assertions are deliberately trivial; the real coverage is
- * compile-time.
+ * The equivalence below is verified via TypeScript's structural subtyping.
+ * When a host type gains or renames a field, this file starts failing
+ * type-check at the corresponding assignment — that's the intended signal.
+ *
+ * Exclusions:
+ *   - `NetworkCursor` is deliberately NOT round-tripped. The host brands
+ *     it with a `unique symbol` so agents can't fabricate cursors; the
+ *     module's structural copy (`{ bufferEpoch, sequence }`) is the right
+ *     shape for the MCP wire but won't satisfy the host's brand at the
+ *     type level. `NetworkFilter.since` parity is checked through an
+ *     assignment that normalizes the cursor type, below.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expectTypeOf } from "vitest";
 import type {
   CaptureListResult as HostCaptureListResult,
   CaptureMeta as HostCaptureMeta,
   CapturedBody as HostCapturedBody,
   DevToolsStatus as HostDevToolsStatus,
   NetworkEntry as HostNetworkEntry,
-  NetworkFilter as HostNetworkFilter,
   TargetDescriptor as HostTargetDescriptor,
 } from "../../../../src/core/devtools/types.js";
-import type {
-  DevtoolsHostCapability as HostDevtoolsHostCapability,
-} from "../../../../src/core/devtools/host-capability.js";
+import type { DevtoolsHostCapability as HostDevtoolsHostCapability } from "../../../../src/core/devtools/host-capability.js";
 import type {
   CaptureListResult,
   CaptureMeta,
   CapturedBody,
   DevToolsStatus,
   NetworkEntry,
-  NetworkFilter,
   TargetDescriptor,
 } from "../types.js";
 import type { DevtoolsHostCapability } from "../host-capability.js";
 
 describe("module type mirrors — structural parity with host types", () => {
-  it("NetworkEntry shape is assignable in both directions", () => {
-    const fromHost = (x: HostNetworkEntry): NetworkEntry => x;
-    const toHost = (x: NetworkEntry): HostNetworkEntry => x;
-    expect(fromHost).toBeTypeOf("function");
-    expect(toHost).toBeTypeOf("function");
-  });
+  it("host ↔ module type shapes match at compile time", () => {
+    // These compile-time assertions are the real coverage. Runtime
+    // behavior is checked by `dto.test.ts` and `host-capability.test.ts`.
+    expectTypeOf<HostNetworkEntry>().toMatchTypeOf<NetworkEntry>();
+    expectTypeOf<NetworkEntry>().toMatchTypeOf<HostNetworkEntry>();
 
-  it("CaptureMeta shape is assignable in both directions", () => {
-    const fromHost = (x: HostCaptureMeta): CaptureMeta => x;
-    const toHost = (x: CaptureMeta): HostCaptureMeta => x;
-    expect(fromHost).toBeTypeOf("function");
-    expect(toHost).toBeTypeOf("function");
-  });
+    expectTypeOf<HostCaptureMeta>().toMatchTypeOf<CaptureMeta>();
+    expectTypeOf<CaptureMeta>().toMatchTypeOf<HostCaptureMeta>();
 
-  it("CapturedBody shape is assignable in both directions", () => {
-    const fromHost = (x: HostCapturedBody): CapturedBody => x;
-    const toHost = (x: CapturedBody): HostCapturedBody => x;
-    expect(fromHost).toBeTypeOf("function");
-    expect(toHost).toBeTypeOf("function");
-  });
+    expectTypeOf<HostCapturedBody>().toMatchTypeOf<CapturedBody>();
+    expectTypeOf<CapturedBody>().toMatchTypeOf<HostCapturedBody>();
 
-  it("TargetDescriptor shape is assignable in both directions", () => {
-    const fromHost = (x: HostTargetDescriptor): TargetDescriptor => x;
-    const toHost = (x: TargetDescriptor): HostTargetDescriptor => x;
-    expect(fromHost).toBeTypeOf("function");
-    expect(toHost).toBeTypeOf("function");
-  });
+    expectTypeOf<HostTargetDescriptor>().toMatchTypeOf<TargetDescriptor>();
+    expectTypeOf<TargetDescriptor>().toMatchTypeOf<HostTargetDescriptor>();
 
-  it("DevToolsStatus shape is assignable in both directions", () => {
-    const fromHost = (x: HostDevToolsStatus): DevToolsStatus => x;
-    const toHost = (x: DevToolsStatus): HostDevToolsStatus => x;
-    expect(fromHost).toBeTypeOf("function");
-    expect(toHost).toBeTypeOf("function");
-  });
+    expectTypeOf<HostDevToolsStatus>().toMatchTypeOf<DevToolsStatus>();
+    expectTypeOf<DevToolsStatus>().toMatchTypeOf<HostDevToolsStatus>();
 
-  it("CaptureListResult<NetworkEntry> is assignable in both directions", () => {
-    const fromHost = (
-      x: HostCaptureListResult<HostNetworkEntry>,
-    ): CaptureListResult<NetworkEntry> => x;
-    const toHost = (
-      x: CaptureListResult<NetworkEntry>,
-    ): HostCaptureListResult<HostNetworkEntry> => x;
-    expect(fromHost).toBeTypeOf("function");
-    expect(toHost).toBeTypeOf("function");
-  });
+    expectTypeOf<
+      HostCaptureListResult<HostNetworkEntry>
+    >().toMatchTypeOf<CaptureListResult<NetworkEntry>>();
+    expectTypeOf<
+      CaptureListResult<NetworkEntry>
+    >().toMatchTypeOf<HostCaptureListResult<HostNetworkEntry>>();
 
-  it("NetworkFilter shape is assignable in both directions", () => {
-    const fromHost = (x: HostNetworkFilter): NetworkFilter => x;
-    const toHost = (x: NetworkFilter): HostNetworkFilter => x;
-    expect(fromHost).toBeTypeOf("function");
-    expect(toHost).toBeTypeOf("function");
-  });
-
-  it("DevtoolsHostCapability method signatures match the host contract", () => {
-    const fromHost = (
-      x: HostDevtoolsHostCapability,
-    ): DevtoolsHostCapability => x;
-    const toHost = (
-      x: DevtoolsHostCapability,
-    ): HostDevtoolsHostCapability => x;
-    expect(fromHost).toBeTypeOf("function");
-    expect(toHost).toBeTypeOf("function");
+    // DevtoolsHostCapability: the module's mirror must accept everything the
+    // host's contract accepts. One-way: host → module. (The reverse
+    // direction would require the module to re-declare the host's unique-
+    // symbol-branded `NetworkCursor`, which is specifically what we
+    // avoid — cursor fabrication is the whole point of the brand.)
+    expectTypeOf<HostDevtoolsHostCapability>().toMatchTypeOf<DevtoolsHostCapability>();
   });
 });

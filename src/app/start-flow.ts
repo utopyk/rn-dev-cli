@@ -568,6 +568,26 @@ async function startServicesAsync(
       `ℹ Loaded ${loadResult.modules.length} module manifest${loadResult.modules.length === 1 ? "" : "s"} (${loadResult.modules.map((m) => m.manifest.id).join(", ")})`,
     );
   }
+  // Security S7 — operator visibility. After the Phase 9 retirement of the
+  // `--enable-devtools-mcp` stderr banner, the startup log is the only
+  // ambient signal that a data-sensitive module is live. Emit one warning
+  // line per module carrying a sensitive permission so tailing operators
+  // see "devtools-network active" without running `rn-dev module list`.
+  const SENSITIVE_PERMS: ReadonlySet<string> = new Set([
+    "devtools:capture",
+    "exec:adb",
+    "exec:simctl",
+  ]);
+  for (const mod of loadResult.modules) {
+    const sensitive = (mod.manifest.permissions ?? []).filter((p) =>
+      SENSITIVE_PERMS.has(p),
+    );
+    if (sensitive.length > 0) {
+      emit(
+        `⚠ Module "${mod.manifest.id}" holds sensitive permission${sensitive.length === 1 ? "" : "s"}: ${sensitive.join(", ")} — traffic and device capture may be exposed over MCP.`,
+      );
+    }
+  }
   for (const rejected of loadResult.rejected) {
     emit(
       `⚠ Module manifest rejected (${rejected.code}): ${rejected.manifestPath} — ${rejected.message}`,

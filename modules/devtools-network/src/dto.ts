@@ -57,6 +57,18 @@ function projectBody(body: CapturedBody, opts: DtoOptions): CapturedBody {
   return REDACTED_BODY;
 }
 
+/**
+ * Central rewriter for the `CaptureMeta` envelope the module returns to
+ * MCP callers. Keeps `bodyCapture` consistent across every tool surface
+ * (status + list share one implementation so agents can't see
+ * conflicting values). Returns the input unchanged when
+ * `captureBodies: true`.
+ */
+export function projectMeta(meta: CaptureMeta, opts: DtoOptions): CaptureMeta {
+  if (opts.captureBodies) return meta;
+  return { ...meta, bodyCapture: "mcp-redacted" };
+}
+
 export function toDto(entry: NetworkEntry, opts: DtoOptions): NetworkEntryDto {
   const base: NetworkEntryDto = {
     requestId: entry.requestId,
@@ -107,12 +119,9 @@ export function toListDto(
   result: CaptureListResult<NetworkEntry>,
   opts: DtoOptions
 ): DevToolsListDto {
-  const meta: CaptureMeta = opts.captureBodies
-    ? result.meta
-    : { ...result.meta, bodyCapture: "mcp-redacted" };
   return {
     entries: result.entries.map((e) => toDto(e, opts)),
     cursorDropped: result.cursorDropped,
-    meta,
+    meta: projectMeta(result.meta, opts),
   };
 }

@@ -57,9 +57,12 @@ describe("createDevtoolsHostCapability", () => {
     expect(manager.listNetwork).toHaveBeenCalledWith("DEFAULT", undefined);
   });
 
-  it("respects explicit worktreeKey when provided", async () => {
+  it("respects explicit worktreeKey when it's in the allowed set", async () => {
     const manager = makeManager();
-    const cap = createDevtoolsHostCapability(manager, "DEFAULT");
+    const cap = createDevtoolsHostCapability(manager, "DEFAULT", () => [
+      "DEFAULT",
+      "OTHER",
+    ]);
     await cap.list({ worktreeKey: "OTHER" });
     expect(manager.listNetwork).toHaveBeenCalledWith("OTHER", undefined);
   });
@@ -72,9 +75,12 @@ describe("createDevtoolsHostCapability", () => {
     expect(manager.listNetwork).toHaveBeenCalledWith("DEFAULT", filter);
   });
 
-  it("status forwards the worktree", async () => {
+  it("status forwards allowed worktree keys", async () => {
     const manager = makeManager();
-    const cap = createDevtoolsHostCapability(manager, "DEFAULT");
+    const cap = createDevtoolsHostCapability(manager, "DEFAULT", () => [
+      "DEFAULT",
+      "w-1",
+    ]);
     await cap.status("w-1");
     expect(manager.status).toHaveBeenCalledWith("w-1");
   });
@@ -102,5 +108,41 @@ describe("createDevtoolsHostCapability", () => {
     const result = await cap.clear({});
     expect(manager.clear).toHaveBeenCalledWith("DEFAULT");
     expect(result.status).toBe("cleared");
+  });
+
+  it("falls back to defaultWorktreeKey when caller-supplied worktreeKey is not in the allowed set (cross-worktree guard)", async () => {
+    const manager = makeManager();
+    const cap = createDevtoolsHostCapability(manager, "DEFAULT", () => [
+      "DEFAULT",
+    ]);
+    await cap.list({ worktreeKey: "victim-worktree" });
+    expect(manager.listNetwork).toHaveBeenCalledWith("DEFAULT", undefined);
+  });
+
+  it("respects allowed multi-worktree set", async () => {
+    const manager = makeManager();
+    const cap = createDevtoolsHostCapability(manager, "DEFAULT", () => [
+      "DEFAULT",
+      "w-2",
+    ]);
+    await cap.list({ worktreeKey: "w-2" });
+    expect(manager.listNetwork).toHaveBeenCalledWith("w-2", undefined);
+  });
+
+  it("get returns null for empty requestId without hitting the manager", async () => {
+    const manager = makeManager();
+    const cap = createDevtoolsHostCapability(manager, "DEFAULT");
+    const result = await cap.get({ requestId: "" });
+    expect(result).toBeNull();
+    expect(manager.getNetwork).not.toHaveBeenCalled();
+  });
+
+  it("selectTarget throws on empty targetId", async () => {
+    const manager = makeManager();
+    const cap = createDevtoolsHostCapability(manager, "DEFAULT");
+    await expect(cap.selectTarget({ targetId: "" })).rejects.toThrow(
+      /targetId is required/,
+    );
+    expect(manager.selectTarget).not.toHaveBeenCalled();
   });
 });

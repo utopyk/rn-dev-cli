@@ -15,7 +15,7 @@
       "id": "devtools-network",
       "npmPackage": "@rn-dev-modules/devtools-network",
       "version": "0.1.0",
-      "tarballSha256": "f781ea5a073b323a3b2c3707dd9573aa63018566c458250e9e37b21ec0c781dc",
+      "tarballSha256": "06da3c4930d6dca21a4fdb5ea2081bf290e973ea198f912f443f1633a04edf34",
       "description": "Agent-native DevTools Network capture — list, inspect, and switch CDP targets over MCP.",
       "author": "rn-dev",
       "permissions": ["devtools:capture"],

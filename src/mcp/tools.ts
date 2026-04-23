@@ -711,16 +711,9 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
 }
 
 // ---------------------------------------------------------------------------
-// DevTools Network MCP tools (plan §Phase 3)
-//
-// Wiring note: MCP server runs as a separate process from the host (Ink or
-// Electron). All five tools talk to the host via the unix-socket IPC client.
-// When no host is running, calls fall through to an `isError` ToolResult so
-// the agent gets a clean failure instead of hanging or returning stale data.
-//
-// Security: every network-* tool's description ends with the S6
-// prompt-injection warning. Body capture obeys the S5 flag (`mcpCaptureBodies`).
-// Registration gating is S4.
+// Shared IPC helpers used by the `modules/*` lifecycle + config tool surface.
+// The MCP server runs out-of-process from the host; these helpers wrap the
+// unix-socket send + the common "no session" ToolResult.
 // ---------------------------------------------------------------------------
 
 function ipcAction(
@@ -987,7 +980,7 @@ function buildModulesLifecycleTools(ctx: McpContext): ToolDefinition[] {
     {
       name: "rn-dev/modules-config-set",
       description:
-        "Shallow-merge `patch` into a module's persisted config, validate the result against the module's contributed JSON Schema, and atomically write to ~/.rn-dev/modules/<id>/config.json. Emits config-changed to live subscribers and pushes a config/changed notification to the running subprocess. Returns E_CONFIG_VALIDATION on schema failure. Advisory permissions do not gate config writes in v1.",
+        "Shallow-merge `patch` into a module's persisted config, validate the result against the module's contributed JSON Schema, and atomically write to ~/.rn-dev/modules/<id>/config.json. Emits config-changed to live subscribers and pushes a config/changed notification to the running subprocess. Returns E_CONFIG_VALIDATION on schema failure. Destructive: flipping module security toggles (e.g. devtools-network `captureBodies`) can weaken the session's privacy posture — re-call with { permissionsAccepted: [\"rn-dev/modules-config-set\"] } or start the MCP server with --allow-destructive-tools.",
       inputSchema: {
         type: "object",
         required: ["moduleId", "patch"],
@@ -997,6 +990,11 @@ function buildModulesLifecycleTools(ctx: McpContext): ToolDefinition[] {
           patch: {
             type: "object",
             description: "Shallow-merged into the current config before validation.",
+          },
+          permissionsAccepted: {
+            type: "array",
+            items: { type: "string" },
+            description: "Pass [\"rn-dev/modules-config-set\"] to confirm a destructive-hinted write.",
           },
         },
       },
@@ -1010,7 +1008,32 @@ function buildModulesLifecycleTools(ctx: McpContext): ToolDefinition[] {
         },
       },
       handler: async (args) => {
-        const resp = await ipcAction(ctx, "modules/config/set", args);
+        if (!flags.allowDestructiveTools) {
+          const accepted = Array.isArray(args.permissionsAccepted)
+            ? args.permissionsAccepted.filter((v): v is string => typeof v === "string")
+            : [];
+          if (!accepted.includes("rn-dev/modules-config-set")) {
+            return {
+              isError: true,
+              structuredContent: {
+                kind: "error",
+                code: "E_DESTRUCTIVE_REQUIRES_CONFIRM",
+                message:
+                  'rn-dev/modules-config-set is destructive: re-call with { permissionsAccepted: ["rn-dev/modules-config-set"] } or start MCP with --allow-destructive-tools.',
+              },
+              content: [
+                {
+                  type: "text" as const,
+                  text: 'rn-dev/modules-config-set requires { permissionsAccepted: ["rn-dev/modules-config-set"] } or --allow-destructive-tools.',
+                },
+              ],
+            } satisfies ToolResult;
+          }
+        }
+        const { permissionsAccepted: _ignored, ...payloadArgs } = args as {
+          permissionsAccepted?: unknown;
+        } & Record<string, unknown>;
+        const resp = await ipcAction(ctx, "modules/config/set", payloadArgs);
         if (!resp) return noSessionError();
         const payload = resp.payload as Record<string, unknown>;
         if (
