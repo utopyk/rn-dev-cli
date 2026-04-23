@@ -66,13 +66,7 @@ async function loadManifest(entryDir: string): Promise<ModuleManifest> {
   return JSON.parse(raw) as ModuleManifest;
 }
 
-// ---------------------------------------------------------------------------
-// Arg narrowing.
-//
-// General-purpose narrowers live in `@rn-dev/module-sdk/args.ts`. This
-// module uses only those primitives today — no device-control-specific
-// wire shape needs its own narrower.
-// ---------------------------------------------------------------------------
+// Arg narrowing: all primitives imported from `@rn-dev/module-sdk`.
 
 function toListArgs(args: Args): ListArgs {
   const p = args["platform"];

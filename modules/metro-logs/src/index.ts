@@ -16,8 +16,9 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  runModule,
+  num,
   ringCursor,
+  runModule,
   str,
   type Args,
   type ModuleManifest,
@@ -38,9 +39,9 @@ export const MODULE_ID = "metro-logs" as const;
 // ---------------------------------------------------------------------------
 // Arg narrowing
 //
-// General-purpose narrowers (`str`, `ringCursor`, `Args`) live in the SDK —
-// see `@rn-dev/module-sdk/args.ts`. Module-specific narrowers (the
-// `"stdout" | "stderr"` `stream` union) stay local.
+// General-purpose narrowers (`str`, `num`, `ringCursor`, `Args`) live in
+// the SDK — imported via `@rn-dev/module-sdk`. Module-specific narrowers
+// (the `"stdout" | "stderr"` `stream` union) stay local.
 // ---------------------------------------------------------------------------
 
 function stream(args: Args): MetroLogStream | undefined {
@@ -59,12 +60,12 @@ function toListArgs(args: Args): ListArgs {
   const sub = str(args, "substring");
   const str2 = stream(args);
   const since = ringCursor(args);
-  const limit = args["limit"];
+  const limit = num(args, "limit");
   if (wk !== undefined) out.worktree = wk;
   if (sub !== undefined) out.substring = sub;
   if (str2 !== undefined) out.stream = str2;
   if (since !== undefined) out.since = since;
-  if (typeof limit === "number") out.limit = limit;
+  if (limit !== undefined) out.limit = limit;
   return out;
 }
 

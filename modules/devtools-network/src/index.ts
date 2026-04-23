@@ -21,6 +21,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  num,
   requireStr,
   ringCursor,
   runModule,
@@ -48,9 +49,10 @@ export const MODULE_ID = "devtools-network" as const;
 // ---------------------------------------------------------------------------
 // Arg narrowing
 //
-// General-purpose narrowers (`str`, `strArr`, `ringCursor`, `requireStr`,
-// `Args`) live in `@rn-dev/module-sdk/args.ts`. The `statusRange` tuple
-// narrower is specific to HTTP status-range filters, so it stays local.
+// General-purpose narrowers (`str`, `num`, `strArr`, `ringCursor`,
+// `requireStr`, `Args`) live in the SDK — imported via
+// `@rn-dev/module-sdk`. The `statusRange` tuple narrower is specific to
+// HTTP status-range filters, so it stays local.
 // ---------------------------------------------------------------------------
 
 function statusRange(args: Args): [number, number] | undefined {
@@ -74,13 +76,13 @@ function toListArgs(args: Args): ListArgs {
   const methods = strArr(args, "methods");
   const range = statusRange(args);
   const since = ringCursor(args);
-  const limit = args["limit"];
+  const limit = num(args, "limit");
   if (wk !== undefined) out.worktree = wk;
   if (urlRegex !== undefined) out.urlRegex = urlRegex;
   if (methods !== undefined) out.methods = methods;
   if (range !== undefined) out.statusRange = range;
   if (since !== undefined) out.since = since;
-  if (typeof limit === "number") out.limit = limit;
+  if (limit !== undefined) out.limit = limit;
   return out;
 }
 

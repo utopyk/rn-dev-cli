@@ -14,7 +14,9 @@
  * promotes them here (Rule-of-Three). Module-specific narrowers
  * (e.g. `stream` for `stdout|stderr`, `statusRange` for HTTP status
  * tuples) stay in their owning module — only the general-purpose
- * primitives live in the SDK.
+ * primitives live in the SDK. Import these via the SDK barrel
+ * (`@rn-dev/module-sdk`); the file-relative path `./args.ts` is the
+ * source location, not a public subpath export.
  */
 
 export type Args = Record<string, unknown>;
@@ -25,7 +27,13 @@ export function str(args: Args, key: string): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
-/** Finite number at `args[key]`, else `undefined`. */
+/**
+ * Finite number at `args[key]`, else `undefined`. Accepts negatives and
+ * non-integers — the caller is responsible for tighter gating (e.g.
+ * `Number.isInteger`, range checks) when the wire field requires it.
+ * Pattern to mirror: the `limit`-bounds check in each module's
+ * `extractFilter` (integer, `> 0`, `<= MAX_LIMIT`).
+ */
 export function num(args: Args, key: string): number | undefined {
   const v = args[key];
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -73,10 +81,16 @@ export function requireNum(args: Args, key: string, tool: string): number {
  * where both are finite numbers. Returns that shape if present and
  * well-formed; `undefined` otherwise.
  *
- * The return is deliberately the minimal structural shape. Callers with a
- * branded or `readonly`-tagged local cursor type just assign — TypeScript
- * widens the mutable structural type to the readonly one at the
- * assignment site.
+ * **Returns a fresh object containing only the two known fields.** Any
+ * extra properties on the wire cursor are dropped — the return is
+ * deliberately the minimal structural shape. If a future cursor variant
+ * carries additional fields (e.g. `version`), it will need its own
+ * narrower.
+ *
+ * The return type's fields are `readonly` for caller-side clarity;
+ * TypeScript structural widening still assigns cleanly into branded or
+ * `readonly`-tagged local cursor types (`MetroLogsCursor`,
+ * `NetworkCursor`) at the call site.
  *
  * Default key is `"since"` because that's what every cursor-carrying
  * tool (today's `metro-logs__list`, `devtools-network__list`) names the
@@ -85,7 +99,7 @@ export function requireNum(args: Args, key: string, tool: string): number {
 export function ringCursor(
   args: Args,
   key: string = "since",
-): { bufferEpoch: number; sequence: number } | undefined {
+): { readonly bufferEpoch: number; readonly sequence: number } | undefined {
   const v = args[key];
   if (!v || typeof v !== "object") return undefined;
   const c = v as { bufferEpoch?: unknown; sequence?: unknown };
