@@ -537,21 +537,12 @@ async function startServicesAsync(
   // factory so modules activated during built-in manifest registration can
   // resolve them.
   const hostVersion = readHostVersion();
-  const capabilities = new CapabilityRegistry();
-  capabilities.register("metro", metro, {
-    requiredPermission: "exec:react-native",
+  const capabilities = registerHostCapabilities({
+    metro,
+    artifactStore,
+    devtools,
+    worktreeKey,
   });
-  capabilities.register("artifacts", artifactStore, {
-    requiredPermission: "fs:artifacts",
-  });
-  capabilities.register(
-    DEVTOOLS_CAPABILITY_ID,
-    createDevtoolsHostCapability(devtools, worktreeKey),
-    {
-      requiredPermission: DEVTOOLS_CAPABILITY_READ_PERMISSION,
-      methodPermissions: DEVTOOLS_METHOD_PERMISSIONS,
-    },
-  );
   const { moduleHost } = createModuleSystem({
     hostVersion,
     worktreeKey,
@@ -628,6 +619,40 @@ async function startServicesAsync(
 // ---------------------------------------------------------------------------
 // Module-host capability helpers (Phase 2 daemon wiring)
 // ---------------------------------------------------------------------------
+
+/**
+ * Phase 10 P3-13 — extracted from `startServicesAsync` so the tangled
+ * capability registrations live in one place with a clear signature. Each
+ * dep maps 1:1 to a single `capabilities.register()` call; adding a new
+ * built-in host capability (e.g. a future "telemetry") means one more arg
+ * here and one more call, rather than widening the surface area of
+ * `startServicesAsync`.
+ */
+interface HostCapabilityDeps {
+  metro: MetroManager;
+  artifactStore: ArtifactStore;
+  devtools: DevToolsManager;
+  worktreeKey: string;
+}
+
+function registerHostCapabilities(deps: HostCapabilityDeps): CapabilityRegistry {
+  const capabilities = new CapabilityRegistry();
+  capabilities.register("metro", deps.metro, {
+    requiredPermission: "exec:react-native",
+  });
+  capabilities.register("artifacts", deps.artifactStore, {
+    requiredPermission: "fs:artifacts",
+  });
+  capabilities.register(
+    DEVTOOLS_CAPABILITY_ID,
+    createDevtoolsHostCapability(deps.devtools, deps.worktreeKey),
+    {
+      requiredPermission: DEVTOOLS_CAPABILITY_READ_PERMISSION,
+      methodPermissions: DEVTOOLS_METHOD_PERMISSIONS,
+    },
+  );
+  return capabilities;
+}
 
 function readHostVersion(): string {
   // Single source of truth: root package.json. Phase 2 handoff flags this
