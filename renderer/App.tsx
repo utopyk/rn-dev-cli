@@ -36,6 +36,8 @@ export function App() {
   const [profileVisible, setProfileVisible] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
   const [showNewInstanceDialog, setShowNewInstanceDialog] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [promptModal, setPromptModal] = useState<{
     promptId: string;
     title: string;
@@ -497,7 +499,7 @@ export function App() {
 
   if (showNewInstanceDialog) {
     return (
-      <div className="app-root">
+      <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}`}>
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} />
         <div className="app-main">
           {instances.length > 0 && (
@@ -523,7 +525,7 @@ export function App() {
 
   if (showWizard) {
     return (
-      <div className="app-root">
+      <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}`}>
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} />
         <div className="app-main">
           {instances.length > 0 && (
@@ -552,7 +554,7 @@ export function App() {
   }
 
   return (
-    <div className="app-root">
+    <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}`}>
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} />
       <div className="app-main">
         <InstanceTabs
