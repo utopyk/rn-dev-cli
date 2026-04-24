@@ -1,7 +1,7 @@
 .app-root {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: var(--sidebar-w, 260px) 1fr;
+  grid-template-columns: var(--sidebar-w, 260px) 1fr var(--notif-w, 72px);
   gap: 28px;
   padding: 28px;
   overflow: hidden;
@@ -9,6 +9,7 @@
 }
 
 .app-root.collapsed { --sidebar-w: 72px; }
+.app-root.notifications-expanded { --notif-w: 320px; }
 
 .app-main {
   display: flex;

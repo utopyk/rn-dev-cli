@@ -17,6 +17,8 @@ import { NewInstanceDialog } from './views/NewInstanceDialog';
 import { useIpcOn, useIpcInvoke } from './hooks/useIpc';
 import { useSimulatedLogs } from './hooks/useSimulatedLogs';
 import { useSidebarCollapsed } from './hooks/useSidebarCollapsed.js';
+import { NotificationsPanel } from './components/NotificationsPanel';
+import { useNotificationsPanelExpanded } from './hooks/useNotificationsPanelExpanded.js';
 import type { SimulatedSectionEvent } from './hooks/useSimulatedLogs';
 import './App.css';
 
@@ -38,6 +40,7 @@ export function App() {
   const [showWizard, setShowWizard] = useState(false);
   const [showNewInstanceDialog, setShowNewInstanceDialog] = useState(false);
   const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebarCollapsed();
+  const { expanded: notifExpanded, toggle: toggleNotifications } = useNotificationsPanelExpanded();
   const [promptModal, setPromptModal] = useState<{
     promptId: string;
     title: string;
@@ -499,7 +502,7 @@ export function App() {
 
   if (showNewInstanceDialog) {
     return (
-      <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}`}>
+      <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}${notifExpanded ? ' notifications-expanded' : ''}`}>
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
         <div className="app-main">
           {instances.length > 0 && (
@@ -519,13 +522,14 @@ export function App() {
             />
           </div>
         </div>
+        <NotificationsPanel expanded={notifExpanded} onToggle={toggleNotifications} />
       </div>
     );
   }
 
   if (showWizard) {
     return (
-      <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}`}>
+      <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}${notifExpanded ? ' notifications-expanded' : ''}`}>
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
         <div className="app-main">
           {instances.length > 0 && (
@@ -544,6 +548,7 @@ export function App() {
             />
           </div>
         </div>
+        <NotificationsPanel expanded={notifExpanded} onToggle={toggleNotifications} />
       </div>
     );
   }
@@ -554,7 +559,7 @@ export function App() {
   }
 
   return (
-    <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}`}>
+    <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}${notifExpanded ? ' notifications-expanded' : ''}`}>
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
       <div className="app-main">
         <InstanceTabs
@@ -603,6 +608,7 @@ export function App() {
           activeTab={activeTab}
         />
       </div>
+      <NotificationsPanel expanded={notifExpanded} onToggle={toggleNotifications} />
     </div>
   );
 }
