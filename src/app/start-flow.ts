@@ -12,6 +12,7 @@ import { FileWatcher } from "../core/watcher.js";
 import { IpcServer } from "../core/ipc.js";
 import type { ModuleHostManager } from "../core/module-host/manager.js";
 import { bootSessionServices } from "../core/session/boot.js";
+import { readHostVersion } from "../core/host-version.js";
 import { loadTheme, getThemeEffects } from "../ui/theme-provider.js";
 import {
   ModuleRegistry,
@@ -359,22 +360,6 @@ async function startServicesAsync(
     moduleHost: services.moduleHost,
     moduleRegistry: services.moduleRegistry,
   };
-}
-
-function readHostVersion(): string {
-  // Single source of truth: root package.json. Phase 2 handoff flags this
-  // — if the daemon is ever split off, re-wire this to a build-stamped
-  // constant instead of a runtime read.
-  try {
-    const pkgPath = path.join(process.cwd(), "package.json");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-    const pkg = JSON.parse(
-      require("fs").readFileSync(pkgPath, "utf-8"),
-    ) as { version?: string };
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
 }
 
 // ---------------------------------------------------------------------------

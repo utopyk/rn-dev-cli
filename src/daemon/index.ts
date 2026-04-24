@@ -11,7 +11,7 @@ import { DaemonSupervisor, type SessionBootFn } from "./supervisor.js";
 import { bootSessionServices } from "../core/session/boot.js";
 import { fakeBootSessionServices } from "./fake-boot.js";
 import { sweepOrphanModules } from "./orphan-sweep.js";
-import type { Profile } from "../core/types.js";
+import { validateProfile } from "./profile-guard.js";
 import type { SessionEvent } from "./session.js";
 
 // ---------------------------------------------------------------------------
@@ -266,22 +266,28 @@ async function handleSessionStart(
   event: IpcMessageEvent,
   supervisor: DaemonSupervisor,
 ): Promise<void> {
-  const payload = event.message.payload as { profile?: Profile } | undefined;
-  const profile = payload?.profile;
-  if (!profile || typeof profile !== "object") {
+  const payloadCandidate = event.message.payload;
+  const profileCandidate =
+    payloadCandidate &&
+    typeof payloadCandidate === "object" &&
+    "profile" in payloadCandidate
+      ? (payloadCandidate as { profile: unknown }).profile
+      : undefined;
+
+  // Strict schema validation before anything downstream touches the
+  // payload — see src/daemon/profile-guard.ts for the threat model.
+  const validation = validateProfile(profileCandidate);
+  if (!validation.ok) {
     event.reply({
       type: "response",
       action: "session/start",
       id: event.message.id,
-      payload: {
-        code: "E_INVALID_PROFILE",
-        message: "session/start requires { profile: Profile } in payload",
-      },
+      payload: { code: validation.code, message: validation.message },
     });
     return;
   }
 
-  const result = await supervisor.start({ profile });
+  const result = await supervisor.start({ profile: validation.profile });
   if (result.kind === "error") {
     event.reply({
       type: "response",

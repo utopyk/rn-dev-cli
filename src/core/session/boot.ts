@@ -9,6 +9,7 @@
 
 import path from "node:path";
 import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 
 import { execShellAsync } from "../exec-async.js";
 import type { ArtifactStore } from "../artifact.js";
@@ -178,14 +179,11 @@ export async function bootSessionServices(
     emit("");
   }
 
-  // 4. Watchman clear.
+  // 4. Watchman clear. Argv-form spawn (not `sh -c`) so a crafted
+  // `effectiveRoot` from an untrusted profile can't escape quoting —
+  // Security reviewer P0 on shell injection closed at this call site.
   emit("\u23f3 Clearing watchman...");
-  try {
-    await execShellAsync(`watchman watch-del '${effectiveRoot}'`, { timeout: 15000 });
-    emit("\u2714 Watchman watch cleared for project");
-  } catch {
-    emit("\u2139 Watchman not available or timed out");
-  }
+  await spawnWatchmanWatchDel(effectiveRoot, emit);
 
   // 5. Port check + kill stale.
   const metro = new MetroManager(artifactStore);
@@ -404,6 +402,41 @@ function registerHostCapabilities(deps: HostCapabilityDeps): CapabilityRegistry 
     },
   );
   return capabilities;
+}
+
+function spawnWatchmanWatchDel(
+  root: string,
+  emit: (line: string) => void,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const proc = spawn("watchman", ["watch-del", root], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    let settled = false;
+    const finish = (outcome: "ok" | "err"): void => {
+      if (settled) return;
+      settled = true;
+      if (outcome === "ok") emit("\u2714 Watchman watch cleared for project");
+      else emit("\u2139 Watchman not available or timed out");
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      try {
+        proc.kill();
+      } catch {
+        /* best-effort */
+      }
+      finish("err");
+    }, 15_000);
+    proc.on("exit", (code) => {
+      clearTimeout(timer);
+      finish(code === 0 ? "ok" : "err");
+    });
+    proc.on("error", () => {
+      clearTimeout(timer);
+      finish("err");
+    });
+  });
 }
 
 function createScopedLogger(emit: (line: string) => void): LogCapability {

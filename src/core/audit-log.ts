@@ -533,16 +533,20 @@ function generateKey(keyPath: string): Buffer {
 // Cross-process lockfile (Phase 13.2)
 // ---------------------------------------------------------------------------
 
-const LOCK_STALE_MS = 2_000;
 const LOCK_POLL_MS = 10;
-const LOCK_MAX_ATTEMPTS = 200; // ~2s total before we treat the lock as stale
+const LOCK_MAX_ATTEMPTS = 300; // ~3s total before we treat the attempt as failed
 
 /**
- * Acquire an O_EXCL lockfile, run `fn`, release. Stale locks (mtime >
- * LOCK_STALE_MS old) are force-reclaimed since the most plausible
- * explanation for a lock older than a write takes is a crashed writer.
- * Keeps the appender resilient to daemon crashes without requiring
- * operator intervention.
+ * Acquire an O_EXCL lockfile, write our pid into it, run `fn`, release.
+ *
+ * Stale-lock reclaim: the holder's pid is read from the lockfile body
+ * and probed with `kill(pid, 0)`. Only if the holder is actually dead
+ * do we unlink and retake. An mtime-threshold-based reclaim (which the
+ * first draft used) is unsafe — a slow writer on NFS or a writer
+ * traversing a large file under the lock can exceed any threshold
+ * without being stuck, and concurrent reclaim creates two writers
+ * reading the same tail and corrupting the HMAC chain. Security
+ * reviewer P1 on this was the blocker.
  */
 async function withAuditLock<T>(
   lockPath: string,
@@ -558,25 +562,28 @@ async function withAuditLock<T>(
       );
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      // Stale-lock reclaim: if the lock's mtime is old enough, the
-      // holder almost certainly crashed. Unlink and retry.
-      try {
-        const st = statSync(lockPath);
-        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
-          try {
-            unlinkSync(lockPath);
-          } catch {
-            /* race with another reclaimer — fall through to backoff */
-          }
-          continue;
+      // Read the holder's pid and check liveness. Only a dead holder
+      // gets reclaimed; a live (possibly slow) holder makes us wait.
+      const holder = readLockHolder(lockPath);
+      if (holder === null || isPidDead(holder)) {
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          /* race with another reclaimer — fall through to backoff */
         }
-      } catch {
-        /* lock may have been released between EEXIST and statSync */
+        continue;
       }
       await new Promise((r) => setTimeout(r, LOCK_POLL_MS));
       continue;
     }
 
+    // Record our pid so another writer can probe it if we crash.
+    try {
+      writeFileSync(lockPath, `${process.pid}\n`, { mode: 0o600 });
+    } catch {
+      /* best-effort — if the write fails, reclaim-by-pid falls back to
+         the "holder === null" path which unlinks as stale */
+    }
     try {
       return await fn();
     } finally {
@@ -595,4 +602,27 @@ async function withAuditLock<T>(
   throw new Error(
     `AuditLog: timed out acquiring lock at ${lockPath} after ${LOCK_MAX_ATTEMPTS * LOCK_POLL_MS}ms`,
   );
+}
+
+function readLockHolder(lockPath: string): number | null {
+  try {
+    const raw = readFileSync(lockPath, "utf-8").trim();
+    if (!raw) return null;
+    const pid = Number(raw);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPidDead(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // EPERM = exists but we lack permission to signal — treat as alive.
+    if (code === "EPERM") return false;
+    return true;
+  }
 }

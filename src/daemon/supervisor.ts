@@ -6,15 +6,20 @@
 // `Supervisor` in src/core/module-host/supervisor.ts (module-host
 // crash-loop detector).
 //
-// The state machine lives in-process; cross-daemon coordination is
-// outside scope — one daemon per worktree.
+// Concurrency model: every `start()` captures an incrementing `bootEpoch`.
+// `bootAsync` compares its captured epoch against the supervisor's
+// current epoch before publishing its wired services. Any `stop()` or
+// subsequent `start()` bumps the epoch, invalidating a boot that's
+// still mid-flight; the losing boot disposes its partially-constructed
+// services instead of leaking them. One daemon per worktree — we
+// don't coordinate cross-daemon.
 
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
 import type { IpcServer } from "../core/ipc.js";
 import { ArtifactStore } from "../core/artifact.js";
 import { ModuleRegistry } from "../modules/registry.js";
+import { readHostVersion } from "../core/host-version.js";
 import type { Profile } from "../core/types.js";
 import {
   INITIAL_SESSION_STATE,
@@ -56,6 +61,7 @@ export type StopSessionResult =
 type WiredServices = {
   services: SessionServices;
   detach: () => void;
+  epoch: number;
 };
 
 /**
@@ -73,12 +79,30 @@ export class DaemonSupervisor extends EventEmitter {
   private wired: WiredServices | null = null;
   /** Snapshot profile from session/start. Mid-session edits are ignored. */
   private activeProfile: Profile | null = null;
+  /**
+   * Incrementing generation counter. Bumped on every start() AND
+   * stop(); bootAsync captures on entry and re-checks on publish to
+   * drop its result if a concurrent transition has since invalidated it.
+   */
+  private bootEpoch = 0;
+  /**
+   * In-flight boot promise, if any. stop() awaits it so teardown runs
+   * AFTER boot's dispose path finishes rather than racing it.
+   */
+  private bootInFlight: Promise<void> | null = null;
+  /**
+   * Stable worktree-hashed key for this session. Stamped at start() so
+   * pre-boot lifecycle events carry the same id as post-boot events —
+   * Arch reviewer P1 on identity drift.
+   */
+  private sessionWorktreeKey: string;
 
   constructor(opts: DaemonSupervisorOptions) {
     super();
     this.worktree = opts.worktree;
     this.ipc = opts.ipc;
     this.bootFn = opts.bootFn;
+    this.sessionWorktreeKey = this.worktree;
   }
 
   getState(): SessionState {
@@ -94,25 +118,42 @@ export class DaemonSupervisor extends EventEmitter {
       };
     }
 
+    const myEpoch = ++this.bootEpoch;
     this.activeProfile = opts.profile;
+    // Compute the stable worktreeKey now so every event from start → stop
+    // carries the same identity — before this, pre-boot events used the
+    // raw worktree path while post-boot events used the hashed key and
+    // subscribers saw two ids for one session.
+    const artifactStore = new ArtifactStore(
+      path.join(this.worktree, ".rn-dev", "artifacts"),
+    );
+    this.sessionWorktreeKey = artifactStore.worktreeHash(opts.profile.worktree);
     this.transition("starting");
 
-    // Kick off the boot asynchronously — the RPC response is "starting"
-    // so the client can subscribe to events for the running transition.
-    void this.bootAsync(opts.profile).catch((err) => {
-      this.emitSessionEvent({
-        kind: "session/log",
-        worktreeKey: this.worktreeKey(),
-        data: {
-          level: "error",
-          message: `bootSessionServices failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        },
-      });
-      // Roll back to stopped; the supervisor doesn't auto-retry.
-      this.activeProfile = null;
-      this.transition("stopped");
+    const bootPromise = this.bootAsync(opts.profile, artifactStore, myEpoch).catch(
+      (err) => {
+        this.emitSessionEvent({
+          kind: "session/log",
+          worktreeKey: this.sessionWorktreeKey,
+          data: {
+            level: "error",
+            message: `bootSessionServices failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          },
+        });
+        // Only roll back if we still own the epoch — a concurrent stop()
+        // may have already reset the state.
+        if (this.bootEpoch === myEpoch) {
+          this.activeProfile = null;
+          this.transition("stopped");
+        }
+      },
+    );
+    this.bootInFlight = bootPromise.finally(() => {
+      if (this.bootInFlight === bootPromise) {
+        this.bootInFlight = null;
+      }
     });
 
     return { kind: "ok", status: "starting" };
@@ -125,13 +166,25 @@ export class DaemonSupervisor extends EventEmitter {
     if (this.state.status === "stopping") {
       return { kind: "ok", status: "stopping" };
     }
-    if (this.state.status === "starting") {
-      // Rare — caller hit stop before boot finished. Fall through to
-      // teardown; if `wired` isn't populated yet, there's nothing to
-      // dispose beyond the profile reset.
+
+    // Bump the epoch first so any in-flight boot observes it on the
+    // publish check and disposes rather than overwriting state we're
+    // about to clear.
+    this.bootEpoch++;
+    this.transition("stopping");
+
+    // Wait for any boot in progress to finish its teardown. Without
+    // this join, `bootAsync` can publish services into `this.wired`
+    // *after* we've set it to null, leaking them.
+    const inFlight = this.bootInFlight;
+    if (inFlight) {
+      try {
+        await inFlight;
+      } catch {
+        /* bootAsync's own error handler already logged it */
+      }
     }
 
-    this.transition("stopping");
     const wired = this.wired;
     this.wired = null;
     this.activeProfile = null;
@@ -162,15 +215,16 @@ export class DaemonSupervisor extends EventEmitter {
     };
   }
 
-  private async bootAsync(profile: Profile): Promise<void> {
-    const artifactStore = new ArtifactStore(
-      path.join(this.worktree, ".rn-dev", "artifacts"),
-    );
+  private async bootAsync(
+    profile: Profile,
+    artifactStore: ArtifactStore,
+    myEpoch: number,
+  ): Promise<void> {
     const moduleRegistry = new ModuleRegistry();
     const emit = (line: string): void => {
       this.emitSessionEvent({
         kind: "session/log",
-        worktreeKey: this.worktreeKey(),
+        worktreeKey: this.sessionWorktreeKey,
         data: { level: "info", message: line },
       });
     };
@@ -186,20 +240,21 @@ export class DaemonSupervisor extends EventEmitter {
       ipc: this.ipc,
     });
 
-    // If stop() ran while we were booting, throw away what we built.
-    // Cast needed because `this.state.status` has narrowed from the
-    // original "starting" guard but the supervisor is concurrent.
-    if ((this.state.status as SessionStatus) !== "starting") {
+    // Epoch gate — if start/stop has advanced the counter since we
+    // captured it on entry, our boot is stale. Dispose what we built
+    // and walk away; the current owner of the state is responsible for
+    // its own lifecycle.
+    if (myEpoch !== this.bootEpoch) {
       try {
         await services.dispose();
       } catch {
-        /* ignore */
+        /* ignore — we're discarding this boot's work */
       }
       return;
     }
 
     const detach = this.wireServiceEvents(services);
-    this.wired = { services, detach };
+    this.wired = { services, detach, epoch: myEpoch };
     this.state = {
       status: "running",
       services: this.snapshotServices(services),
@@ -227,11 +282,11 @@ export class DaemonSupervisor extends EventEmitter {
         data: { line: evt.line, stream: evt.stream },
       });
     };
-    const onDevtoolsStatus = (payload: unknown): void => {
+    const onDevtoolsStatus = (payload: Record<string, unknown>): void => {
       this.emitSessionEvent({
         kind: "devtools/status",
         worktreeKey,
-        data: { payload },
+        data: payload,
       });
     };
     const onModuleStateChanged = (p: {
@@ -287,11 +342,10 @@ export class DaemonSupervisor extends EventEmitter {
   }
 
   private snapshotServices(services: SessionServices): ServicesSnapshot {
-    // Phase 13.2 — minimum viable snapshot. Phase 13.3+ can deepen this
-    // by asking each service for its live status (metro.isRunning() etc).
+    // Phase 13.2 — only report fields we can fill honestly. Phase 13.3+
+    // can add live metro.getStatus(), devtools.getStatus() calls once
+    // those surfaces exist on the client.
     return {
-      metro: { status: "starting" },
-      devtools: { status: "unknown" },
       modules: { count: services.moduleRegistry.getAllManifests().length },
     };
   }
@@ -309,34 +363,12 @@ export class DaemonSupervisor extends EventEmitter {
     this.emit("state-changed", this.state);
     this.emitSessionEvent({
       kind: "session/status",
-      worktreeKey: this.worktreeKey(),
+      worktreeKey: this.sessionWorktreeKey,
       data: { status: this.state.status },
     });
   }
 
   private emitSessionEvent(evt: SessionEvent): void {
     this.emit("event", evt);
-  }
-
-  private worktreeKey(): string {
-    // Before boot we don't have the ArtifactStore-hashed key yet. Fall
-    // back to the worktree path so lifecycle events still carry a
-    // stable id; downstream subscribers can ignore it until boot
-    // stamps the real key.
-    return this.wired?.services.worktreeKey ?? this.worktree;
-  }
-}
-
-function readHostVersion(): string {
-  try {
-    // Daemon process.cwd() is the worktree at runDaemon time, so resolve
-    // package.json relative to this file's module. For now, trust
-    // process.cwd()'s package.json; if absent, fall back to the tree
-    // the daemon is running against.
-    const pkgPath = path.join(process.cwd(), "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
   }
 }
