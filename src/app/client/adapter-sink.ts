@@ -13,7 +13,11 @@
 // rename further if adapters grow enough to warrant it — today the
 // interface is load-bearing by itself.
 
-export interface AdapterSink<K extends string = string> {
+// No default on K — a bare `AdapterSink` (no generic argument)
+// would accept any string for `dispatch` and silently erase the
+// per-adapter narrowing. Every call site passes the literal union;
+// Kieran P1 on PR #18.
+export interface AdapterSink<K extends string> {
   /**
    * Fan a daemon event into the adapter's internal emitter. Called by
    * the session orchestrator from `events/subscribe`; later Electron

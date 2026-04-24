@@ -18,7 +18,9 @@
 // exists as a daemon RPC and the panel bridge grows a socket-hop.
 
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { app } from "electron";
 import {
   connectToDaemonSession,
   type DaemonSession,
@@ -36,14 +38,29 @@ import type { Profile } from "../src/core/types.js";
  *   dirname(import.meta.url) = <repo>/dist/electron
  *   go up two levels + join src/index.tsx.
  *
- * Packaged path (asar):
- *   TBD. The packaged build isn't wired in Phase 13.4; revisit when
- *   the installer lands. For now the path above covers `bun run
- *   electron` + `npm run build && ./out-electron/...` flows.
+ * Packaged path (asar) is NOT wired in Phase 13.4 — callers get a
+ * loud throw rather than a silent ENOENT from `spawnDetachedDaemon`.
+ * A packaged-build entry point lands with the installer work in
+ * Phase 13.5. Kieran + Security P1 on PR #18 (silent ENOENT was
+ * the anti-pattern flagged against Martin's "fail fast with clear
+ * messages" rule).
  */
 function resolveDaemonEntry(): string {
+  if (app.isPackaged) {
+    throw new Error(
+      "resolveDaemonEntry: packaged Electron is not supported in Phase 13.4. " +
+        "Run via `bun run electron` until the packaged-build daemon entry is " +
+        "wired in Phase 13.5.",
+    );
+  }
   const here = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(here, "..", "..", "src", "index.tsx");
+  const resolved = path.resolve(here, "..", "..", "src", "index.tsx");
+  if (!existsSync(resolved)) {
+    throw new Error(
+      `resolveDaemonEntry: CLI entry not found at ${resolved} — unexpected layout (symlinked repo, non-standard dist path, stale build?).`,
+    );
+  }
+  return resolved;
 }
 
 export interface ConnectElectronToDaemonOptions {
