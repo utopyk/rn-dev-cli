@@ -258,23 +258,29 @@ export const cyberneurosis: Theme = {
     inkSoft:        '#D9B4E3',
     muted:          '#7A7AA8',
     muted2:         '#4A4A72',
-    glow:           '#00F0FF',
-    glowWarm:       '#FF2A6D',
+    // Neon-green primary accent (distinct from Neon Drive's teal-cyan).
+    // Yellow gets the glow-warm slot so it shows in hover/secondary
+    // surfaces, not just booting-status dots.
+    glow:           '#4BFF21',
+    glowWarm:       '#F8E602',
     ready:          '#4BFF21',
     booting:        '#F8E602',
-    shadowLight:    'rgba(0, 240, 255, 0.06)',
+    shadowLight:    'rgba(244, 213, 253, 0.06)',
     shadowDark:     'rgba(0, 0, 0, 0.7)',
     shadowDarkSoft: 'rgba(0, 0, 0, 0.45)',
-    glowMedium:     '0 0 14px rgb(0 240 255 / 60%), 0 0 28px rgb(255 42 109 / 32%), 0 18px 42px rgb(75 255 33 / 22%)',
-    accentBorder:   '#00F0FF',
+    // Triple-halo: green core + yellow mid + pink spread. Cyan sits out
+    // of the primary glow to keep a clear separation from Neon Drive.
+    glowMedium:     '0 0 14px rgb(75 255 33 / 60%), 0 0 28px rgb(248 230 2 / 35%), 0 18px 42px rgb(255 42 109 / 22%)',
+    accentBorder:   '#4BFF21',
     bodyBg:         'radial-gradient(1200px 700px at 85% 10%, #12152F 0%, transparent 60%), radial-gradient(900px 700px at 10% 90%, #0A0A1E 0%, transparent 55%), #08091A',
     fg:             '#F4D5FD',
-    border:         '#00F0FF',
-    accent:         '#00F0FF',
+    border:         '#4BFF21',
+    accent:         '#4BFF21',
     success:        '#4BFF21',
     warning:        '#F8E602',
     error:          '#FF2A6D',
-    highlight:      '#F8E602',
+    // Cyan finds a home in highlights (log-info), not the hero accent.
+    highlight:      '#00F0FF',
     selection:      '#772289',
   },
 };
