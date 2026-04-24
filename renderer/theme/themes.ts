@@ -240,32 +240,34 @@ export const flat: Theme = {
 };
 
 /**
- * Cyberneurosis — over-the-top Edgerunners palette. Deep bruise-purple
- * surfaces, cyan accent, electric-yellow highlight, neon-green ready,
- * pink error. The glow-medium recipe triple-layers cyan + purple + yellow
- * so active elements radiate hard. Use as a stress test for the chrome.
+ * Cyberneurosis — Edgerunners palette distributed across the status
+ * surfaces so every accent (#00F0FF cyan, #F8E602 yellow, #4BFF21 green,
+ * #FF2A6D pink, #772289 purple) shows up somewhere in the chrome. Base
+ * is a cool blue-black midnight so the neons read as lit signage rather
+ * than bruise. glow-medium layers cyan + magenta + green at different
+ * radii, echoing the scene's stacked neon bleed.
  */
 export const cyberneurosis: Theme = {
   name: 'Cyberneurosis',
   colors: {
-    bg:             '#0E0418',
-    bgSoft:         '#14081F',
-    surface:        '#1B0B28',
-    surfaceHi:      '#261238',
+    bg:             '#08091A',
+    bgSoft:         '#0D0F22',
+    surface:        '#12152F',
+    surfaceHi:      '#1C2046',
     ink:            '#F4D5FD',
     inkSoft:        '#D9B4E3',
-    muted:          '#9B6AA8',
-    muted2:         '#6B3F82',
+    muted:          '#7A7AA8',
+    muted2:         '#4A4A72',
     glow:           '#00F0FF',
-    glowWarm:       '#F8E602',
+    glowWarm:       '#FF2A6D',
     ready:          '#4BFF21',
     booting:        '#F8E602',
-    shadowLight:    'rgba(244, 213, 253, 0.06)',
+    shadowLight:    'rgba(0, 240, 255, 0.06)',
     shadowDark:     'rgba(0, 0, 0, 0.7)',
     shadowDarkSoft: 'rgba(0, 0, 0, 0.45)',
-    glowMedium:     '0 0 14px rgb(0 240 255 / 50%), 0 18px 38px rgb(119 34 137 / 55%), 0 0 28px rgb(248 230 2 / 25%)',
+    glowMedium:     '0 0 14px rgb(0 240 255 / 60%), 0 0 28px rgb(255 42 109 / 32%), 0 18px 42px rgb(75 255 33 / 22%)',
     accentBorder:   '#00F0FF',
-    bodyBg:         'radial-gradient(1200px 700px at 85% 10%, #1B0828 0%, transparent 60%), radial-gradient(900px 700px at 10% 90%, #100420 0%, transparent 55%), #0E0418',
+    bodyBg:         'radial-gradient(1200px 700px at 85% 10%, #12152F 0%, transparent 60%), radial-gradient(900px 700px at 10% 90%, #0A0A1E 0%, transparent 55%), #08091A',
     fg:             '#F4D5FD',
     border:         '#00F0FF',
     accent:         '#00F0FF',
