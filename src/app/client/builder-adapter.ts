@@ -1,12 +1,13 @@
 // Client-side Builder adapter. The original Builder is fire-and-forget
 // (build() kicks off a subprocess, events announce progress). The
 // adapter preserves that: build() returns a resolved Promise once the
-// daemon acks, and events flow via _dispatch as the daemon observes
+// daemon acks, and events flow via dispatch as the daemon observes
 // the underlying Builder emit them.
 
 import { EventEmitter } from "node:events";
 import type { IpcClient } from "../../core/ipc.js";
 import type { BuildOptions } from "../../core/builder.js";
+import type { AdapterSink, BuilderEventKind } from "./adapter-sink.js";
 
 export interface BuilderClientEvents {
   line: (evt: { text: string; stream: "stdout" | "stderr"; replace?: boolean }) => void;
@@ -27,7 +28,10 @@ export interface BuilderClientEvents {
   disconnected: (err?: Error) => void;
 }
 
-export class BuilderClient extends EventEmitter {
+export class BuilderClient
+  extends EventEmitter
+  implements AdapterSink<BuilderEventKind>
+{
   constructor(
     private client: IpcClient,
     private nextId: () => string,
@@ -48,10 +52,7 @@ export class BuilderClient extends EventEmitter {
     });
   }
 
-  _dispatch(
-    kind: "builder/line" | "builder/progress" | "builder/done",
-    data: unknown,
-  ): void {
+  dispatch(kind: BuilderEventKind, data: unknown): void {
     const topic = kind.slice("builder/".length);
     this.emit(topic, data);
   }

@@ -2,7 +2,7 @@
 // the TUI actually consumes, but against a daemon-side session over
 // IpcClient. The daemon publishes `metro/status` / `metro/log` events
 // on `events/subscribe` — the session orchestrator fans those into
-// this adapter's emitter surface via `_dispatch`. Methods (reload,
+// this adapter's emitter surface via `dispatch`. Methods (reload,
 // devMenu, getInstance) become async — they round-trip to the daemon.
 //
 // One daemon = one worktree = one session, so no worktreeKey threads
@@ -13,6 +13,7 @@
 import { EventEmitter } from "node:events";
 import type { IpcClient, IpcMessage } from "../../core/ipc.js";
 import type { MetroInstance } from "../../core/types.js";
+import type { AdapterSink, MetroEventKind } from "./adapter-sink.js";
 
 export interface MetroClientEvents {
   status: (evt: { status: string }) => void;
@@ -25,7 +26,7 @@ export interface MetroClientEvents {
   disconnected: (err?: Error) => void;
 }
 
-export class MetroClient extends EventEmitter {
+export class MetroClient extends EventEmitter implements AdapterSink<MetroEventKind> {
   constructor(
     private client: IpcClient,
     private nextId: () => string,
@@ -61,8 +62,7 @@ export class MetroClient extends EventEmitter {
     return p?.instance ?? null;
   }
 
-  /** Internal — the session orchestrator calls this when metro/* events arrive. */
-  _dispatch(kind: "metro/status" | "metro/log", data: unknown): void {
+  dispatch(kind: MetroEventKind, data: unknown): void {
     if (kind === "metro/status") {
       this.emit("status", data);
     } else {
@@ -70,7 +70,6 @@ export class MetroClient extends EventEmitter {
     }
   }
 
-  /** Internal — the session orchestrator calls this on unexpected daemon death. */
   notifyDisconnected(err?: Error): void {
     this.emit("disconnected", err);
   }

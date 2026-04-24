@@ -273,19 +273,19 @@ function routeEventToAdapters(
   switch (kind) {
     case "metro/status":
     case "metro/log":
-      adapters.metro._dispatch(kind, data);
+      adapters.metro.dispatch(kind, data);
       return;
     case "devtools/status":
     case "devtools/delta":
-      adapters.devtools._dispatch(kind, data);
+      adapters.devtools.dispatch(kind, data);
       return;
     case "builder/line":
     case "builder/progress":
     case "builder/done":
-      adapters.builder._dispatch(kind, data);
+      adapters.builder.dispatch(kind, data);
       return;
     case "watcher/action-complete":
-      adapters.watcher._dispatch(kind, data);
+      adapters.watcher.dispatch(kind, data);
       return;
     default:
       // session/status, session/log, modules/* — not fanned to adapters.
