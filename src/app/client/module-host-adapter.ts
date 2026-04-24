@@ -28,6 +28,25 @@
 import { EventEmitter } from "node:events";
 import type { IpcClient } from "../../core/ipc.js";
 import type { AdapterSink, ModuleHostEventKind } from "./adapter-sink.js";
+import type {
+  HostCallReply,
+  HostCallRequest,
+  ListPanelsReply,
+  ResolvePanelError,
+  ResolvePanelReply,
+  ModuleCallRequest,
+  ModuleCallSuccess,
+  ModuleCallError,
+  ModuleConfigGetResult,
+  ModuleConfigSetRequest,
+  ModuleConfigSetResult,
+  ModuleInstallRequest,
+  ModuleInstallReply,
+  ModuleUninstallReply,
+  MarketplaceInfoReply,
+  MarketplaceListReply,
+  RegisteredModuleRow,
+} from "../modules-ipc.js";
 
 /**
  * Payload shape on the `modules-event` topic. Matches what
@@ -65,6 +84,141 @@ export class ModuleHostClient
     private nextId: () => string,
   ) {
     super();
+  }
+
+  // ---------------------------------------------------------------------------
+  // RPC methods — Phase 13.4.1. Every `modules/*` + `marketplace/*` action
+  // the Electron handlers consume, wired as a thin `client.send` wrapper so
+  // callers don't re-derive action names + payload typing at each site.
+  // The replies are passed through verbatim; wire-level `{ error: string }`
+  // error shapes returned by the daemon's registrar are mapped to the
+  // dispatcher's typed error shape at the caller — the adapter is not the
+  // right place to invent a unified error envelope across 10 RPCs.
+  // ---------------------------------------------------------------------------
+
+  async list(): Promise<{ modules: RegisteredModuleRow[] }> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/list",
+      id: this.nextId(),
+    });
+    return resp.payload as { modules: RegisteredModuleRow[] };
+  }
+
+  async listPanels(): Promise<ListPanelsReply> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/list-panels",
+      id: this.nextId(),
+    });
+    return resp.payload as ListPanelsReply;
+  }
+
+  async resolvePanel(
+    moduleId: string,
+    panelId: string,
+  ): Promise<ResolvePanelReply | ResolvePanelError> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/resolve-panel",
+      id: this.nextId(),
+      payload: { moduleId, panelId },
+    });
+    return resp.payload as ResolvePanelReply | ResolvePanelError;
+  }
+
+  async call(
+    payload: ModuleCallRequest,
+  ): Promise<ModuleCallSuccess | ModuleCallError> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/call",
+      id: this.nextId(),
+      payload,
+    });
+    return resp.payload as ModuleCallSuccess | ModuleCallError;
+  }
+
+  async hostCall(payload: HostCallRequest): Promise<HostCallReply> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/host-call",
+      id: this.nextId(),
+      payload,
+    });
+    return resp.payload as HostCallReply;
+  }
+
+  async configGet(
+    moduleId: string,
+    scopeUnit?: string,
+  ): Promise<ModuleConfigGetResult | { error: string }> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/config/get",
+      id: this.nextId(),
+      payload: scopeUnit === undefined ? { moduleId } : { moduleId, scopeUnit },
+    });
+    return resp.payload as ModuleConfigGetResult | { error: string };
+  }
+
+  async configSet(
+    payload: ModuleConfigSetRequest,
+  ): Promise<ModuleConfigSetResult> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/config/set",
+      id: this.nextId(),
+      payload,
+    });
+    return resp.payload as ModuleConfigSetResult;
+  }
+
+  async install(payload: ModuleInstallRequest): Promise<ModuleInstallReply> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/install",
+      id: this.nextId(),
+      payload,
+    });
+    return resp.payload as ModuleInstallReply;
+  }
+
+  async uninstall(payload: {
+    moduleId: string;
+    scopeUnit?: string;
+    keepData?: boolean;
+  }): Promise<ModuleUninstallReply> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/uninstall",
+      id: this.nextId(),
+      payload,
+    });
+    return resp.payload as ModuleUninstallReply;
+  }
+
+  async marketplaceList(): Promise<
+    MarketplaceListReply | { kind: "error"; code: string; message: string }
+  > {
+    const resp = await this.client.send({
+      type: "command",
+      action: "marketplace/list",
+      id: this.nextId(),
+    });
+    return resp.payload as
+      | MarketplaceListReply
+      | { kind: "error"; code: string; message: string };
+  }
+
+  async marketplaceInfo(moduleId: string): Promise<MarketplaceInfoReply> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "marketplace/info",
+      id: this.nextId(),
+      payload: { moduleId },
+    });
+    return resp.payload as MarketplaceInfoReply;
   }
 
   dispatch(kind: ModuleHostEventKind, data: unknown): void {
