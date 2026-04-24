@@ -89,26 +89,44 @@ export function App() {
     fetchPanels();
   }, [fetchPanels]);
 
-  // One-shot on mount: load persisted theme from settings module config.
-  // The saved value lives in ~/.rn-dev/modules/settings/config.json and is
-  // the same source of truth ModuleConfigForm reads in Settings. Without
-  // this, ThemeProvider boots to softDark regardless of saved preference.
-  useEffect(() => {
-    let cancelled = false;
-    type Reply = { moduleId: string; config: Record<string, unknown> } | { error: string } | null;
-    invoke<Reply>('modules:config-get', { moduleId: 'settings' }).then((reply) => {
-      if (cancelled || !reply || 'error' in reply) return;
-      const themeName = reply.config.theme;
-      if (typeof themeName !== 'string') return;
-      const match = getThemeByName(themeName);
-      if (match) setTheme(match);
-    });
-    return () => { cancelled = true; };
+  // Load persisted theme from settings module config. Source of truth is
+  // ~/.rn-dev/modules/settings/config.json (same file ModuleConfigForm
+  // reads in Settings). Tries on mount AND on every modules:event — the
+  // daemon services that back `modules:config-get` may not be ready at
+  // first mount, so we retry when module-system state changes. Once the
+  // theme has been applied we stop retrying so agent-initiated config
+  // changes via MCP don't race with user-initiated ones.
+  const themeAppliedRef = useRef(false);
+  const tryLoadSavedTheme = useCallback(() => {
+    if (themeAppliedRef.current) return;
+    type Reply =
+      | { moduleId: string; config: Record<string, unknown> }
+      | { error: string }
+      | { kind: 'error'; code: string; message: string }
+      | null;
+    invoke<Reply>('modules:config-get', { moduleId: 'settings' })
+      .then((reply) => {
+        if (!reply) return;
+        if ('error' in reply) return;
+        if ('kind' in reply && reply.kind === 'error') return;
+        if (!('config' in reply) || reply.config === null || typeof reply.config !== 'object') return;
+        const themeName = (reply.config as Record<string, unknown>).theme;
+        if (typeof themeName !== 'string') return;
+        const match = getThemeByName(themeName);
+        if (match) {
+          setTheme(match);
+          themeAppliedRef.current = true;
+        }
+      })
+      .catch(() => { /* silent — will retry on next modules:event */ });
   }, [invoke, setTheme]);
+
+  useEffect(() => { tryLoadSavedTheme(); }, [tryLoadSavedTheme]);
 
   useIpcOn('modules:event', useCallback(() => {
     fetchPanels();
-  }, [fetchPanels]));
+    tryLoadSavedTheme();
+  }, [fetchPanels, tryLoadSavedTheme]));
 
   // On mount: fetch existing instances; if none exist and no profile, show wizard
   useEffect(() => {
