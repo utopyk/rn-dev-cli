@@ -255,10 +255,10 @@
   flex-shrink: 0;
 }
 
-.sl-device-dot.booted { background: var(--success); }
-.sl-device-dot.available { background: var(--success); }
+.sl-device-dot.booted { background: var(--ready); }
+.sl-device-dot.available { background: var(--ready); }
 .sl-device-dot.shutdown { background: var(--muted); }
-.sl-device-dot.connected { background: var(--success); }
+.sl-device-dot.connected { background: var(--ready); }
 .sl-device-dot.disconnected { background: var(--error); }
 
 .sl-device-badge {
@@ -275,7 +275,7 @@
 }
 
 .sl-device-type.physical {
-  color: var(--success);
+  color: var(--ready);
   background: color-mix(in srgb, var(--ready) 15%, transparent);
   border: 1px solid color-mix(in srgb, var(--ready) 30%, transparent);
 }
