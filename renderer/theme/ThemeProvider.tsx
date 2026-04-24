@@ -60,12 +60,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Mount-only: initial theme application. Subsequent changes go through setTheme (eager).
     applyThemeToRoot(theme.colors);
     document.documentElement.setAttribute(
       'data-theme',
       theme.name.toLowerCase().replace(/\s+/g, '-'),
     );
-  }, [theme]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- intentional mount-only
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme }}>
