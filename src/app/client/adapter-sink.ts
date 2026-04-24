@@ -51,3 +51,12 @@ export type BuilderEventKind = "builder/line" | "builder/progress" | "builder/do
  * Narrow string-literal kinds the Watcher adapter receives.
  */
 export type WatcherEventKind = "watcher/action-complete";
+
+/**
+ * Narrow string-literal kinds the ModuleHost adapter receives. Phase
+ * 13.4 prereq #3 closed the `modules/*` gap in `routeEventToAdapters`.
+ */
+export type ModuleHostEventKind =
+  | "modules/state-changed"
+  | "modules/crashed"
+  | "modules/failed";

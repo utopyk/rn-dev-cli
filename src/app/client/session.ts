@@ -32,6 +32,7 @@ import { MetroClient } from "./metro-adapter.js";
 import { DevToolsClient } from "./devtools-adapter.js";
 import { BuilderClient } from "./builder-adapter.js";
 import { WatcherClient } from "./watcher-adapter.js";
+import { ModuleHostClient } from "./module-host-adapter.js";
 
 export interface DaemonSession {
   client: IpcClient;
@@ -39,6 +40,14 @@ export interface DaemonSession {
   devtools: DevToolsClient;
   builder: BuilderClient;
   watcher: WatcherClient;
+  /**
+   * Surfaces `modules/*` events (state-changed / crashed / failed)
+   * from the daemon. Phase 13.4 prereq #3 added this adapter so
+   * Electron's renderer-forwarding wiring has a stable source; the
+   * TUI does not consume it but the field is present for uniformity
+   * across clients.
+   */
+  modules: ModuleHostClient;
   worktreeKey: string;
   /**
    * Closes the event subscription + client without asking the daemon
@@ -75,6 +84,7 @@ export async function connectToDaemonSession(
   const devtools = new DevToolsClient(client, idGen);
   const builder = new BuilderClient(client, idGen);
   const watcher = new WatcherClient(client, idGen);
+  const modules = new ModuleHostClient(client, idGen);
 
   let worktreeKey: string | null = null;
   let resolveRunning: (() => void) | null = null;
@@ -104,6 +114,7 @@ export async function connectToDaemonSession(
     devtools.notifyDisconnected(err);
     builder.notifyDisconnected(err);
     watcher.notifyDisconnected(err);
+    modules.notifyDisconnected(err);
   };
 
   const onIncomingEvent = (msg: IpcMessage): void => {
@@ -133,6 +144,7 @@ export async function connectToDaemonSession(
       devtools,
       builder,
       watcher,
+      modules,
     });
   };
 
@@ -230,6 +242,7 @@ export async function connectToDaemonSession(
     devtools,
     builder,
     watcher,
+    modules,
     worktreeKey,
     disconnect,
     stop,
@@ -268,6 +281,7 @@ function routeEventToAdapters(
     devtools: DevToolsClient;
     builder: BuilderClient;
     watcher: WatcherClient;
+    modules: ModuleHostClient;
   },
 ): void {
   switch (kind) {
@@ -287,10 +301,18 @@ function routeEventToAdapters(
     case "watcher/action-complete":
       adapters.watcher.dispatch(kind, data);
       return;
+    case "modules/state-changed":
+    case "modules/crashed":
+    case "modules/failed":
+      adapters.modules.dispatch(kind, data);
+      return;
     default:
-      // session/status, session/log, modules/* — not fanned to adapters.
-      // Callers that want these subscribe through client.subscribe
-      // directly. 13.3 TUI doesn't need them.
+      // session/status + session/log stay in the subscribe stream's
+      // raw form — callers that need them (Electron for status-bar
+      // updates, MCP for log fan-out) subscribe via
+      // `client.subscribe(...)` directly. Adding them here would
+      // pull in a session-level adapter that no client consumes
+      // uniformly today.
       return;
   }
 }

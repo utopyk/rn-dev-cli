@@ -106,6 +106,7 @@ describe("connectToDaemonSession disconnect lifecycle", () => {
       devtools: false,
       builder: false,
       watcher: false,
+      modules: false,
     };
     session.metro.on("disconnected", () => {
       fired.metro = true;
@@ -119,6 +120,9 @@ describe("connectToDaemonSession disconnect lifecycle", () => {
     session.watcher.on("disconnected", () => {
       fired.watcher = true;
     });
+    session.modules.on("disconnected", () => {
+      fired.modules = true;
+    });
 
     // SIGKILL simulates abrupt daemon death — the daemon doesn't get
     // to close its sockets cleanly, which is the failure mode we need
@@ -129,7 +133,15 @@ describe("connectToDaemonSession disconnect lifecycle", () => {
     // close event propagates asynchronously from kernel to event loop.
     const deadline = Date.now() + 3_000;
     while (Date.now() < deadline) {
-      if (fired.metro && fired.devtools && fired.builder && fired.watcher) break;
+      if (
+        fired.metro &&
+        fired.devtools &&
+        fired.builder &&
+        fired.watcher &&
+        fired.modules
+      ) {
+        break;
+      }
       await new Promise((r) => setTimeout(r, 25));
     }
 
@@ -138,6 +150,7 @@ describe("connectToDaemonSession disconnect lifecycle", () => {
       devtools: true,
       builder: true,
       watcher: true,
+      modules: true,
     });
 
     // After the unexpected disconnect, explicit disconnect() must
