@@ -83,10 +83,18 @@
   transition: box-shadow 220ms ease;
 }
 
-/* <select> renders a browser-native dropdown arrow inside its content box;
-   give it room so the value text doesn't collide with the chevron. */
+/* <select> — suppress the browser-native chevron (which renders flush
+   against the element's right edge, cramped against our pill radius)
+   and paint our own via a URL-encoded lucide chevron SVG. Gray is
+   neutral enough to read across all themes. */
 .module-config-form__select {
-  padding-right: 32px;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237D8192' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 14px;
 }
 
 .module-config-form__text:focus,
