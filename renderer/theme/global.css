@@ -1,15 +1,26 @@
 :root {
-  --bg: #1a1b26;
-  --fg: #c0caf5;
-  --border: #565f89;
-  --accent: #7aa2f7;
-  --success: #9ece6a;
-  --warning: #e0af68;
-  --error: #f7768e;
-  --muted: #565f89;
-  --highlight: #bb9af7;
-  --selection: #283457;
-  --panel-focus: #1e2030;
+  /* Fallback values (pre-JS hydration) — mirrors softDark theme tokens */
+  --bg:         #14151E;
+  --bg-soft:    #1A1B26;
+  --surface:    #1E202B;
+  --surface-hi: #262833;
+  --ink:        #ECEEF5;
+  --ink-soft:   #C5C8D2;
+  --fg:         #ECEEF5;   /* legacy alias → --ink */
+  --muted:      #7D8192;
+  --muted-2:    #525668;
+  --glow:       #cc97cc;
+  --glow-warm:  #d9b0d9;
+  --accent:     #cc97cc;   /* legacy alias → --glow */
+  --ready:      #2BD96A;
+  --booting:    #FFB020;
+  --success:    #2BD96A;   /* legacy alias → --ready */
+  --warning:    #FFB020;   /* legacy alias → --booting */
+  --error:      #f7768e;
+  --border:     #cc97cc;   /* legacy alias → --accent-border */
+  --highlight:  #cc97cc;   /* legacy alias → --glow */
+  --selection:  #262833;   /* legacy alias → --surface-hi */
+  --panel-focus: #262833;  /* legacy alias → --surface-hi */
 }
 
 * {

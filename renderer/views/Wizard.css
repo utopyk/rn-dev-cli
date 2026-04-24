@@ -276,14 +276,14 @@
 
 .sl-device-type.physical {
   color: var(--success);
-  background: rgba(158, 206, 106, 0.15);
-  border: 1px solid rgba(158, 206, 106, 0.3);
+  background: color-mix(in srgb, var(--ready) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ready) 30%, transparent);
 }
 
 .sl-device-type.simulator {
   color: var(--muted);
-  background: rgba(86, 95, 137, 0.15);
-  border: 1px solid rgba(86, 95, 137, 0.3);
+  background: color-mix(in srgb, var(--muted) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
 }
 
 /* ── Radio group ── */
