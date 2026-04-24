@@ -59,3 +59,8 @@
   border-color: var(--accent-border);
   box-shadow: var(--neu-raised-xs), var(--glow-medium);
 }
+
+.profile-banner.compact {
+  padding: 8px 14px;
+  justify-content: flex-end;
+}

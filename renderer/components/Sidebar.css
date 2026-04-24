@@ -9,6 +9,7 @@
   flex-direction: column;
   box-shadow: -8px -8px 20px var(--shadow-light), 10px 12px 28px var(--shadow-dark);
   overflow-y: auto;
+  overflow-x: hidden;
   -webkit-app-region: drag;
   transition: padding 220ms ease;
   position: relative;
@@ -113,9 +114,14 @@
   box-shadow: var(--glow-medium);
 }
 
+.sidebar-top {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.sidebar.collapsed .sidebar-top { justify-content: center; }
+
 .sidebar-collapse-toggle {
-  position: absolute;
-  top: 32px; right: -14px;
   width: 28px; height: 28px;
   border-radius: 50%;
   background: var(--surface-hi);
@@ -124,12 +130,10 @@
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
   box-shadow: var(--neu-raised-xs);
-  z-index: 1;
 }
 .sidebar-collapse-toggle:hover { color: var(--ink); box-shadow: var(--neu-raised-xs), var(--glow-medium); }
 
 .sidebar.collapsed { padding: 28px 10px; }
-.sidebar.collapsed .sidebar-brand,
 .sidebar.collapsed .sidebar-section-title,
 .sidebar.collapsed .sidebar-item-label,
 .sidebar.collapsed .shortcut-label,

@@ -61,17 +61,21 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <div className={`sidebar${collapsed ? ' collapsed' : ''}`}>
-      <div className="sidebar-brand">
-        <h1 className="sidebar-brand-name">RN Dev</h1>
-        <span className="sidebar-brand-sub">Developer Suite</span>
+      <div className="sidebar-top">
+        <button
+          className="sidebar-collapse-toggle"
+          onClick={onToggleCollapse}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <ModuleIcon hint={collapsed ? 'chevronRight' : 'chevronLeft'} size={14} />
+        </button>
       </div>
-      <button
-        className="sidebar-collapse-toggle"
-        onClick={onToggleCollapse}
-        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      >
-        <ModuleIcon hint={collapsed ? 'chevronRight' : 'chevronLeft'} size={14} />
-      </button>
+      {!collapsed && (
+        <div className="sidebar-brand">
+          <h1 className="sidebar-brand-name">RN Dev</h1>
+          <span className="sidebar-brand-sub">Developer Suite</span>
+        </div>
+      )}
 
       {/* Modules */}
       <div className="sidebar-section">
