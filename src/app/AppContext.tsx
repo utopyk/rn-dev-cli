@@ -150,18 +150,10 @@ export function AppProvider({
           manager.status(),
         ]);
         if (cancelled) return;
-        const typedList = list as unknown as {
-          entries: readonly NetworkEntry[];
-          meta: CaptureMeta;
-        };
-        const typedStatus = status as unknown as {
-          targets: TargetDescriptor[];
-          meta: { selectedTargetId: string | null };
-        };
-        setNetworkEntries(typedList.entries);
-        setDevtoolsMeta(typedList.meta);
-        setDevtoolsTargets(typedStatus.targets);
-        setDevtoolsSelectedTargetId(typedStatus.meta.selectedTargetId);
+        setNetworkEntries(list.entries);
+        setDevtoolsMeta(list.meta);
+        setDevtoolsTargets(status.targets);
+        setDevtoolsSelectedTargetId(status.meta.selectedTargetId);
       } catch {
         // daemon RPC failures are transient; the next delta/status
         // event schedules a new refresh

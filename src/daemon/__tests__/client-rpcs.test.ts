@@ -29,6 +29,7 @@ describe("daemon client RPCs (integration)", () => {
     daemon: TestDaemonHandle;
     events: IpcMessage[];
     subClose: () => void;
+    worktree: string;
   }> {
     const { path: worktree, cleanup } = makeTestWorktree();
     cleanups.push(cleanup);
@@ -69,7 +70,7 @@ describe("daemon client RPCs (integration)", () => {
       return p?.kind === "metro/status" && p.data?.status === "running";
     }, 3_000);
 
-    return { daemon, events, subClose: sub.close };
+    return { daemon, events, subClose: sub.close, worktree };
   }
 
   it("rejects client RPCs when no session is running", async () => {
@@ -174,15 +175,57 @@ describe("daemon client RPCs (integration)", () => {
     }
   }, 10_000);
 
+  it("builder/build rejects denylisted env keys (LD_PRELOAD / DYLD_*) and worktree-escape projectRoot", async () => {
+    const { daemon, subClose } = await bootRunningSession();
+    try {
+      const preload = await daemon.client.send({
+        type: "command",
+        action: "builder/build",
+        id: "build-env-bad",
+        payload: {
+          projectRoot: "/tmp",
+          platform: "ios",
+          port: 8081,
+          variant: "debug",
+          env: { DYLD_INSERT_LIBRARIES: "/tmp/evil.dylib" },
+        },
+      });
+      // projectRoot validation runs first; env check comes next if path
+      // is in-tree. Accept either rejection code — both prove the
+      // denylisted payload cannot land in a spawn() env dict.
+      const preloadPayload = preload.payload as { code?: string };
+      expect(preloadPayload.code).toMatch(
+        /E_BUILD_PROJECTROOT_OUTSIDE_WORKTREE|E_PROFILE_ENV_BANNED/,
+      );
+
+      const relative = await daemon.client.send({
+        type: "command",
+        action: "builder/build",
+        id: "build-root-rel",
+        payload: {
+          projectRoot: "relative/path",
+          platform: "ios",
+          port: 8081,
+          variant: "debug",
+        },
+      });
+      expect((relative.payload as { code?: string }).code).toBe(
+        "E_PROFILE_PATH_NOT_ABSOLUTE",
+      );
+    } finally {
+      subClose();
+    }
+  }, 10_000);
+
   it("builder/build emits line/progress/done events", async () => {
-    const { daemon, events, subClose } = await bootRunningSession();
+    const { daemon, events, subClose, worktree } = await bootRunningSession();
     try {
       const buildResp = await daemon.client.send({
         type: "command",
         action: "builder/build",
         id: "build-1",
         payload: {
-          projectRoot: "/fake",
+          projectRoot: worktree,
           platform: "ios",
           port: 8081,
           variant: "debug",
@@ -201,13 +244,26 @@ describe("daemon client RPCs (integration)", () => {
       expect(doneData.success).toBe(true);
       expect(doneData.platform).toBe("ios");
 
+      // Missing projectRoot: checkAbsolutePath rejects first with its
+      // own error code. Missing platform (when projectRoot is valid)
+      // falls through to the E_RPC_INVALID_PAYLOAD branch — cover both.
       const bad = await daemon.client.send({
         type: "command",
         action: "builder/build",
-        id: "build-bad",
+        id: "build-bad-no-root",
         payload: { platform: "ios" },
       });
       expect((bad.payload as { code?: string }).code).toBe(
+        "E_PROFILE_PATH_NOT_STRING",
+      );
+
+      const badPlatform = await daemon.client.send({
+        type: "command",
+        action: "builder/build",
+        id: "build-bad-platform",
+        payload: { projectRoot: worktree, port: 8081, variant: "debug" },
+      });
+      expect((badPlatform.payload as { code?: string }).code).toBe(
         "E_RPC_INVALID_PAYLOAD",
       );
     } finally {

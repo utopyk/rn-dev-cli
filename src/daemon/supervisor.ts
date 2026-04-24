@@ -119,6 +119,17 @@ export class DaemonSupervisor extends EventEmitter {
     return this.wired?.services ?? null;
   }
 
+  /**
+   * The worktree the daemon was spawned against. Exposed so RPC
+   * handlers can bound untrusted path inputs (builder/build.projectRoot)
+   * to within this worktree — a caller that can reach the socket
+   * should not be able to spawn a build in a sibling repo whose
+   * `node_modules/.bin/react-native` the daemon has never vetted.
+   */
+  getWorktree(): string {
+    return this.worktree;
+  }
+
   async start(opts: StartSessionOptions): Promise<StartSessionResult> {
     if (this.state.status !== "stopped") {
       return {

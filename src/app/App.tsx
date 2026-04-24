@@ -80,7 +80,10 @@ export function App({
   const [metroStatus, setMetroStatus] = useState<
     "starting" | "running" | "error" | "stopped"
   >("starting");
-  const [watcherEnabled, setWatcherEnabled] = useState(!!watcher);
+  // The watcher's live isRunning state is read via the client adapter
+  // on demand (see AppContext `w` shortcut). This prop is just a
+  // mount-time bool for MainLayout's initial chrome.
+  const watcherEnabled = !!watcher;
 
   // Subscribe to metro status changes from the daemon's
   // `metro/status` event stream.

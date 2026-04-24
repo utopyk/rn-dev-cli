@@ -10,10 +10,12 @@
 // worktreeKey would let a compromised client address another worktree's
 // services if we ever relax the 1:1 rule.
 
+import path from "node:path";
 import type { IpcMessage, IpcMessageEvent } from "../core/ipc.js";
 import type { DaemonSupervisor } from "./supervisor.js";
 import type { SessionServices } from "../core/session/boot.js";
 import type { BuildOptions } from "../core/builder.js";
+import { checkAbsolutePath, checkEnv } from "./profile-guard.js";
 
 const CLIENT_RPC_ACTIONS = new Set<string>([
   "metro/reload",
@@ -54,7 +56,7 @@ export async function handleClientRpc(
   }
 
   try {
-    const payload = await dispatch(message, services);
+    const payload = await dispatch(message, services, supervisor);
     reply({
       type: "response",
       action: message.action,
@@ -77,6 +79,7 @@ export async function handleClientRpc(
 async function dispatch(
   message: IpcMessage,
   services: SessionServices,
+  supervisor: DaemonSupervisor,
 ): Promise<unknown> {
   switch (message.action) {
     case "metro/reload": {
@@ -117,15 +120,11 @@ async function dispatch(
       return { ok: true };
     }
     case "builder/build": {
-      const opts = readBuildOptions(message.payload);
-      if (!opts) {
-        return {
-          code: "E_RPC_INVALID_PAYLOAD",
-          message:
-            "builder/build: payload must include { projectRoot, platform, port, variant }",
-        };
+      const parsed = parseBuildOptions(message.payload, supervisor.getWorktree());
+      if (!parsed.ok) {
+        return { code: parsed.code, message: parsed.message };
       }
-      services.builder.build(opts);
+      services.builder.build(parsed.opts);
       return { ok: true };
     }
     case "watcher/start": {
@@ -164,20 +163,103 @@ function readObjectField(payload: unknown, key: string): unknown {
   return (payload as Record<string, unknown>)[key];
 }
 
-function readBuildOptions(payload: unknown): BuildOptions | null {
-  if (!payload || typeof payload !== "object") return null;
+type ParseResult<T> =
+  | { ok: true; opts: T }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Validate a `builder/build` payload. The field-level checks mirror
+ * `validateProfile` in profile-guard.ts — same denylist on env keys,
+ * same absolute-path discipline on projectRoot, same NUL/newline
+ * rejections — because this RPC ends up spawning a subprocess and is
+ * exactly the same threat surface as session/start.
+ *
+ * projectRoot is additionally constrained to be inside the
+ * supervisor's worktree, so a caller that can reach the socket
+ * can't kick a build in a sibling repo whose
+ * `node_modules/.bin/react-native` the daemon has never vetted
+ * (Security P1-1 on PR #17).
+ */
+function parseBuildOptions(
+  payload: unknown,
+  worktree: string,
+): ParseResult<BuildOptions> {
+  if (!payload || typeof payload !== "object") {
+    return fail("E_RPC_INVALID_PAYLOAD", "builder/build: payload must be an object");
+  }
   const p = payload as Record<string, unknown>;
-  const projectRoot = typeof p.projectRoot === "string" ? p.projectRoot : null;
-  const platform =
-    p.platform === "ios" || p.platform === "android" ? p.platform : null;
-  const port = typeof p.port === "number" ? p.port : null;
-  const variant =
-    p.variant === "debug" || p.variant === "release" ? p.variant : null;
-  if (!projectRoot || !platform || port == null || !variant) return null;
-  const deviceId = typeof p.deviceId === "string" ? p.deviceId : undefined;
+
+  const projectRootCheck = checkAbsolutePath(p.projectRoot, "builder/build.projectRoot");
+  if (!projectRootCheck.ok) {
+    return fail(projectRootCheck.code, projectRootCheck.message);
+  }
+  const projectRoot = p.projectRoot as string;
+
+  // Bound to the daemon's worktree. `path.relative` returns a string
+  // starting with ".." when the second arg is above the first; an
+  // exact match returns "". Absolute paths return themselves.
+  const rel = path.relative(worktree, projectRoot);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    return fail(
+      "E_BUILD_PROJECTROOT_OUTSIDE_WORKTREE",
+      `builder/build.projectRoot ${projectRoot} must be inside the daemon's worktree ${worktree}`,
+    );
+  }
+
+  if (p.platform !== "ios" && p.platform !== "android") {
+    return fail(
+      "E_RPC_INVALID_PAYLOAD",
+      "builder/build.platform must be 'ios' or 'android'",
+    );
+  }
+  const platform = p.platform;
+
+  if (
+    typeof p.port !== "number" ||
+    !Number.isFinite(p.port) ||
+    !Number.isInteger(p.port) ||
+    p.port < 1 ||
+    p.port > 65535
+  ) {
+    return fail(
+      "E_RPC_INVALID_PAYLOAD",
+      "builder/build.port must be an integer in [1, 65535]",
+    );
+  }
+  const port = p.port;
+
+  if (p.variant !== "debug" && p.variant !== "release") {
+    return fail(
+      "E_RPC_INVALID_PAYLOAD",
+      "builder/build.variant must be 'debug' or 'release'",
+    );
+  }
+  const variant = p.variant;
+
+  let deviceId: string | undefined;
+  if (p.deviceId !== undefined) {
+    if (typeof p.deviceId !== "string") {
+      return fail(
+        "E_RPC_INVALID_PAYLOAD",
+        "builder/build.deviceId must be a string",
+      );
+    }
+    deviceId = p.deviceId;
+  }
+
+  const envCheck = checkEnv(p.env, "builder/build.env");
+  if (!envCheck.ok) return fail(envCheck.code, envCheck.message);
   const env =
     p.env && typeof p.env === "object"
       ? (p.env as Record<string, string>)
       : undefined;
-  return { projectRoot, platform, port, variant, deviceId, env };
+
+  return {
+    ok: true,
+    opts: { projectRoot, platform, port, variant, deviceId, env },
+  };
+}
+
+function fail(code: string, message: string): { ok: false; code: string; message: string } {
+  return { ok: false, code, message };
 }

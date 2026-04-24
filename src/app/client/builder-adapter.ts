@@ -34,11 +34,15 @@ export class BuilderClient extends EventEmitter {
   }
 
   async build(opts: BuildOptions): Promise<void> {
+    // `IpcMessage.payload` is typed `unknown`, so `BuildOptions`
+    // assigns directly — no cast needed. An earlier iteration went
+    // through `as unknown as Record<string, unknown>` for no reason
+    // (Kieran P0-2 on PR #17).
     await this.client.send({
       type: "command",
       action: "builder/build",
       id: this.nextId(),
-      payload: opts as unknown as Record<string, unknown>,
+      payload: opts,
     });
   }
 

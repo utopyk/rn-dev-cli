@@ -107,11 +107,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
     }
   }
 
-  if (profile) {
-    if (options.platform) profile.platform = options.platform as Platform;
-    if (options.mode) profile.mode = options.mode as RunMode;
-    if (options.port) profile.metroPort = options.port;
-  }
+  if (profile) applyCliOverrides(profile, options);
 
   // 7. Track the live DaemonSession so cleanup can stop it and avoid
   //    leaving the daemon pinned to a stopping → stopped edge.
@@ -172,10 +168,7 @@ export async function startFlow(options: StartOptions): Promise<void> {
         projectRoot,
       };
 
-      if (options.platform)
-        fullProfile.platform = options.platform as Platform;
-      if (options.mode) fullProfile.mode = options.mode as RunMode;
-      if (options.port) fullProfile.metroPort = options.port;
+      applyCliOverrides(fullProfile, options);
 
       profileStore.save(fullProfile);
 
@@ -254,6 +247,12 @@ export async function startFlow(options: StartOptions): Promise<void> {
 // ---------------------------------------------------------------------------
 // Helper: connect to the daemon + publish adapter refs on the serviceBus
 // ---------------------------------------------------------------------------
+
+function applyCliOverrides(profile: Profile, options: StartOptions): void {
+  if (options.platform) profile.platform = options.platform as Platform;
+  if (options.mode) profile.mode = options.mode as RunMode;
+  if (options.port) profile.metroPort = options.port;
+}
 
 async function connectAndWire(
   profile: Profile,

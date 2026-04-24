@@ -68,16 +68,26 @@ export async function connectToDaemonSession(
   });
 
   const onIncomingEvent = (msg: IpcMessage): void => {
-    const evt = msg.payload as
-      | { kind?: string; worktreeKey?: string; data?: unknown }
-      | undefined;
+    const evt = parseSessionEventEnvelope(msg.payload);
     if (!evt) return;
-    if (evt.worktreeKey && !worktreeKey) worktreeKey = evt.worktreeKey;
-    if (
-      evt.kind === "session/status" &&
-      (evt.data as { status?: string } | undefined)?.status === "running"
-    ) {
-      resolveRunning?.();
+    if (!worktreeKey) worktreeKey = evt.worktreeKey;
+    // Pre-running session/status edges drive the runningPromise:
+    //   starting → running   → resolve
+    //   starting → stopped   → reject  (bootSessionServices failed)
+    //   starting → stopping  → reject  (stop raced the boot)
+    // Without this the caller waits the full sessionReadyTimeoutMs to
+    // discover a failed boot — Kieran P0-1 on PR #17.
+    if (evt.kind === "session/status") {
+      const status = readStatus(evt.data);
+      if (status === "running") {
+        resolveRunning?.();
+      } else if (status === "stopped" || status === "stopping") {
+        rejectRunning?.(
+          new Error(
+            `connectToDaemonSession: session transitioned to "${status}" before reaching "running"`,
+          ),
+        );
+      }
     }
     routeEventToAdapters(evt.kind, evt.data, {
       metro,
@@ -167,6 +177,30 @@ export async function connectToDaemonSession(
     worktreeKey,
     stop,
   };
+}
+
+/**
+ * Runtime guard for the event envelopes the daemon pushes over
+ * `events/subscribe`. Every variant of SessionEvent carries a string
+ * `kind`, a string `worktreeKey`, and a `data` field. Anything else
+ * is discarded rather than silently narrowed downstream (Kieran P1-3
+ * on PR #17).
+ */
+function parseSessionEventEnvelope(
+  payload: unknown,
+): { kind: string; worktreeKey: string; data: unknown } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  if (typeof p.kind !== "string" || typeof p.worktreeKey !== "string") {
+    return null;
+  }
+  return { kind: p.kind, worktreeKey: p.worktreeKey, data: p.data };
+}
+
+function readStatus(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const v = (data as Record<string, unknown>).status;
+  return typeof v === "string" ? v : null;
 }
 
 function routeEventToAdapters(

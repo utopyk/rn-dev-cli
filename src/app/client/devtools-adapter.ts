@@ -6,6 +6,12 @@
 
 import { EventEmitter } from "node:events";
 import type { IpcClient } from "../../core/ipc.js";
+import type {
+  CaptureListResult,
+  DevToolsStatus,
+  NetworkEntry,
+  NetworkFilter,
+} from "../../core/devtools/types.js";
 
 export interface DevToolsClientEvents {
   status: (evt: Record<string, unknown>) => void;
@@ -24,31 +30,33 @@ export class DevToolsClient extends EventEmitter {
     super();
   }
 
-  async listNetwork(filter?: unknown): Promise<{
-    entries: readonly unknown[];
-    cursorDropped: boolean;
-    meta: Record<string, unknown>;
-  }> {
+  /**
+   * Round-trips to the daemon's DevToolsManager.listNetwork. The
+   * daemon returns a real `CaptureListResult<NetworkEntry>` which
+   * JSON-serializes losslessly — the adapter preserves the typing
+   * here so React consumers in AppContext don't have to launder the
+   * response through a second `as unknown as` cast (Kieran P1-4 /
+   * P1-5 on PR #17).
+   */
+  async listNetwork(
+    filter?: NetworkFilter,
+  ): Promise<CaptureListResult<NetworkEntry>> {
     const resp = await this.client.send({
       type: "command",
       action: "devtools/listNetwork",
       id: this.nextId(),
       payload: filter !== undefined ? { filter } : undefined,
     });
-    return resp.payload as {
-      entries: readonly unknown[];
-      cursorDropped: boolean;
-      meta: Record<string, unknown>;
-    };
+    return resp.payload as CaptureListResult<NetworkEntry>;
   }
 
-  async status(): Promise<Record<string, unknown>> {
+  async status(): Promise<DevToolsStatus> {
     const resp = await this.client.send({
       type: "command",
       action: "devtools/status",
       id: this.nextId(),
     });
-    return (resp.payload as Record<string, unknown>) ?? {};
+    return resp.payload as DevToolsStatus;
   }
 
   async clear(): Promise<void> {
