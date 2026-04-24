@@ -239,7 +239,45 @@ export const flat: Theme = {
   },
 };
 
-export const allThemes: readonly Theme[] = [softDark, softLight, midnight, ember, arctic, neonDrive, flat];
+/**
+ * Cyberneurosis — over-the-top Edgerunners palette. Deep bruise-purple
+ * surfaces, cyan accent, electric-yellow highlight, neon-green ready,
+ * pink error. The glow-medium recipe triple-layers cyan + purple + yellow
+ * so active elements radiate hard. Use as a stress test for the chrome.
+ */
+export const cyberneurosis: Theme = {
+  name: 'Cyberneurosis',
+  colors: {
+    bg:             '#0E0418',
+    bgSoft:         '#14081F',
+    surface:        '#1B0B28',
+    surfaceHi:      '#261238',
+    ink:            '#F4D5FD',
+    inkSoft:        '#D9B4E3',
+    muted:          '#9B6AA8',
+    muted2:         '#6B3F82',
+    glow:           '#00F0FF',
+    glowWarm:       '#F8E602',
+    ready:          '#4BFF21',
+    booting:        '#F8E602',
+    shadowLight:    'rgba(244, 213, 253, 0.06)',
+    shadowDark:     'rgba(0, 0, 0, 0.7)',
+    shadowDarkSoft: 'rgba(0, 0, 0, 0.45)',
+    glowMedium:     '0 0 14px rgb(0 240 255 / 50%), 0 18px 38px rgb(119 34 137 / 55%), 0 0 28px rgb(248 230 2 / 25%)',
+    accentBorder:   '#00F0FF',
+    bodyBg:         'radial-gradient(1200px 700px at 85% 10%, #1B0828 0%, transparent 60%), radial-gradient(900px 700px at 10% 90%, #100420 0%, transparent 55%), #0E0418',
+    fg:             '#F4D5FD',
+    border:         '#00F0FF',
+    accent:         '#00F0FF',
+    success:        '#4BFF21',
+    warning:        '#F8E602',
+    error:          '#FF2A6D',
+    highlight:      '#F8E602',
+    selection:      '#772289',
+  },
+};
+
+export const allThemes: readonly Theme[] = [softDark, softLight, midnight, ember, arctic, neonDrive, flat, cyberneurosis];
 
 export function getThemeByName(name: string): Theme | undefined {
   return allThemes.find((t) => t.name === name);
