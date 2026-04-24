@@ -13,6 +13,7 @@ import { fakeBootSessionServices } from "./fake-boot.js";
 import { sweepOrphanModules } from "./orphan-sweep.js";
 import { validateProfile } from "./profile-guard.js";
 import type { SessionEvent } from "./session.js";
+import { handleClientRpc, isClientRpcAction } from "./client-rpcs.js";
 
 // ---------------------------------------------------------------------------
 // Daemon entry for `rn-dev daemon <worktree>`.
@@ -249,6 +250,10 @@ function handleMessage(
       return;
 
     default:
+      if (isClientRpcAction(message.action)) {
+        void handleClientRpc(event, supervisor);
+        return;
+      }
       reply({
         type: "response",
         action: "daemon/error",
