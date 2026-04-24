@@ -196,7 +196,50 @@ export const neonDrive: Theme = {
   },
 };
 
-export const allThemes: readonly Theme[] = [softDark, softLight, midnight, ember, arctic, neonDrive];
+/**
+ * Flat — intentionally minimal reference theme. No shadows, no glow, no
+ * neumorphic elevation. Structural separation comes from the bg/surface
+ * contrast + a visible accent-border on active/hover states. Useful as a
+ * starting point for authors who want to build a theme without committing
+ * to the soft-UI language.
+ *
+ * All shadow tokens are `transparent` or zero-offset/transparent strings
+ * so the global `--neu-raised` / `--neu-inset` / `--glow-medium` recipes
+ * still compose against valid CSS but render invisibly.
+ */
+export const flat: Theme = {
+  name: 'Flat',
+  colors: {
+    bg:             '#EEF0F4',
+    bgSoft:         '#F4F6F9',
+    surface:        '#FFFFFF',
+    surfaceHi:      '#F4F5F8',
+    ink:            '#0F1115',
+    inkSoft:        '#2A2F36',
+    muted:          '#6B7280',
+    muted2:         '#9CA3AF',
+    glow:           '#2563EB',
+    glowWarm:       '#3B82F6',
+    ready:          '#10B981',
+    booting:        '#F59E0B',
+    shadowLight:    'transparent',
+    shadowDark:     'transparent',
+    shadowDarkSoft: 'transparent',
+    glowMedium:     '0 0 0 transparent, 0 0 0 transparent',
+    accentBorder:   '#2563EB',
+    bodyBg:         '#EEF0F4',
+    fg:             '#0F1115',
+    border:         'rgba(15, 17, 21, 0.12)',
+    accent:         '#2563EB',
+    success:        '#10B981',
+    warning:        '#F59E0B',
+    error:          '#EF4444',
+    highlight:      '#2563EB',
+    selection:      '#F4F5F8',
+  },
+};
+
+export const allThemes: readonly Theme[] = [softDark, softLight, midnight, ember, arctic, neonDrive, flat];
 
 export function getThemeByName(name: string): Theme | undefined {
   return allThemes.find((t) => t.name === name);

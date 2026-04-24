@@ -4,34 +4,27 @@ import './ProfileBanner.css';
 
 interface ProfileBannerProps {
   profile: ProfileInfo;
-  visible: boolean;
-  onToggle: () => void;
 }
 
-export function ProfileBanner({ profile, visible, onToggle }: ProfileBannerProps) {
+export function ProfileBanner({ profile }: ProfileBannerProps) {
   return (
-    <div className={`profile-banner${!visible ? ' compact' : ''}`}>
-      {visible && (
-        <div className="profile-info">
-          <span className="profile-label">V </span>
-          <span className="profile-name">{profile.name}</span>
-          <span className="profile-sep">|</span>
-          <span className="profile-branch">{profile.branch}</span>
-          <span className="profile-sep">|</span>
-          <span>{profile.platform}</span>
-          <span className="profile-sep">|</span>
-          <span className={profile.dirty ? 'profile-dirty' : ''}>
-            {profile.dirty ? 'dirty' : 'clean'}
-          </span>
-          <span className="profile-sep">|</span>
-          <span>:{profile.port}</span>
-          <span className="profile-sep">|</span>
-          <span>{profile.buildType}</span>
-        </div>
-      )}
-      <button className="profile-toggle" onClick={onToggle}>
-        [p] {visible ? 'hide' : 'show profile'}
-      </button>
+    <div className="profile-banner">
+      <div className="profile-info">
+        <span className="profile-label">V </span>
+        <span className="profile-name">{profile.name}</span>
+        <span className="profile-sep">|</span>
+        <span className="profile-branch">{profile.branch}</span>
+        <span className="profile-sep">|</span>
+        <span>{profile.platform}</span>
+        <span className="profile-sep">|</span>
+        <span className={profile.dirty ? 'profile-dirty' : ''}>
+          {profile.dirty ? 'dirty' : 'clean'}
+        </span>
+        <span className="profile-sep">|</span>
+        <span>:{profile.port}</span>
+        <span className="profile-sep">|</span>
+        <span>{profile.buildType}</span>
+      </div>
     </div>
   );
 }

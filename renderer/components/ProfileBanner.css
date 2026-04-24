@@ -43,24 +43,3 @@
   font-weight: 500;
 }
 
-.profile-toggle {
-  color: var(--muted);
-  font-size: 11px;
-  padding: 6px 12px;
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  box-shadow: var(--neu-raised-xs);
-  border: 1px solid transparent;
-  transition: color 160ms ease, border-color 220ms ease, box-shadow 220ms ease;
-}
-
-.profile-toggle:hover {
-  color: var(--ink);
-  border-color: var(--accent-border);
-  box-shadow: var(--neu-raised-xs), var(--glow-medium);
-}
-
-.profile-banner.compact {
-  padding: 8px 14px;
-  justify-content: flex-end;
-}

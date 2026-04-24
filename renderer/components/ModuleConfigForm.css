@@ -83,6 +83,12 @@
   transition: box-shadow 220ms ease;
 }
 
+/* <select> renders a browser-native dropdown arrow inside its content box;
+   give it room so the value text doesn't collide with the chevron. */
+.module-config-form__select {
+  padding-right: 32px;
+}
+
 .module-config-form__text:focus,
 .module-config-form__number:focus,
 .module-config-form__select:focus {

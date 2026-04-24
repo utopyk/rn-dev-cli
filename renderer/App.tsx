@@ -38,7 +38,6 @@ function makeEmptyLogs(): InstanceLogs {
 export function App() {
   const [activeTab, setActiveTab] = useState<string>('dev-space');
   const [modulePanels, setModulePanels] = useState<ModulePanelListEntry[]>([]);
-  const [profileVisible, setProfileVisible] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
   const [showNewInstanceDialog, setShowNewInstanceDialog] = useState(false);
   const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebarCollapsed();
@@ -418,9 +417,6 @@ export function App() {
           break;
         case 'f':
           break;
-        case 'p':
-          setProfileVisible((v) => !v);
-          break;
         case 'q':
           window.close();
           break;
@@ -610,11 +606,7 @@ export function App() {
           onClose={handleCloseInstance}
           onAdd={handleAddInstance}
         />
-        <ProfileBanner
-          profile={activeProfile}
-          visible={profileVisible}
-          onToggle={() => setProfileVisible((v) => !v)}
-        />
+        <ProfileBanner profile={activeProfile} />
         <div className="app-content">
           {promptModal ? (
             <div className="prompt-overlay">
