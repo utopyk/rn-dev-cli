@@ -21,4 +21,11 @@ describe('themes', () => {
       expect(softLight.colors[key], `light missing ${key}`).toBeTruthy();
     }
   });
+
+  it('softDark uses purple glow (not orange) for accent consistency', () => {
+    expect(softDark.colors.glow).toBe('#cc97cc');
+    expect(softDark.colors.accent).toBe('#cc97cc');
+    expect(softDark.colors.highlight).toBe('#cc97cc');
+    expect(softLight.colors.glow).toBe('#FF8A2A');
+  });
 });
