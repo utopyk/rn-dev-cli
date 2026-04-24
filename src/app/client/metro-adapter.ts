@@ -17,6 +17,12 @@ import type { MetroInstance } from "../../core/types.js";
 export interface MetroClientEvents {
   status: (evt: { status: string }) => void;
   log: (evt: { line: string; stream: "stdout" | "stderr" }) => void;
+  /**
+   * Fires once when the daemon socket drops unexpectedly. Voluntary
+   * `disconnect()` / `stop()` do NOT fire it — only a crash / SIGKILL
+   * / host loss (Phase 13.4 prereq #1).
+   */
+  disconnected: (err?: Error) => void;
 }
 
 export class MetroClient extends EventEmitter {
@@ -62,6 +68,11 @@ export class MetroClient extends EventEmitter {
     } else {
       this.emit("log", data);
     }
+  }
+
+  /** Internal — the session orchestrator calls this on unexpected daemon death. */
+  notifyDisconnected(err?: Error): void {
+    this.emit("disconnected", err);
   }
 }
 

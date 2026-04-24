@@ -23,6 +23,8 @@ export interface BuilderClientEvents {
     }>;
     platform?: "ios" | "android";
   }) => void;
+  /** Fires once on unexpected daemon death (Phase 13.4 prereq #1). */
+  disconnected: (err?: Error) => void;
 }
 
 export class BuilderClient extends EventEmitter {
@@ -52,5 +54,9 @@ export class BuilderClient extends EventEmitter {
   ): void {
     const topic = kind.slice("builder/".length);
     this.emit(topic, data);
+  }
+
+  notifyDisconnected(err?: Error): void {
+    this.emit("disconnected", err);
   }
 }

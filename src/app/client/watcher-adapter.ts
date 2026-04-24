@@ -16,6 +16,8 @@ export interface WatcherClientEvents {
       durationMs: number;
     };
   }) => void;
+  /** Fires once on unexpected daemon death (Phase 13.4 prereq #1). */
+  disconnected: (err?: Error) => void;
 }
 
 export class WatcherClient extends EventEmitter {
@@ -54,5 +56,9 @@ export class WatcherClient extends EventEmitter {
   _dispatch(kind: "watcher/action-complete", data: unknown): void {
     const topic = kind.slice("watcher/".length);
     this.emit(topic, data);
+  }
+
+  notifyDisconnected(err?: Error): void {
+    this.emit("disconnected", err);
   }
 }
