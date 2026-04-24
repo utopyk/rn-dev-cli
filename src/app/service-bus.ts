@@ -12,6 +12,7 @@ import type { MetroClient } from "./client/metro-adapter.js";
 import type { WatcherClient } from "./client/watcher-adapter.js";
 import type { BuilderClient } from "./client/builder-adapter.js";
 import type { DevToolsClient } from "./client/devtools-adapter.js";
+import type { ModuleHostClient } from "./client/module-host-adapter.js";
 import type { ModuleHostManager } from "../core/module-host/manager.js";
 import type { ModuleRegistry } from "../modules/registry.js";
 
@@ -62,6 +63,19 @@ export interface ServiceBusEvents {
    * second read of `package.json`. Phase 6.
    */
   hostVersion: (version: string) => void;
+  /**
+   * Published after `connectElectronToDaemon` completes. Phase 13.4.1 —
+   * replaces the `moduleHost` + `moduleRegistry` topics for handler
+   * wiring: after the flip, Electron's `modules:*` ipcMain handlers talk
+   * to the daemon exclusively through this client (install, uninstall,
+   * list, list-panels, resolve-panel, host-call, call-tool, config-get,
+   * config-set, marketplace/list, marketplace/info). The in-process
+   * manager/registry topics remain on the bus during the transition so
+   * handlers the flip hasn't reached yet keep working; once every
+   * handler is flipped and `module-system-bootstrap.ts` is deleted they
+   * go away.
+   */
+  modulesClient: (client: ModuleHostClient) => void;
 }
 
 class ServiceBus extends EventEmitter {
@@ -103,6 +117,10 @@ class ServiceBus extends EventEmitter {
 
   setHostVersion(version: string) {
     this.emit("hostVersion", version);
+  }
+
+  setModulesClient(client: ModuleHostClient) {
+    this.emit("modulesClient", client);
   }
 }
 

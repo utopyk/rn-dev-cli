@@ -2,8 +2,6 @@ import { BrowserWindow } from 'electron';
 import type { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { serviceBus } from '../../src/app/service-bus.js';
-import type { ModuleHostManager } from '../../src/core/module-host/manager.js';
-import type { ModuleRegistry } from '../../src/modules/registry.js';
 import { getDefaultAuditLog, type AuditEntry } from '../../src/core/audit-log.js';
 import { state, send } from './state.js';
 
@@ -106,45 +104,39 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
 }
 
 /**
- * Phase 4 — install the module-panels bridge + its ipcMain channels.
- * Channels are registered EAGERLY during `setupIpcBridge` with a
- * `getDeps()` closure so the renderer can safely invoke
- * `modules:list-panels` on mount, before `startRealServices` has
- * finished publishing `moduleHost` + `moduleRegistry`. Missing deps
- * return empty/no-op defaults rather than
- * "No handler registered for ..." errors.
+ * Phase 4 (13.4.1 flipped) — install the module-panels bridge + its
+ * ipcMain channels. Data-plane resolution (list, list-panels, host-call,
+ * call-tool) routes through the daemon client; panel-lifecycle ops
+ * (activate/deactivate/set-bounds) drive the local WebContentsView but
+ * pre-fetch the manifest contribution + moduleRoot from the daemon via
+ * `modules/resolve-panel`.
+ *
+ * The panel-bridge's `moduleRoot(id)` callback reads from a per-handler
+ * cache (`moduleRoots`) populated by the `modules:activate-panel`
+ * handler. The bridge's synchronous `register(moduleId, contribution)`
+ * signature is preserved that way — the async RPC round-trip happens
+ * upstream of the register call, never inside it.
  */
 function registerModulePanelsHandlers(window: BrowserWindow): void {
   const boundsCache = createBoundsCache();
+  const moduleRoots = new Map<string, string>();
   let deps: ModulesPanelsIpcDeps | null = null;
-  let handleGetActiveBounds: (() => ReturnType<typeof boundsCache.get>) | null = null;
 
   const handle = registerModulesPanelsIpc(
     () => deps,
     () => senderRegistry,
   );
-  handleGetActiveBounds = handle.getActiveBounds;
 
-  let latestManager: ModuleHostManager | null = null;
-  let latestRegistry: ModuleRegistry | null = null;
-
-  const tryInstall = () => {
-    if (!latestManager || !latestRegistry || deps) return;
-    const manager = latestManager;
-    const registry = latestRegistry;
+  serviceBus.on('modulesClient', (client) => {
+    if (deps) return;
 
     const preloadPath = path.join(__dirname, '..', 'preload-module.js');
     const bridge = installPanelBridge({
       window,
       preloadPath,
-      moduleRoot: (id: string) => {
-        const reg = registry
-          .getAllManifests()
-          .find((m) => m.manifest.id === id);
-        return reg?.modulePath ?? '';
-      },
+      moduleRoot: (id: string) => moduleRoots.get(id) ?? '',
       getBounds: () =>
-        handleGetActiveBounds?.() ?? { x: 0, y: 0, width: 0, height: 0 },
+        handle.getActiveBounds() ?? { x: 0, y: 0, width: 0, height: 0 },
       auditLog: (event) => {
         void auditLog.append({
           kind: 'panel-bridge',
@@ -159,9 +151,9 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
 
     deps = {
       bridge,
-      manager,
-      registry,
+      modulesClient: client,
       bounds: boundsCache,
+      moduleRoots,
       auditHostCall: (event) => {
         void auditLog.append({
           kind: 'host-call',
@@ -173,27 +165,24 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
       },
     };
 
-    // Re-notify the renderer so sidebar re-fetches panel list now that deps are live.
+    // Re-notify the renderer so sidebar re-fetches panel list now that
+    // deps are live. Renderer subscribes to `modules:event` and refetches
+    // `modules:list-panels` on any kind — `ready` is a synthetic marker
+    // for "deps just transitioned to non-null". Same semantics as before
+    // the flip; the trigger is now serviceBus.modulesClient arrival.
     send('modules:event', { kind: 'ready', moduleId: '', scopeUnit: '' });
-  };
-
-  serviceBus.on('moduleHost', (m) => {
-    latestManager = m;
-    tryInstall();
-  });
-  serviceBus.on('moduleRegistry', (r) => {
-    latestRegistry = r;
-    tryInstall();
   });
 }
 
 /**
- * Phase 5a — install the module-config ipcMain channels. Same lazy-deps
- * pattern as the panel-bridge: handlers register eagerly, deps fill in
- * when `startRealServices` publishes moduleHost / moduleRegistry / the
- * shared module-events bus. Audit sink routes to `service:log` — parity
- * with the Phase 4 `modules:host-call` audit pattern. An HMAC-chained
- * `AuditLog.append()` sink will replace both when it lands.
+ * Phase 5a (13.4.1 flipped) — install the module-config ipcMain channels.
+ * Handlers register eagerly; deps fill in once `connectElectronToDaemon`
+ * publishes `modulesClient` (the daemon-client RPC surface). The
+ * in-process `moduleHost` / `moduleRegistry` / `moduleEventsBus` topics
+ * are no longer consulted here — reads + writes both go through the
+ * client's `configGet` / `configSet` round-trip. The service:log audit
+ * sink stays Electron-side so the renderer's log pane keeps showing
+ * config-set outcomes; the daemon runs its own HMAC-chained audit log.
  */
 function registerModulesConfigHandlers(): void {
   let deps: ModulesConfigIpcDeps | null = null;
@@ -203,16 +192,10 @@ function registerModulesConfigHandlers(): void {
     () => senderRegistry,
   );
 
-  let latestManager: ModuleHostManager | null = null;
-  let latestRegistry: ModuleRegistry | null = null;
-  let latestEvents: EventEmitter | null = null;
-
-  const tryInstall = (): void => {
-    if (!latestManager || !latestRegistry || !latestEvents || deps) return;
+  serviceBus.on('modulesClient', (client) => {
+    if (deps) return;
     deps = {
-      manager: latestManager,
-      registry: latestRegistry,
-      moduleEvents: latestEvents,
+      modulesClient: client,
       auditConfigSet: (event) => {
         void auditLog.append({
           kind: 'config-set',
@@ -224,32 +207,16 @@ function registerModulesConfigHandlers(): void {
         });
       },
     };
-  };
-
-  serviceBus.on('moduleHost', (m) => {
-    latestManager = m;
-    tryInstall();
-  });
-  serviceBus.on('moduleRegistry', (r) => {
-    latestRegistry = r;
-    tryInstall();
-  });
-  serviceBus.on('moduleEventsBus', (bus) => {
-    latestEvents = bus;
-    tryInstall();
   });
 }
 
 /**
- * Phase 6 — install/uninstall/marketplace ipcMain handlers. Same eager
- * register / getDeps lazy-fill pattern as modules-config so the renderer
- * can safely invoke `marketplace:list` before services finish booting.
- *
- * Kieran + Security P1 (Phase 6 review): install/uninstall MUST gate
- * through `PanelSenderRegistry.canWrite(MARKETPLACE_WRITE_PRINCIPAL)` so
- * a sandboxed panel can't trigger pacote-backed installs on the user's
- * behalf. We register the "marketplace" principal here so the host UI's
- * webContents is the only sender the registrar accepts.
+ * Phase 6 (13.4.1 flipped) — install/uninstall/marketplace ipcMain
+ * handlers. Deps resolve to the daemon-client RPC surface (`modulesClient`)
+ * published by `connectElectronToDaemon`. Kieran + Security P1 sender-
+ * identity gate unchanged: a sandboxed panel still can't trigger
+ * pacote-backed installs on the user's behalf — the marketplace write
+ * principal is only granted to the host UI's webContents.
  */
 function registerModulesInstallHandlers(): void {
   let deps: ModulesInstallIpcDeps | null = null;
@@ -260,20 +227,10 @@ function registerModulesInstallHandlers(): void {
     () => senderRegistry,
   );
 
-  let latestManager: ModuleHostManager | null = null;
-  let latestRegistry: ModuleRegistry | null = null;
-  let latestEvents: EventEmitter | null = null;
-  let latestHostVersion: string | null = null;
-
-  const tryInstall = (): void => {
-    if (!latestManager || !latestRegistry || !latestEvents || !latestHostVersion || deps) {
-      return;
-    }
+  serviceBus.on('modulesClient', (client) => {
+    if (deps) return;
     deps = {
-      manager: latestManager,
-      registry: latestRegistry,
-      moduleEvents: latestEvents,
-      hostVersion: latestHostVersion,
+      modulesClient: client,
       auditInstall: (event) => {
         void auditLog.append({
           kind: event.kind,
@@ -284,23 +241,6 @@ function registerModulesInstallHandlers(): void {
         });
       },
     };
-  };
-
-  serviceBus.on('moduleHost', (m) => {
-    latestManager = m;
-    tryInstall();
-  });
-  serviceBus.on('moduleRegistry', (r) => {
-    latestRegistry = r;
-    tryInstall();
-  });
-  serviceBus.on('moduleEventsBus', (bus) => {
-    latestEvents = bus;
-    tryInstall();
-  });
-  serviceBus.on('hostVersion', (v) => {
-    latestHostVersion = v;
-    tryInstall();
   });
 }
 
