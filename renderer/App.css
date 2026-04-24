@@ -67,3 +67,19 @@
 .prompt-option:hover { border-color: var(--accent-border); box-shadow: var(--neu-raised-xs), var(--glow-medium); }
 .prompt-option-label { font-weight: 500; }
 .prompt-option-cleanup { color: var(--booting); font-size: 11px; }
+
+/* Top-of-window drag region for frameless (titleBarStyle: 'hiddenInset')
+   Electron windows. Covers the 28px gutter where the OS traffic light
+   controls render on top. pointer-events:none lets clicks pass through
+   to controls and to any content beneath; -webkit-app-region:drag tells
+   Electron this is a window-move surface. */
+.app-drag-strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  -webkit-app-region: drag;
+  pointer-events: none;
+  z-index: 50;
+}

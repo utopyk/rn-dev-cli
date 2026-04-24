@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import type { ProfileInfo, InstanceInfo, InstanceLogs, LogSection, SectionStartEvent, SectionEndEvent } from './types';
+import { useTheme } from './theme/ThemeProvider';
+import { getThemeByName } from './theme/themes.js';
 import { Sidebar } from './components/Sidebar';
 import type { SidebarModulePanel } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
@@ -55,6 +57,7 @@ export function App() {
   const [logVersion, setLogVersion] = useState(0); // trigger re-renders for logs
 
   const invoke = useIpcInvoke();
+  const { setTheme } = useTheme();
 
   // On mount + on every module-system event: refetch the panel list so
   // 3p extensions appear in the sidebar without a reload. Reuses the
@@ -85,6 +88,23 @@ export function App() {
   useEffect(() => {
     fetchPanels();
   }, [fetchPanels]);
+
+  // One-shot on mount: load persisted theme from settings module config.
+  // The saved value lives in ~/.rn-dev/modules/settings/config.json and is
+  // the same source of truth ModuleConfigForm reads in Settings. Without
+  // this, ThemeProvider boots to softDark regardless of saved preference.
+  useEffect(() => {
+    let cancelled = false;
+    type Reply = { moduleId: string; config: Record<string, unknown> } | { error: string } | null;
+    invoke<Reply>('modules:config-get', { moduleId: 'settings' }).then((reply) => {
+      if (cancelled || !reply || 'error' in reply) return;
+      const themeName = reply.config.theme;
+      if (typeof themeName !== 'string') return;
+      const match = getThemeByName(themeName);
+      if (match) setTheme(match);
+    });
+    return () => { cancelled = true; };
+  }, [invoke, setTheme]);
 
   useIpcOn('modules:event', useCallback(() => {
     fetchPanels();
@@ -503,6 +523,7 @@ export function App() {
   if (showNewInstanceDialog) {
     return (
       <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}${notifExpanded ? ' notifications-expanded' : ''}`}>
+        <div className="app-drag-strip" />
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
         <div className="app-main">
           {instances.length > 0 && (
@@ -530,6 +551,7 @@ export function App() {
   if (showWizard) {
     return (
       <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}${notifExpanded ? ' notifications-expanded' : ''}`}>
+        <div className="app-drag-strip" />
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
         <div className="app-main">
           {instances.length > 0 && (
@@ -560,6 +582,7 @@ export function App() {
 
   return (
     <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}${notifExpanded ? ' notifications-expanded' : ''}`}>
+      <div className="app-drag-strip" />
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
       <div className="app-main">
         <InstanceTabs

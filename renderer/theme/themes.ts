@@ -195,3 +195,9 @@ export const neonDrive: Theme = {
     selection:      '#20203d',
   },
 };
+
+export const allThemes: readonly Theme[] = [softDark, softLight, midnight, ember, arctic, neonDrive];
+
+export function getThemeByName(name: string): Theme | undefined {
+  return allThemes.find((t) => t.name === name);
+}
