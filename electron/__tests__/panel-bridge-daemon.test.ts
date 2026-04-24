@@ -4,6 +4,26 @@ import {
   spawnTestDaemon,
   type TestDaemonHandle,
 } from "../../test/helpers/spawnTestDaemon.js";
+import { connectToDaemonSession } from "../../src/app/client/session.js";
+import type { Profile } from "../../src/core/types.js";
+
+function fakeProfile(worktree: string): Profile {
+  return {
+    name: "test",
+    isDefault: true,
+    worktree: null,
+    branch: "main",
+    platform: "ios",
+    mode: "quick",
+    metroPort: 8081,
+    devices: {},
+    buildVariant: "debug",
+    preflight: { checks: [], frequency: "once" },
+    onSave: [],
+    env: {},
+    projectRoot: worktree,
+  };
+}
 
 // Phase 13.4.1 merge gate — integration test #6. Pins the three new
 // daemon RPCs the Electron panel-bridge depends on after the handler
@@ -39,14 +59,27 @@ describe("Phase 13.4.1 panel-bridge daemon RPCs (merge gate)", () => {
     }
   });
 
-  it("modules/host-call returns MODULE_UNAVAILABLE when moduleId is not registered", async () => {
-    const { path: worktree, cleanup } = makeTestWorktree();
-    cleanups.push(cleanup);
-
+  async function bootSession(worktree: string): Promise<TestDaemonHandle> {
     const daemon = await spawnTestDaemon(worktree, {
       env: { RN_DEV_DAEMON_BOOT_MODE: "fake" },
     });
     liveHandles.push(daemon);
+    // The modules IPC dispatcher only registers after the session is
+    // running — mirror what Electron does by using connectToDaemonSession.
+    const session = await connectToDaemonSession(worktree, fakeProfile(worktree));
+    // We don't need the session's adapters for these tests; stopping the
+    // session would also unregister the dispatcher, so leave it running
+    // until afterEach tears down the daemon. `disconnect()` drops our
+    // subscription without touching the daemon-side session.
+    session.disconnect();
+    return daemon;
+  }
+
+  it("modules/host-call returns MODULE_UNAVAILABLE when moduleId is not registered", async () => {
+    const { path: worktree, cleanup } = makeTestWorktree();
+    cleanups.push(cleanup);
+
+    const daemon = await bootSession(worktree);
 
     const resp = await daemon.client.send({
       type: "command",
@@ -64,16 +97,13 @@ describe("Phase 13.4.1 panel-bridge daemon RPCs (merge gate)", () => {
     const p = resp.payload as { kind?: string; code?: string };
     expect(p.kind).toBe("error");
     expect(p.code).toBe("MODULE_UNAVAILABLE");
-  }, 10_000);
+  }, 15_000);
 
   it("modules/host-call returns HOST_CALL_FAILED on malformed payload", async () => {
     const { path: worktree, cleanup } = makeTestWorktree();
     cleanups.push(cleanup);
 
-    const daemon = await spawnTestDaemon(worktree, {
-      env: { RN_DEV_DAEMON_BOOT_MODE: "fake" },
-    });
-    liveHandles.push(daemon);
+    const daemon = await bootSession(worktree);
 
     const resp = await daemon.client.send({
       type: "command",
@@ -85,16 +115,13 @@ describe("Phase 13.4.1 panel-bridge daemon RPCs (merge gate)", () => {
     const p = resp.payload as { kind?: string; code?: string };
     expect(p.kind).toBe("error");
     expect(p.code).toBe("HOST_CALL_FAILED");
-  }, 10_000);
+  }, 15_000);
 
   it("modules/list-panels returns { modules: [] } when no panel-contributing module is registered", async () => {
     const { path: worktree, cleanup } = makeTestWorktree();
     cleanups.push(cleanup);
 
-    const daemon = await spawnTestDaemon(worktree, {
-      env: { RN_DEV_DAEMON_BOOT_MODE: "fake" },
-    });
-    liveHandles.push(daemon);
+    const daemon = await bootSession(worktree);
 
     const resp = await daemon.client.send({
       type: "command",
@@ -111,16 +138,13 @@ describe("Phase 13.4.1 panel-bridge daemon RPCs (merge gate)", () => {
     // array. When a future built-in starts contributing a panel, update
     // this assertion to reference it by moduleId.
     expect(p.modules).toEqual([]);
-  }, 10_000);
+  }, 15_000);
 
   it("modules/resolve-panel returns an error when moduleId is not registered", async () => {
     const { path: worktree, cleanup } = makeTestWorktree();
     cleanups.push(cleanup);
 
-    const daemon = await spawnTestDaemon(worktree, {
-      env: { RN_DEV_DAEMON_BOOT_MODE: "fake" },
-    });
-    liveHandles.push(daemon);
+    const daemon = await bootSession(worktree);
 
     const resp = await daemon.client.send({
       type: "command",
@@ -132,5 +156,5 @@ describe("Phase 13.4.1 panel-bridge daemon RPCs (merge gate)", () => {
     const p = resp.payload as { kind?: string; code?: string };
     expect(p.kind).toBe("error");
     expect(p.code).toBe("E_PANEL_NOT_FOUND");
-  }, 10_000);
+  }, 15_000);
 });

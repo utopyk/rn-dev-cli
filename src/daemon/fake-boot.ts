@@ -18,6 +18,7 @@
 import { EventEmitter } from "node:events";
 import { MetroLogsStore } from "../core/metro-logs/buffer.js";
 import { CapabilityRegistry } from "../core/module-host/capabilities.js";
+import { registerModulesIpc } from "../app/modules-ipc.js";
 import type {
   BootSessionServicesOptions,
   SessionServices,
@@ -75,10 +76,22 @@ export async function fakeBootSessionServices(
   const devtools = makeFakeDevtools();
   const builder = makeFakeBuilder();
   const moduleHost = makeFakeModuleHost();
-  const moduleEvents = new EventEmitter();
   const metroLogsStore = new MetroLogsStore();
   const capabilities = new CapabilityRegistry();
   const moduleRegistry = opts.moduleRegistry;
+
+  // Phase 13.4.1 — register the modules IPC dispatcher on the daemon's
+  // shared socket so integration tests that exercise `modules/*` RPCs
+  // (host-call, list-panels, resolve-panel, install/uninstall,
+  // config/get|set, ...) can run against the fake boot path. The real
+  // `bootSessionServices` does this at step 12; the stub mirrored every
+  // other surface but skipped this one because pre-13.4.1 fake tests
+  // never exercised modules IPC.
+  const modulesIpc = registerModulesIpc(opts.ipc, {
+    manager: moduleHost as FakeModuleHostSurface as unknown as ModuleHostManager,
+    registry: moduleRegistry,
+  });
+  const moduleEvents = modulesIpc.moduleEvents;
 
   // Emit "starting" on the next macrotask — supervisor wires event
   // listeners AFTER bootFn resolves, so a microtask-scheduled emit
@@ -93,6 +106,7 @@ export async function fakeBootSessionServices(
   }, 25);
 
   const dispose = async (): Promise<void> => {
+    modulesIpc.unregister();
     metro.emit("status", { worktreeKey, status: "stopped" });
   };
 
