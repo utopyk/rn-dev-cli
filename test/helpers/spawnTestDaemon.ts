@@ -53,6 +53,11 @@ export async function spawnTestDaemon(
     },
   );
 
+  if (proc.pid === undefined) {
+    throw new Error("spawnTestDaemon: spawn returned no pid (spawn failed synchronously)");
+  }
+  const pid = proc.pid;
+
   let stderr = "";
   let stdout = "";
   proc.stderr?.on("data", (chunk: Buffer) => {
@@ -65,14 +70,12 @@ export async function spawnTestDaemon(
   const sockPath = join(worktree, ".rn-dev", "sock");
   const pidPath = join(worktree, ".rn-dev", "pid");
 
-  let exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null = null;
   const exitPromise = new Promise<{
     code: number | null;
     signal: NodeJS.Signals | null;
   }>((res) => {
     proc.once("exit", (code, signal) => {
-      exitInfo = { code, signal };
-      res(exitInfo);
+      res({ code, signal });
     });
   });
 
@@ -82,16 +85,12 @@ export async function spawnTestDaemon(
 
   const client = new IpcClient(sockPath);
 
-  const waitForExit = (): Promise<{ code: number | null; signal: NodeJS.Signals | null }> => {
-    return exitInfo ? Promise.resolve(exitInfo) : exitPromise;
-  };
-
   const stop = async (): Promise<{ code: number | null; signal: NodeJS.Signals | null }> => {
-    if (exitInfo) return exitInfo;
+    if (proc.exitCode !== null || proc.signalCode !== null) return exitPromise;
     proc.kill("SIGTERM");
     // Fallback SIGKILL if the daemon misbehaves and does not exit within 3s.
     const killTimer = setTimeout(() => {
-      if (!exitInfo && !proc.killed) proc.kill("SIGKILL");
+      if (proc.exitCode === null && !proc.killed) proc.kill("SIGKILL");
     }, 3_000);
     const info = await exitPromise;
     clearTimeout(killTimer);
@@ -100,13 +99,13 @@ export async function spawnTestDaemon(
 
   return {
     proc,
-    pid: proc.pid!,
+    pid,
     sockPath,
     pidPath,
     client,
     getStderr: () => stderr,
     getStdout: () => stdout,
-    waitForExit,
+    waitForExit: () => exitPromise,
     stop,
   };
 }

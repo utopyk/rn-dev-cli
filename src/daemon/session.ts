@@ -5,7 +5,9 @@
 export type SessionStatus = "stopped" | "starting" | "running" | "stopping";
 
 export interface SessionState {
-  status: SessionStatus;
+  readonly status: SessionStatus;
 }
 
-export const INITIAL_SESSION_STATE: SessionState = { status: "stopped" };
+export const INITIAL_SESSION_STATE: SessionState = Object.freeze({
+  status: "stopped",
+}) as SessionState;

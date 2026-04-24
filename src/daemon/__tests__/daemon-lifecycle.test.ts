@@ -46,11 +46,11 @@ describe("daemon lifecycle (integration)", () => {
     expect(response.id).toBe("ping-1");
     expect(response.type).toBe("response");
 
-    const payload = response.payload as { daemonVersion?: string; hostRange?: string };
-    expect(typeof payload?.daemonVersion).toBe("string");
+    const payload = response.payload as { daemonVersion: string; hostRange: string };
+    expect(typeof payload.daemonVersion).toBe("string");
     expect(payload.daemonVersion).toMatch(/^\d+\.\d+\.\d+/);
-    expect(typeof payload?.hostRange).toBe("string");
-    expect(payload.hostRange!.length).toBeGreaterThan(0);
+    expect(typeof payload.hostRange).toBe("string");
+    expect(payload.hostRange.length).toBeGreaterThan(0);
 
     // SIGTERM → graceful shutdown, pid + sock gone, exit code 0.
     const exit = await daemon.stop();
