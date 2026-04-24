@@ -1,11 +1,23 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import { setupIpcBridge, startRealServices } from './ipc/index.js';
-import { detectProjectRoot } from '../src/core/project.js';
+import { detectProjectRoot, getCurrentBranch } from '../src/core/project.js';
+import { ProfileStore } from '../src/core/profile.js';
+import { connectElectronToDaemon } from './daemon-connect.js';
+import type { DaemonSession } from '../src/app/client/session.js';
 
 const isDev = !app.isPackaged;
 
 let mainWindow: BrowserWindow | null = null;
+
+// Phase 13.4 — the live daemon-client session for the current
+// project. Populated once the renderer finishes loading so the
+// daemon's Metro / DevTools / Builder / Watcher adapters are on
+// the serviceBus before any ipcMain handler consults them.
+// `null` until the renderer signals `did-finish-load`; the
+// in-process `startRealServices` path still covers the module
+// system + instance orchestration during the 13.4.1 transition.
+let daemonSession: DaemonSession | null = null;
 
 /** Wait for Vite dev server to be ready, trying ports 5173-5180, with retries */
 async function waitForVite(maxRetries = 30): Promise<number> {
@@ -90,13 +102,72 @@ async function createWindow() {
           mainWindow.webContents.send('service:log', `✖ Service error: ${err.message ?? err}`);
         }
       });
+
+      // Phase 13.4 — open a daemon-client session alongside the
+      // in-process services. The daemon already owns a full
+      // `bootSessionServices` lifecycle (preflight / clean /
+      // watchman / metro / builder / watcher / module host), so
+      // this connection doesn't replace `startRealServices` yet;
+      // it stands up the adapter refs on the serviceBus so the
+      // next round of handler flips (13.4.1) can consume them.
+      // Failures are non-fatal — in-process services still cover
+      // the UI in 13.4.
+      void connectDaemonClientBestEffort(projectRoot);
     }, 1000);
   });
+}
+
+async function connectDaemonClientBestEffort(projectRoot: string): Promise<void> {
+  try {
+    const profileStore = new ProfileStore(
+      path.join(projectRoot, '.rn-dev', 'profiles'),
+    );
+    const branch = (await getCurrentBranch(projectRoot)) ?? 'main';
+    const profile = profileStore.findDefault(null, branch);
+    if (!profile) {
+      console.log('[electron] No default profile — skipping daemon connect');
+      return;
+    }
+    daemonSession = await connectElectronToDaemon({
+      projectRoot,
+      profile,
+    });
+    console.log(
+      `[electron] Daemon client connected — worktreeKey=${daemonSession.worktreeKey}`,
+    );
+
+    // When the daemon drops unexpectedly, surface it in the service
+    // log; a future 13.4.1 reconnect handler can react here.
+    daemonSession.metro.on('disconnected', (err) => {
+      const message = err instanceof Error ? err.message : 'unknown';
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(
+          'service:log',
+          `⚠ Daemon disconnected: ${message}`,
+        );
+      }
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[electron] Daemon connect failed (non-fatal):', message);
+  }
 }
 
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
+  // Phase 13.4 — disconnect (don't stop) so any other client
+  // attached to the same daemon (CLI, MCP) keeps working after the
+  // Electron window goes away. `stop()` here would be wrong: it
+  // tells the daemon to tear the session down for everyone.
+  if (daemonSession) {
+    try {
+      daemonSession.disconnect();
+    } catch {
+      /* best-effort on shutdown */
+    }
+    daemonSession = null;
+  }
   app.quit();
 });
 
