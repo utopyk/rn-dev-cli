@@ -45,12 +45,12 @@
   color: var(--ink);
 }
 
-/* Theme picker — two neumorphic cards with glow + purple-border active state. */
+/* Theme picker — neumorphic cards with glow + accent-border active state. */
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
-  max-width: 520px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+  max-width: 720px;
 }
 
 .theme-card {

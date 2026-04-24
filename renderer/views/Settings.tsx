@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { useTheme } from '../theme/ThemeProvider';
 import type { Theme } from '../types';
-import { softDark, softLight } from '../theme/themes.js';
+import { softDark, softLight, midnight, ember, arctic, neonDrive } from '../theme/themes.js';
 import { ModuleConfigForm } from '../components/ModuleConfigForm';
 import './Settings.css';
 
@@ -11,7 +11,7 @@ import './Settings.css';
 // boolean + free-form fields come from the schema so the Settings panel
 // and the MCP `modules/config/*` surface share a single source of truth.
 
-const themes: Theme[] = [softDark, softLight];
+const themes: Theme[] = [softDark, softLight, midnight, ember, arctic, neonDrive];
 
 // Mirror of the `settingsManifest.contributes.config.schema` declared in
 // `src/modules/built-in/manifests.ts`. Duplicated rather than imported so
