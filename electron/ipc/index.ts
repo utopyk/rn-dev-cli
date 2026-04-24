@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron';
-import type { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { serviceBus } from '../../src/app/service-bus.js';
+import type { ModuleHostClient } from '../../src/app/client/module-host-adapter.js';
 import { getDefaultAuditLog, type AuditEntry } from '../../src/core/audit-log.js';
 import { state, send } from './state.js';
 
@@ -82,14 +82,32 @@ export function setupIpcBridge(window: BrowserWindow, initialProjectRoot?: strin
     send('service:log', formatAuditEntry(entry));
   });
 
-  // Forward module-system events to the renderer so the sidebar rebuilds
-  // when a 3p module installs / crashes / toggles + Settings + Marketplace
-  // panels live-update on `config-changed`. Simplicity #6 (Phase 5c) —
-  // we subscribe to the shared moduleEvents bus once it's published,
-  // rather than routing through a second serviceBus topic. Same payload
-  // the MCP server consumes via `modules/subscribe`.
-  serviceBus.on('moduleEventsBus', (bus: EventEmitter) => {
-    bus.on('modules-event', (event) => send('modules:event', event));
+  // Phase 13.4.1 — forward module-system events to the renderer so the
+  // sidebar rebuilds when a 3p module installs / crashes / toggles and
+  // Settings + Marketplace panels live-update on `config-changed`. Pre-
+  // flip this subscribed to `serviceBus.moduleEventsBus` which the
+  // deleted `module-system-bootstrap.ts` used to publish; now we
+  // subscribe to the `ModuleHostClient.on('modules-event', ...)` surface
+  // the daemon client exposes. Kieran P0-1 on PR #20 — without this,
+  // `modules:event` never fires post-flip and Settings + Marketplace
+  // regress to empty states.
+  //
+  // The adapter's built-in `dispatch()` only covers the 3 supervisor-
+  // level events (state-changed/crashed/failed) that ride the session's
+  // events/subscribe stream. `subscribeToEvents()` opens a second
+  // daemon subscription against `modules/subscribe` which carries the
+  // full breadth (install/uninstall/enabled/disabled/restarted/
+  // config-changed) that the renderer's Marketplace + Settings panels
+  // rely on. Kieran P0-2.
+  serviceBus.on('modulesClient', (client: ModuleHostClient | null) => {
+    if (!client) return;
+    client.on('modules-event', (event) => send('modules:event', event));
+    void client.subscribeToEvents().catch((err: unknown) => {
+      // Best-effort — if the subscribe fails (daemon tears down the
+      // socket mid-handshake, transient FS fault), renderer regresses
+      // to state-changed/crashed/failed only until reconnect.
+      console.error('[electron] modules/subscribe failed:', err);
+    });
   });
 
   registerInstanceHandlers();
@@ -128,6 +146,14 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
   );
 
   serviceBus.on('modulesClient', (client) => {
+    if (!client) {
+      // Daemon dropped — invalidate. The panel-bridge stays installed
+      // (its BrowserWindow hook owns the lifecycle); a fresh `deps` will
+      // land on the next `setModulesClient` after reconnect.
+      deps = null;
+      moduleRoots.clear();
+      return;
+    }
     if (deps) return;
 
     const preloadPath = path.join(__dirname, '..', 'preload-module.js');
@@ -154,15 +180,6 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
       modulesClient: client,
       bounds: boundsCache,
       moduleRoots,
-      auditHostCall: (event) => {
-        void auditLog.append({
-          kind: 'host-call',
-          moduleId: event.moduleId,
-          outcome: mapHostCallOutcome(event.outcome),
-          capabilityId: event.capabilityId,
-          method: event.method,
-        });
-      },
     };
 
     // Re-notify the renderer so sidebar re-fetches panel list now that
@@ -171,6 +188,22 @@ function registerModulePanelsHandlers(window: BrowserWindow): void {
     // for "deps just transitioned to non-null". Same semantics as before
     // the flip; the trigger is now serviceBus.modulesClient arrival.
     send('modules:event', { kind: 'ready', moduleId: '', scopeUnit: '' });
+  });
+
+  // Clear moduleRoots on uninstall / state-changed (module left `active`)
+  // so the panel-bridge's `moduleRoot(id)` callback never hands out a
+  // stale path after uninstall-then-reinstall. Sec P1-1 + Arch P1 on
+  // PR #20. Attached once per `setupIpcBridge` call; the subscription
+  // reads live `deps` via closure so it works across disconnect cycles.
+  const moduleRootsInvalidator = (event: { kind?: string; moduleId?: string }) => {
+    if (!event.moduleId) return;
+    if (event.kind === 'uninstall' || event.kind === 'crashed' || event.kind === 'failed') {
+      moduleRoots.delete(event.moduleId);
+    }
+  };
+  serviceBus.on('modulesClient', (client) => {
+    if (!client) return;
+    client.on('modules-event', moduleRootsInvalidator);
   });
 }
 
@@ -193,6 +226,10 @@ function registerModulesConfigHandlers(): void {
   );
 
   serviceBus.on('modulesClient', (client) => {
+    if (!client) {
+      deps = null;
+      return;
+    }
     if (deps) return;
     deps = {
       modulesClient: client,
@@ -228,6 +265,10 @@ function registerModulesInstallHandlers(): void {
   );
 
   serviceBus.on('modulesClient', (client) => {
+    if (!client) {
+      deps = null;
+      return;
+    }
     if (deps) return;
     deps = {
       modulesClient: client,
@@ -246,9 +287,12 @@ function registerModulesInstallHandlers(): void {
 
 /**
  * Render a structured audit entry as a service-log line so the existing
- * log pane UX doesn't regress. Switches on the `kind` discriminator so
- * each subsystem gets a tailored one-liner; the default branch exists
- * only to keep this exhaustive for a TS-never guarantee.
+ * log pane UX doesn't regress. Phase 13.4.1 — host-call entries now
+ * originate from the daemon (Sec P1-2 on PR #20 dropped the duplicate
+ * Electron-side append); since the renderer doesn't subscribe to the
+ * daemon's audit-log stream, `host-call` entries visible to this
+ * formatter are legacy pre-flip entries on the HMAC chain. Keep the
+ * branch so `verify()`-style tooling doesn't choke.
  */
 function formatAuditEntry(entry: AuditEntry): string {
   const id = entry.moduleId || '(host)';
@@ -269,16 +313,4 @@ function formatAuditEntry(entry: AuditEntry): string {
     case 'panel-bridge':
       return `${tag} ${entry.action} ${id}:${entry.panelId} ${entry.outcome}`;
   }
-}
-
-/**
- * Map the Phase 4 host-call audit outcomes (unavailable | denied |
- * method-not-found | ok | error) onto the AuditLog's 3-value `AuditOutcome`.
- */
-function mapHostCallOutcome(
-  outcome: 'ok' | 'unavailable' | 'denied' | 'method-not-found' | 'error',
-): 'ok' | 'error' | 'denied' {
-  if (outcome === 'ok') return 'ok';
-  if (outcome === 'denied') return 'denied';
-  return 'error';
 }

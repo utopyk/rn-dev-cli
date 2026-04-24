@@ -185,55 +185,27 @@ export function registerModulesPanelsIpc(
       // Phase 5b hardening — bind event.sender to the moduleId the panel
       // was spawned against. A panel that tries to invoke host-call with a
       // different moduleId gets the same `MODULE_UNAVAILABLE` that an
-      // unknown moduleId would return (no "can't probe" signal).
+      // unknown moduleId would return (no "can't probe" signal). The
+      // daemon's `hostCall` dispatcher emits the audit entry for the
+      // permitted path; for the sender-mismatch rejection we don't write
+      // to the audit log here — the daemon never sees the call, so the
+      // Electron-side event is lost. Phase 13.5 threat-model work adds
+      // a daemon-side sender-binding check that closes this gap (Sec
+      // P1-4 on PR #20).
       const senderReg = getSenderRegistry?.();
       if (senderReg && !senderReg.canRead(event.sender, payload.moduleId)) {
-        if (deps.auditHostCall) {
-          deps.auditHostCall({
-            moduleId: payload.moduleId,
-            capabilityId: payload.capabilityId,
-            method: payload.method,
-            outcome: "denied",
-            timestamp: Date.now(),
-          });
-        }
         return {
           kind: "error" as const,
           code: "MODULE_UNAVAILABLE" as const,
           message: "modules:host-call rejected: sender is not bound to the requested module",
         };
       }
-      const result = await deps.modulesClient.hostCall({
+      return deps.modulesClient.hostCall({
         moduleId: payload.moduleId,
         capabilityId: payload.capabilityId,
         method: payload.method,
         args: payload.args,
       });
-      // Surface the outcome through the Electron-side audit sink so the
-      // renderer's service:log pane still sees every host-call result.
-      // The daemon also writes to `~/.rn-dev/audit.log` for the HMAC-
-      // chained audit trail — these two are deliberately redundant:
-      // the renderer log is ephemeral UX; the audit.log is durable.
-      if (deps.auditHostCall) {
-        const outcome =
-          result.kind === "ok"
-            ? "ok"
-            : result.code === "MODULE_UNAVAILABLE"
-              ? "unavailable"
-              : result.code === "HOST_CAPABILITY_NOT_FOUND_OR_DENIED"
-                ? "denied"
-                : result.code === "HOST_METHOD_NOT_FOUND"
-                  ? "method-not-found"
-                  : "error";
-        deps.auditHostCall({
-          moduleId: payload.moduleId,
-          capabilityId: payload.capabilityId,
-          method: payload.method,
-          outcome,
-          timestamp: Date.now(),
-        });
-      }
-      return result;
     },
   );
 

@@ -132,12 +132,11 @@ async function settlePackageManager(
  * lane as the package-manager conflict.
  */
 async function settleCodeSigning(
-  profile: Profile,
   instance: InstanceState,
   projectRoot: string,
 ): Promise<void> {
   if (instance.mode === 'quick') return;
-  if (profile.platform !== 'ios' && profile.platform !== 'both') return;
+  if (instance.platform !== 'ios' && instance.platform !== 'both') return;
 
   const effectiveRoot = instance.worktree ?? projectRoot;
   const iosDir = join(effectiveRoot, 'ios');
@@ -196,7 +195,6 @@ async function settleCodeSigning(
     }
     break;
   }
-  void profile; // kept in signature for future prompts (eg team id)
 }
 
 /**
@@ -305,7 +303,7 @@ export async function startRealServices(
   // the profile on disk, and the daemon reads the current profile
   // when it boots its session services.
   await settlePackageManager(defaultProfile, profileStore, instance, targetProjectRoot);
-  await settleCodeSigning(defaultProfile, instance, targetProjectRoot);
+  await settleCodeSigning(instance, targetProjectRoot);
 
   // Daemon connect — this spawns (or reuses) the per-worktree daemon,
   // starts its session, and publishes every adapter on the serviceBus.

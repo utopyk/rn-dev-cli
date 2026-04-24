@@ -66,6 +66,24 @@ interface FakeModuleHostSurface {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   off(event: string, listener: (...args: unknown[]) => void): unknown;
   emit(event: string, ...args: unknown[]): unknown;
+  // Methods the modules-ipc dispatcher calls at request time. Stubs
+  // raise early rather than land as silent no-ops so a test that
+  // exercises a path beyond the current wire-contract coverage gets a
+  // readable failure. Kieran P1-3 on PR #20 — the previous cast chain
+  // silently typed a 3-method fake as a 15-method manager, so the
+  // first acquire/inspect/shutdown call would crash at runtime with
+  // "is not a function".
+  readonly capabilities: CapabilityRegistry;
+  inspect(moduleId: string, scopeUnit: string): null;
+  acquire(): Promise<never>;
+  release(): Promise<void>;
+  shutdown(moduleId: string, scopeUnit: string): Promise<void>;
+  shutdownAll(): Promise<void>;
+  notifyConfigChanged(
+    moduleId: string,
+    scopeUnit: string,
+    config: Record<string, unknown>,
+  ): void;
 }
 
 export async function fakeBootSessionServices(
@@ -75,9 +93,9 @@ export async function fakeBootSessionServices(
   const metro = makeFakeMetro(worktreeKey);
   const devtools = makeFakeDevtools();
   const builder = makeFakeBuilder();
-  const moduleHost = makeFakeModuleHost();
-  const metroLogsStore = new MetroLogsStore();
   const capabilities = new CapabilityRegistry();
+  const moduleHost = makeFakeModuleHost(capabilities);
+  const metroLogsStore = new MetroLogsStore();
   const moduleRegistry = opts.moduleRegistry;
 
   // Phase 13.4.1 — register the modules IPC dispatcher on the daemon's
@@ -201,6 +219,33 @@ function makeFakeBuilder(): EventEmitter & FakeBuilderSurface {
   return emitter;
 }
 
-function makeFakeModuleHost(): EventEmitter & FakeModuleHostSurface {
-  return new EventEmitter() as EventEmitter & FakeModuleHostSurface;
+function makeFakeModuleHost(
+  capabilities: CapabilityRegistry,
+): EventEmitter & FakeModuleHostSurface {
+  const emitter = new EventEmitter() as EventEmitter & FakeModuleHostSurface;
+  Object.defineProperty(emitter, "capabilities", {
+    value: capabilities,
+    writable: false,
+    enumerable: true,
+  });
+  emitter.inspect = (): null => null;
+  emitter.acquire = async (): Promise<never> => {
+    throw new Error(
+      "[fake] modules/call not supported under RN_DEV_DAEMON_BOOT_MODE=fake — acquire() unimplemented",
+    );
+  };
+  emitter.release = async (): Promise<void> => {
+    /* no-op in fake */
+  };
+  emitter.shutdown = async (): Promise<void> => {
+    /* no-op in fake */
+  };
+  emitter.shutdownAll = async (): Promise<void> => {
+    /* no-op in fake */
+  };
+  emitter.notifyConfigChanged = (): void => {
+    /* no-op in fake — real manager pushes a config/changed RPC to the live
+       subprocess; there is none here */
+  };
+  return emitter;
 }

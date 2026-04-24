@@ -131,10 +131,12 @@ async function createWindow() {
 
 function wireDaemonDisconnectListener(session: DaemonSession): void {
   // When the daemon drops unexpectedly, surface it in the service
-  // log exactly once. Every adapter fires its own `disconnected`
-  // event independently; we attach to all five so any listener can
-  // see which surface drifted first in future diagnostics, but a
-  // single-flight guard keeps the log noise bounded. Kieran P0 on PR #18.
+  // log exactly once AND invalidate every handler's cached adapter
+  // ref so a subsequent reconnect can re-populate deps. Every adapter
+  // fires its own `disconnected` event independently; we attach to
+  // all five so any listener can see which surface drifted first in
+  // future diagnostics, but a single-flight guard keeps the log noise
+  // bounded. Kieran P0 on PR #18 + Arch P0 on PR #20.
   let disconnectLogged = false;
   const surfaceDisconnect = (surface: string, err?: Error): void => {
     if (electronQuitting) return;
@@ -147,6 +149,11 @@ function wireDaemonDisconnectListener(session: DaemonSession): void {
         `⚠ Daemon disconnected (${surface}): ${message}`,
       );
     }
+    // Invalidate serviceBus-cached handler deps so the next session's
+    // `setModulesClient(newClient)` fires registrars again.
+    void import('../src/app/service-bus.js').then(({ serviceBus }) => {
+      serviceBus.clearModulesClient();
+    });
   };
   session.metro.on('disconnected', (err) => surfaceDisconnect('metro', err));
   session.devtools.on('disconnected', (err) => surfaceDisconnect('devtools', err));

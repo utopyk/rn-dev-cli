@@ -109,46 +109,38 @@ export function registerInstanceHandlers() {
 
     // Phase 13.4.1: no in-process startInstanceServices — services live
     // in the daemon and only the first `startRealServices` call on boot
-    // opens a session for the default profile. Alert the renderer so the
-    // user knows the created instance is metadata-only until restart.
+    // opens a session for the default profile. Return `ok: false` so
+    // the wizard treats this as a failure the user has to resolve (app
+    // restart) — returning `ok: true` would silently pretend services
+    // attached. Arch P1 on PR #20.
     appendLog(instance, 'service', MULTI_INSTANCE_NOT_SUPPORTED_MSG);
     send('instance:log', {
       instanceId: id,
       text: MULTI_INSTANCE_NOT_SUPPORTED_MSG,
     });
 
-    return { ok: true, instance: toSummary(instance) };
+    return {
+      ok: false,
+      code: 'MULTI_INSTANCE_NOT_SUPPORTED' as const,
+      error: MULTI_INSTANCE_NOT_SUPPORTED_MSG,
+      instance: toSummary(instance),
+    };
   });
 
   ipcMain.handle('instances:remove', async (_, instanceId: string) => {
     const instance = instances.get(instanceId);
     if (!instance) return { ok: false, error: 'Instance not found' };
 
-    // Tear down DevTools (releases proxy port + Metro listener) before Metro,
-    // since DevToolsManager subscribes to Metro's status events.
-    if (instance.devtools) {
-      try {
-        await instance.devtools.dispose();
-      } catch {
-        // Best effort
-      }
-      instance.devtools = null;
-      instance.devtoolsStarted = false;
-    }
-
-    // Stop Metro
-    if (instance.metro) {
-      try {
-        const worktreeKey = state.artifactStore?.worktreeHash(instance.worktree) ?? instanceId;
-        instance.metro.stop(worktreeKey);
-      } catch {
-        // Best effort
-      }
-    }
-
+    // Phase 13.4.1 — `instance.metro` / `.devtools` / `.builder` are
+    // always null (no in-process services are ever attached); the
+    // daemon owns every runtime service. The pre-flip teardown branches
+    // that called `.dispose()` / `.stop()` here were dead code. If the
+    // instance being removed was the active one that `startRealServices`
+    // opened a daemon session for, the session stays alive — teardown
+    // is the user's choice via app quit (Phase 13.5 grows ref-counted
+    // `DaemonSession.release()` for the multi-instance story).
     instances.delete(instanceId);
 
-    // Switch active to another instance if needed
     if (state.activeInstanceId === instanceId) {
       const remaining = Array.from(instances.keys());
       state.activeInstanceId = remaining.length > 0 ? remaining[0] : null;

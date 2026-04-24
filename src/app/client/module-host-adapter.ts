@@ -79,11 +79,64 @@ export class ModuleHostClient
   extends EventEmitter
   implements AdapterSink<ModuleHostEventKind>
 {
+  private eventSub: { close: () => void } | null = null;
+
   constructor(
     private client: IpcClient,
     private nextId: () => string,
   ) {
     super();
+  }
+
+  /**
+   * Open a `modules/subscribe` stream against the daemon so this adapter
+   * re-emits the full breadth of module-lifecycle events on the local
+   * `modules-event` topic. Phase 13.4.1 — `dispatch()` only covers the
+   * three supervisor-level events (`state-changed` / `crashed` /
+   * `failed`) that ride the session-level `events/subscribe` stream.
+   * `install` / `uninstall` / `enabled` / `disabled` / `restarted` /
+   * `config-changed` live on a separate daemon-local bus consumed only
+   * by `modules/subscribe` clients — without this method, Electron's
+   * Marketplace + Settings panels never see those events post-flip.
+   *
+   * Idempotent: returns the existing subscription if already open.
+   * Callers (Electron's handler wiring) invoke it once when the
+   * daemon-client adapter is published on the serviceBus; the
+   * subscription tears down with the underlying socket when the
+   * daemon disconnects.
+   */
+  async subscribeToEvents(): Promise<{ close: () => void }> {
+    if (this.eventSub) return this.eventSub;
+    const sub = await this.client.subscribe(
+      {
+        type: "command",
+        action: "modules/subscribe",
+        id: this.nextId(),
+      },
+      {
+        onEvent: (msg) => {
+          // Wire format: { type: "event", action: "modules/event",
+          //               payload: ModulesEvent, id: ... }
+          const payload = msg.payload;
+          if (!payload || typeof payload !== "object") return;
+          const evt = payload as Record<string, unknown>;
+          if (typeof evt.kind !== "string" || typeof evt.moduleId !== "string") {
+            return;
+          }
+          this.emit("modules-event", payload);
+        },
+        onError: () => {
+          // Socket-level errors fan out through `notifyDisconnected`
+          // instead; `onError` from `events/subscribe`-style streams is
+          // the same hazard the session orchestrator already handles.
+        },
+        onClose: () => {
+          this.eventSub = null;
+        },
+      },
+    );
+    this.eventSub = sub;
+    return sub;
   }
 
   // ---------------------------------------------------------------------------
@@ -124,7 +177,13 @@ export class ModuleHostClient
       id: this.nextId(),
       payload: { moduleId, panelId },
     });
-    return resp.payload as ResolvePanelReply | ResolvePanelError;
+    // Runtime narrowing — `resolvePanel` consumers feed the returned
+    // `moduleRoot` into the Electron panel-bridge, which uses it to
+    // resolve `webviewEntry` paths for WebContentsView construction.
+    // A malformed daemon reply would land as an undefined moduleRoot
+    // the bridge can't validate against its "path inside module root"
+    // check, so narrow before returning. Kieran P1-4 on PR #20.
+    return readResolvePanelReply(resp.payload);
   }
 
   async call(
@@ -146,7 +205,12 @@ export class ModuleHostClient
       id: this.nextId(),
       payload,
     });
-    return resp.payload as HostCallReply;
+    // Runtime narrowing — host-call's reply drives audit outcomes + the
+    // consumer panel's error path. Drop malformed payloads into a
+    // synthetic HOST_CALL_FAILED rather than propagating `undefined`
+    // into a downstream `.kind` discriminator that'll crash the
+    // renderer. Kieran P1-4 on PR #20.
+    return readHostCallReply(resp.payload);
   }
 
   async configGet(
@@ -311,5 +375,88 @@ function readReasonPayload(data: unknown): ReasonPayload | null {
     moduleId: d.moduleId,
     scopeUnit: d.scopeUnit,
     reason: d.reason,
+  };
+}
+
+// Runtime narrowing for the two genuinely-new RPC replies Phase 13.4.1
+// introduces. The other 9 RPC methods on ModuleHostClient inherit their
+// shape from dispatcher types that exist pre-flip — their replies pass
+// through to existing consumers (CLI, TUI) that already handle the
+// legacy error shapes, so a schema drift there surfaces in their
+// existing code paths. For the new RPCs (host-call, resolve-panel)
+// there is no legacy consumer, so this adapter is the last line of
+// defense. Kieran P1-4 on PR #20.
+
+function readHostCallReply(data: unknown): HostCallReply {
+  if (!data || typeof data !== "object") {
+    return {
+      kind: "error",
+      code: "HOST_CALL_FAILED",
+      message: "modules/host-call reply was not an object",
+    };
+  }
+  const d = data as Record<string, unknown>;
+  if (d.kind === "ok") {
+    return { kind: "ok", result: d.result };
+  }
+  if (d.kind === "error") {
+    const code = d.code;
+    const validCodes = new Set<unknown>([
+      "MODULE_UNAVAILABLE",
+      "HOST_CAPABILITY_NOT_FOUND_OR_DENIED",
+      "HOST_METHOD_NOT_FOUND",
+      "HOST_CALL_FAILED",
+    ]);
+    return {
+      kind: "error",
+      code: validCodes.has(code)
+        ? (code as HostCallReply extends { kind: "error"; code: infer C } ? C : never)
+        : "HOST_CALL_FAILED",
+      message:
+        typeof d.message === "string" ? d.message : "modules/host-call: unknown error",
+    };
+  }
+  return {
+    kind: "error",
+    code: "HOST_CALL_FAILED",
+    message: `modules/host-call: unknown reply shape (kind=${JSON.stringify(d.kind)})`,
+  };
+}
+
+function readResolvePanelReply(
+  data: unknown,
+): ResolvePanelReply | ResolvePanelError {
+  if (!data || typeof data !== "object") {
+    return {
+      kind: "error",
+      code: "E_PANEL_BAD_REQUEST",
+      message: "modules/resolve-panel reply was not an object",
+    };
+  }
+  const d = data as Record<string, unknown>;
+  if (d.kind === "error") {
+    const code = d.code === "E_PANEL_NOT_FOUND" ? "E_PANEL_NOT_FOUND" : "E_PANEL_BAD_REQUEST";
+    return {
+      kind: "error",
+      code,
+      message:
+        typeof d.message === "string"
+          ? d.message
+          : "modules/resolve-panel: unknown error",
+    };
+  }
+  if (
+    d.kind === "ok" &&
+    typeof d.moduleId === "string" &&
+    typeof d.moduleRoot === "string" &&
+    d.contribution &&
+    typeof d.contribution === "object"
+  ) {
+    return d as unknown as ResolvePanelReply;
+  }
+  return {
+    kind: "error",
+    code: "E_PANEL_BAD_REQUEST",
+    message: "modules/resolve-panel: reply missing required fields",
   };
 }

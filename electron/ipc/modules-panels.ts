@@ -17,6 +17,7 @@
 // panel contribution (already fetched via `modules/resolve-panel`) and
 // hands it to the panel-bridge — no manifest lookup required locally.
 
+import type { ElectronPanelContribution } from "@rn-dev/module-sdk";
 import type { ModuleHostClient } from "../../src/app/client/module-host-adapter.js";
 import type { PanelBridge, PanelBounds } from "../panel-bridge.js";
 import type {
@@ -81,20 +82,6 @@ export interface CallToolPayload {
 export type CallToolReply = ModuleCallSuccess | ModuleCallError;
 
 // ---------------------------------------------------------------------------
-// Host-call audit — surfaced from the Electron registrar so the
-// renderer's service:log pane echoes every outcome. The daemon writes
-// the durable HMAC-chained entry to `~/.rn-dev/audit.log` in parallel.
-// ---------------------------------------------------------------------------
-
-export interface HostCallAuditEvent {
-  moduleId: string;
-  capabilityId: string;
-  method: string;
-  outcome: "ok" | "unavailable" | "denied" | "method-not-found" | "error";
-  timestamp: number;
-}
-
-// ---------------------------------------------------------------------------
 // Panel-activation logic — pure, exported for unit tests
 // ---------------------------------------------------------------------------
 
@@ -114,17 +101,13 @@ export function createBoundsCache(): PanelBoundsCache {
 
 /**
  * Resolved panel contribution fields the bridge needs to build a
- * WebContentsView. Shape mirrors ElectronPanelContribution from the
- * module-sdk, but kept local here so modules-panels.ts doesn't depend
- * on the SDK's runtime entry point.
+ * WebContentsView. Aliases the SDK type so the Electron handler layer
+ * and the panel-bridge (`electron/panel-bridge.ts:20`) agree on a
+ * single wire shape. Simplicity P1 on PR #20 — the previous local
+ * duplicate drifted from the SDK definition's `readonly`/`optional`
+ * semantics.
  */
-export interface ResolvedPanelContribution {
-  id: string;
-  title: string;
-  icon?: string;
-  webviewEntry: string;
-  hostApi: string[];
-}
+export type ResolvedPanelContribution = ElectronPanelContribution;
 
 export interface ActivatePanelDeps {
   bridge: PanelBridge;
@@ -185,12 +168,6 @@ export interface ModulesPanelsIpcDeps {
    * from this map.
    */
   moduleRoots: Map<string, string>;
-  /**
-   * Optional sink for host-call audit events. Every `modules:host-call`
-   * — ok, denied, method-not-found, or error — fires exactly once. Used
-   * by the Electron wiring to forward to the service-log channel.
-   */
-  auditHostCall?: (event: HostCallAuditEvent) => void;
 }
 
 export interface ModulesPanelsIpcHandle {
