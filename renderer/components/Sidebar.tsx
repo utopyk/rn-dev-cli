@@ -46,6 +46,8 @@ interface SidebarProps {
   onShortcut: (command: string) => void;
   onOpenWizard?: () => void;
   modulePanels?: SidebarModulePanel[];
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }
 
 export function Sidebar({
@@ -54,13 +56,22 @@ export function Sidebar({
   onShortcut,
   onOpenWizard,
   modulePanels = [],
+  collapsed,
+  onToggleCollapse,
 }: SidebarProps) {
   return (
-    <div className="sidebar">
+    <div className={`sidebar${collapsed ? ' collapsed' : ''}`}>
       <div className="sidebar-brand">
         <h1 className="sidebar-brand-name">RN Dev</h1>
         <span className="sidebar-brand-sub">Developer Suite</span>
       </div>
+      <button
+        className="sidebar-collapse-toggle"
+        onClick={onToggleCollapse}
+        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        <ModuleIcon hint={collapsed ? 'chevronRight' : 'chevronLeft'} size={14} />
+      </button>
 
       {/* Modules */}
       <div className="sidebar-section">

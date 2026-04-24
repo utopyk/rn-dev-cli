@@ -112,3 +112,28 @@
   color: var(--ink);
   box-shadow: var(--glow-medium);
 }
+
+.sidebar-collapse-toggle {
+  position: absolute;
+  top: 32px; right: -14px;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--surface-hi);
+  border: 1px solid var(--accent-border);
+  color: var(--muted);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--neu-raised-xs);
+  z-index: 1;
+}
+.sidebar-collapse-toggle:hover { color: var(--ink); box-shadow: var(--neu-raised-xs), var(--glow-medium); }
+
+.sidebar.collapsed { padding: 28px 10px; }
+.sidebar.collapsed .sidebar-brand,
+.sidebar.collapsed .sidebar-section-title,
+.sidebar.collapsed .sidebar-item-label,
+.sidebar.collapsed .shortcut-label,
+.sidebar.collapsed .sidebar-new-worktree,
+.sidebar.collapsed .sidebar-footer { display: none; }
+.sidebar.collapsed .sidebar-item { justify-content: center; padding: 12px 0; }
+.sidebar.collapsed .sidebar-shortcut { justify-content: center; padding: 6px 0; }

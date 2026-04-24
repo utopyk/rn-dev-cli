@@ -16,6 +16,7 @@ import { Wizard } from './views/Wizard';
 import { NewInstanceDialog } from './views/NewInstanceDialog';
 import { useIpcOn, useIpcInvoke } from './hooks/useIpc';
 import { useSimulatedLogs } from './hooks/useSimulatedLogs';
+import { useSidebarCollapsed } from './hooks/useSidebarCollapsed.js';
 import type { SimulatedSectionEvent } from './hooks/useSimulatedLogs';
 import './App.css';
 
@@ -36,8 +37,7 @@ export function App() {
   const [profileVisible, setProfileVisible] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
   const [showNewInstanceDialog, setShowNewInstanceDialog] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const { collapsed: sidebarCollapsed, toggle: toggleSidebar } = useSidebarCollapsed();
   const [promptModal, setPromptModal] = useState<{
     promptId: string;
     title: string;
@@ -500,7 +500,7 @@ export function App() {
   if (showNewInstanceDialog) {
     return (
       <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}`}>
-        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} />
+        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
         <div className="app-main">
           {instances.length > 0 && (
             <InstanceTabs
@@ -526,7 +526,7 @@ export function App() {
   if (showWizard) {
     return (
       <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}`}>
-        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} />
+        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
         <div className="app-main">
           {instances.length > 0 && (
             <InstanceTabs
@@ -555,7 +555,7 @@ export function App() {
 
   return (
     <div className={`app-root${sidebarCollapsed ? ' collapsed' : ''}`}>
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} />
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onShortcut={handleShortcut} onOpenWizard={() => setShowWizard(true)} modulePanels={sidebarPanels} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
       <div className="app-main">
         <InstanceTabs
           instances={instances}
