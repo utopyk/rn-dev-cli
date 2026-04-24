@@ -56,11 +56,9 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <div className="sidebar">
-      {/* Logo */}
-      <div className="sidebar-logo">
-        <div className="logo-l1">╦═╗╔╗╗  ╦═╗╔═╗╦  ╦</div>
-        <div className="logo-l2">╠╦╝║║║  ║ ║╠═  ║║</div>
-        <div className="logo-l3">╩╚═╝╚╝  ╩═╝╚═╝ ╚╝</div>
+      <div className="sidebar-brand">
+        <h1 className="sidebar-brand-name">RN Dev</h1>
+        <span className="sidebar-brand-sub">Developer Suite</span>
       </div>
 
       {/* Modules */}
