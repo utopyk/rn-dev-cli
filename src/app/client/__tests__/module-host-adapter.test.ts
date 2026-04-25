@@ -428,4 +428,38 @@ describe("ModuleHostClient — RPC methods", () => {
     });
     expect((result as { kind: string }).kind).toBe("ok");
   });
+
+  // Phase 13.6 PR-C P0-2: bindSender issues modules/bind-sender over the
+  // shared subscribe socket so host-call can share the same connectionId.
+  it("bindSender(moduleId): action=modules/bind-sender with { moduleId }, resolves on ok", async () => {
+    const { client, send } = makeStubClient();
+    send.mockResolvedValueOnce({
+      type: "response",
+      action: "modules/bind-sender",
+      id: "id-12",
+      payload: { kind: "ok" },
+    });
+    const host = new ModuleHostClient(client, client, () => "id-12");
+    await expect(host.bindSender("my-module")).resolves.toBeUndefined();
+    expect(send).toHaveBeenCalledWith({
+      type: "command",
+      action: "modules/bind-sender",
+      id: "id-12",
+      payload: { moduleId: "my-module" },
+    });
+  });
+
+  it("bindSender(moduleId): rejects with error message when daemon returns error kind", async () => {
+    const { client, send } = makeStubClient();
+    send.mockResolvedValueOnce({
+      type: "response",
+      action: "modules/bind-sender",
+      id: "id-13",
+      payload: { kind: "error", code: "BIND_INVALID_PAYLOAD", message: "bad payload" },
+    });
+    const host = new ModuleHostClient(client, client, () => "id-13");
+    await expect(host.bindSender("bad-module")).rejects.toThrow(
+      "bindSender(bad-module): BIND_INVALID_PAYLOAD — bad payload",
+    );
+  });
 });

@@ -30,6 +30,7 @@ import type { IpcClient } from "../../core/ipc.js";
 import type { AdapterSink, ModuleHostEventKind } from "./adapter-sink.js";
 import type { IpcSender } from "./session.js";
 import type {
+  BindSenderReply,
   HostCallReply,
   HostCallRequest,
   ListPanelsReply,
@@ -225,6 +226,34 @@ export class ModuleHostClient
     // into a downstream `.kind` discriminator that'll crash the
     // renderer. Kieran P1-4 on PR #20.
     return readHostCallReply(resp.payload);
+  }
+
+  /**
+   * Phase 13.6 PR-C — issue `modules/bind-sender` over the multiplexed
+   * subscribe socket so subsequent `modules/host-call` calls from this
+   * client share the same `connectionId` as the bind. Resolves on
+   * `{ kind: "ok" }`; rejects on `MODULE_NOT_REGISTERED` or
+   * `BIND_INVALID_PAYLOAD` so callers can surface a meaningful error
+   * rather than silently receiving MODULE_UNAVAILABLE on the follow-on
+   * host-call.
+   *
+   * Idempotent on the server side — calling twice for the same moduleId
+   * on the same connection is a no-op.
+   */
+  async bindSender(moduleId: string): Promise<void> {
+    const resp = await this.client.send({
+      type: "command",
+      action: "modules/bind-sender",
+      id: this.nextId(),
+      payload: { moduleId },
+    });
+    const p = resp.payload as BindSenderReply | null | undefined;
+    if (!p || p.kind !== "ok") {
+      const err = p as { kind: "error"; code: string; message: string } | null | undefined;
+      const code = err?.code ?? "BIND_FAILED";
+      const message = err?.message ?? "modules/bind-sender failed";
+      throw new Error(`bindSender(${moduleId}): ${code} — ${message}`);
+    }
   }
 
   async configGet(
