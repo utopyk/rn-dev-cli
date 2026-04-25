@@ -287,17 +287,51 @@ export class IpcClient {
       onError?: (err: Error) => void;
       onClose?: () => void;
     },
-  ): Promise<{ initial: IpcMessage; close: () => void }> {
+  ): Promise<{
+    initial: IpcMessage;
+    send: (msg: IpcMessage) => Promise<IpcMessage>;
+    close: () => void;
+  }> {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(this.socketPath);
       let buffer = "";
       let confirmed = false;
       let closed = false;
 
+      const inflight = new Map<
+        string,
+        {
+          resolve: (msg: IpcMessage) => void;
+          reject: (err: Error) => void;
+          timer: ReturnType<typeof setTimeout>;
+        }
+      >();
+
       const close = (): void => {
         if (closed) return;
         closed = true;
+        // Reject any pending RPC over the multiplexed socket.
+        for (const [, entry] of inflight) {
+          clearTimeout(entry.timer);
+          entry.reject(new Error("subscribe: connection closed before response"));
+        }
+        inflight.clear();
         socket.destroy();
+      };
+
+      const send = (msg: IpcMessage): Promise<IpcMessage> => {
+        return new Promise((res, rej) => {
+          if (closed || socket.destroyed) {
+            rej(new Error("subscribe.send: connection already closed"));
+            return;
+          }
+          const timer = setTimeout(() => {
+            inflight.delete(msg.id);
+            rej(new Error(`subscribe.send: timeout after ${CLIENT_TIMEOUT_MS}ms`));
+          }, CLIENT_TIMEOUT_MS);
+          inflight.set(msg.id, { resolve: res, reject: rej, timer });
+          socket.write(JSON.stringify(msg) + "\n");
+        });
       };
 
       socket.setEncoding("utf8");
@@ -322,23 +356,32 @@ export class IpcClient {
             continue;
           }
 
-          // Only the `response` matching the subscribe id confirms the
-          // subscription. The daemon may push `event`-typed messages
-          // sharing the same id (events/subscribe used the request id
-          // as the subscription id) BEFORE the response if the
-          // handler registers its event listener early — Phase 13.5
-          // tightens this to avoid a race where the first event was
-          // mistaken for the confirmation.
-          if (
-            !confirmed &&
-            parsed.id === message.id &&
-            parsed.type === "response"
-          ) {
-            confirmed = true;
-            resolve({ initial: parsed, close });
+          if (parsed.type === "response") {
+            // Only the `response` matching the subscribe id confirms the
+            // subscription. The daemon may push `event`-typed messages
+            // sharing the same id (events/subscribe used the request id
+            // as the subscription id) BEFORE the response if the
+            // handler registers its event listener early — Phase 13.5
+            // tightens this to avoid a race where the first event was
+            // mistaken for the confirmation.
+            if (!confirmed && parsed.id === message.id) {
+              confirmed = true;
+              resolve({ initial: parsed, send, close });
+              continue;
+            }
+            // Multiplexed RPC response.
+            const entry = inflight.get(parsed.id);
+            if (entry) {
+              clearTimeout(entry.timer);
+              inflight.delete(parsed.id);
+              entry.resolve(parsed);
+              continue;
+            }
+            // Orphan response — drop silently.
             continue;
           }
 
+          // type === "event" or other → onEvent.
           try {
             options.onEvent(parsed);
           } catch (err) {
@@ -354,6 +397,12 @@ export class IpcClient {
           reject(err);
           return;
         }
+        // Reject any pending RPC.
+        for (const [, entry] of inflight) {
+          clearTimeout(entry.timer);
+          entry.reject(err);
+        }
+        inflight.clear();
         options.onError?.(err);
       });
 
@@ -362,9 +411,13 @@ export class IpcClient {
           reject(new Error("IPC subscribe: connection closed before confirmation"));
           return;
         }
-        if (!closed) {
-          closed = true;
+        // Reject any pending RPC.
+        for (const [, entry] of inflight) {
+          clearTimeout(entry.timer);
+          entry.reject(new Error("subscribe: connection closed before response"));
         }
+        inflight.clear();
+        if (!closed) closed = true;
         options.onClose?.();
       });
     });
