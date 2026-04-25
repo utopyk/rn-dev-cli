@@ -162,8 +162,8 @@ export async function runDaemon(opts: RunDaemonOptions): Promise<void> {
     process.env.RN_DEV_DAEMON_BOOT_MODE === "fake"
       ? fakeBootSessionServices
       : bootSessionServices;
-  const supervisor = new DaemonSupervisor({ worktree, ipc: server, bootFn });
   const subscribeRegistry = new SubscribeRegistry();
+  const supervisor = new DaemonSupervisor({ worktree, ipc: server, bootFn, subscribeRegistry });
 
   server.on("message", (event: IpcMessageEvent) =>
     handleMessage(event, supervisor, subscribeRegistry, shutdown),

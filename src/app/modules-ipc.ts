@@ -31,6 +31,7 @@ import type { IpcMessage, IpcServer, IpcMessageEvent } from "../core/ipc.js";
 import type {
   ModuleHostManager,
 } from "../core/module-host/manager.js";
+import type { SubscribeRegistry } from "../daemon/subscribe-registry.js";
 import {
   ModuleRegistry,
   type RegisteredModule,
@@ -107,11 +108,20 @@ export interface ModulesIpcOptions {
    * Phase 13.5 — per-connection sender-binding table. Always present
    * once `registerModulesIpc` runs. Tests that exercise the
    * dispatcher directly omit it; the host-call gate is gated on
-   * `RN_DEV_HOSTCALL_BIND_GATE` env flag (default off until PR-C
-   * lands the long-lived RPC channel that makes bind-sender usable
-   * from production callers).
+   * `RN_DEV_HOSTCALL_BIND_GATE` env flag.
    */
   senderBindings?: SenderBindings;
+  /**
+   * Phase 13.6 PR-C — bidirectional-gate enforcement inside the modules-ipc
+   * listener. When set, the listener applies the same gate check that
+   * `handleMessage` in `src/daemon/index.ts` does: non-bidirectional
+   * subscribe-socket connections are rejected before dispatch so they cannot
+   * reach `modules/host-call` or `modules/bind-sender` even if the daemon's
+   * top-level handleMessage already replied E_RPC_NOT_AUTHORIZED. Without
+   * this check both EventEmitter listeners fire (Node has no stop-propagation)
+   * and the side effects persist despite the rejected first response.
+   */
+  subscribeRegistry?: SubscribeRegistry;
 }
 
 /**
@@ -1040,6 +1050,9 @@ export function registerModulesIpc(
     ...options,
     moduleEvents,
     senderBindings,
+    // subscribeRegistry is threaded through as-is; undefined means
+    // "no subscribe connections tracked" — gate is simply skipped.
+    subscribeRegistry: options.subscribeRegistry,
   };
 
   // Bridge ModuleHostManager lifecycle events → moduleEvents so subscribers
@@ -1099,6 +1112,23 @@ export function registerModulesIpc(
 
     if (event.message.action === "modules/subscribe") {
       handleSubscribe(moduleEvents, event);
+      return;
+    }
+
+    // Phase 13.6 PR-C — P0-1 security gate. Node's EventEmitter has no
+    // stop-propagation: both `handleMessage` (daemon/index.ts) and this
+    // listener fire on every IPC message. For subscribe-socket connections
+    // that are NOT bidirectional, `handleMessage` already replied
+    // E_RPC_NOT_AUTHORIZED and returned — but this listener still fires and
+    // would dispatch the action, persisting bind-sender bindings or executing
+    // host-call capabilities. Guard here so the two halves of the gate agree.
+    // Fresh-socket sends (not in subscribeRegistry) bypass this guard
+    // intentionally — they are the normal RPC path.
+    if (
+      effectiveOptions.subscribeRegistry?.has(event.connectionId) &&
+      !effectiveOptions.subscribeRegistry.isBidirectional(event.connectionId)
+    ) {
+      // handleMessage already sent E_RPC_NOT_AUTHORIZED; do NOT reply again.
       return;
     }
 
