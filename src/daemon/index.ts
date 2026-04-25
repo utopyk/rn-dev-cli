@@ -6,7 +6,11 @@ import {
   type IpcMessageEvent,
 } from "../core/ipc.js";
 import { ModuleLockfile } from "../core/module-host/lockfile.js";
-import { DaemonSupervisor, type SessionBootFn } from "./supervisor.js";
+import {
+  DaemonSupervisor,
+  type SessionBootFn,
+  type AttachSessionResult,
+} from "./supervisor.js";
 import { bootSessionServices } from "../core/session/boot.js";
 import { fakeBootSessionServices } from "./fake-boot.js";
 import { spawnDetachedDaemon } from "./spawn.js";
@@ -238,6 +242,10 @@ function handleMessage(
       void handleSessionStart(event, supervisor);
       return;
 
+    case "session/release":
+      void handleSessionRelease(event, supervisor);
+      return;
+
     case "session/stop":
       void handleSessionStop(event, supervisor);
       return;
@@ -247,7 +255,7 @@ function handleMessage(
       return;
 
     case "events/subscribe":
-      handleEventsSubscribe(event, supervisor);
+      void handleEventsSubscribe(event, supervisor);
       return;
 
     default:
@@ -298,6 +306,15 @@ async function handleSessionStart(
   event: IpcMessageEvent,
   supervisor: DaemonSupervisor,
 ): Promise<void> {
+  // Phase 13.5 — refcount migrated to the long-lived events/subscribe
+  // socket (handleEventsSubscribe is the new attach point). This
+  // handler stays for backwards compatibility with callers that
+  // expect a separate session/start RPC, but it does NOT participate
+  // in the refcount. It's effectively a no-op when a session is
+  // already running with a matching profile, and triggers the boot
+  // when stopped — but without an attacher, the next subscribe close
+  // (if any) would tear it down. Real clients should send `profile`
+  // with `events/subscribe` and skip session/start entirely.
   const payloadCandidate = event.message.payload;
   const profileCandidate =
     payloadCandidate &&
@@ -306,8 +323,6 @@ async function handleSessionStart(
       ? (payloadCandidate as { profile: unknown }).profile
       : undefined;
 
-  // Strict schema validation before anything downstream touches the
-  // payload — see src/daemon/profile-guard.ts for the threat model.
   const validation = validateProfile(profileCandidate);
   if (!validation.ok) {
     event.reply({
@@ -334,6 +349,50 @@ async function handleSessionStart(
     action: "session/start",
     id: event.message.id,
     payload: { status: result.status },
+  });
+}
+
+async function handleSessionRelease(
+  event: IpcMessageEvent,
+  supervisor: DaemonSupervisor,
+): Promise<void> {
+  // Phase 13.5 — explicit ref-counted detach for clients that want
+  // to capture the intent in the audit log without dropping their
+  // events/subscribe socket. The released conn id comes from the
+  // payload because the request itself runs on a short-lived
+  // send-conn whose own connectionId is irrelevant. Idempotent on
+  // unknown ids.
+  const payload = event.message.payload as
+    | { connectionId?: unknown }
+    | null
+    | undefined;
+  const subscribeConnId =
+    payload && typeof payload.connectionId === "string"
+      ? payload.connectionId
+      : null;
+  if (!subscribeConnId) {
+    event.reply({
+      type: "response",
+      action: "session/release",
+      id: event.message.id,
+      payload: {
+        code: "E_RPC_INVALID_PAYLOAD",
+        message:
+          "session/release requires { connectionId } from the events/subscribe response",
+      },
+    });
+    return;
+  }
+  const result = await supervisor.release(subscribeConnId);
+  event.reply({
+    type: "response",
+    action: "session/release",
+    id: event.message.id,
+    payload: {
+      ok: true,
+      attached: result.attached,
+      stoppedSession: result.stoppedSession,
+    },
   });
 }
 
@@ -371,24 +430,52 @@ function handleSessionStatus(
     payload: {
       status: state.status,
       services: state.services ?? {},
+      // Phase 13.5 — joiners use this to backfill `worktreeKey` when
+      // they attach to an already-running session and miss the
+      // session/status edge that would otherwise carry it.
+      worktreeKey: supervisor.getSessionWorktreeKey(),
+      attached: supervisor.getAttachedCount(),
     },
   });
 }
 
-function handleEventsSubscribe(
+async function handleEventsSubscribe(
   event: IpcMessageEvent,
   supervisor: DaemonSupervisor,
-): void {
-  // Confirm the subscription so the client's subscribe() promise resolves.
-  event.reply({
-    type: "response",
-    action: "events/subscribe",
-    id: event.message.id,
-    payload: { subscribed: true },
-  });
+): Promise<void> {
+  // Phase 13.5 — `events/subscribe` carries an optional `profile`:
+  //   - profile present  → "attacher" subscription. Boots the session
+  //                        if stopped, joins if running with matching
+  //                        profile, rejects on profile mismatch. The
+  //                        connection holds a refcount; socket-close
+  //                        decrements via `supervisor.release`.
+  //   - profile absent   → "listener" subscription. Backwards-compat
+  //                        path for tests + tooling that drives the
+  //                        boot via `session/start` separately. No
+  //                        refcount entry; socket-close just detaches
+  //                        the event listener.
+  // Both shapes still receive every session event on the same socket.
+  //
+  // Critical ordering: we register the supervisor.onEvent listener
+  // BEFORE calling supervisor.attach(). If we awaited attach() first
+  // — which awaits start() — the bootAsync continuation can run to
+  // completion (including the "running" emitStateChanged call) on
+  // the same microtask drain, BEFORE this function resumes to attach
+  // its listener. The result was a silent missed-event regression
+  // diagnosed during Phase 13.5: every "running" edge fired into
+  // listeners=0 and the client hung waiting for an edge that had
+  // already passed. The workaround is to subscribe to `event` first;
+  // any "starting" edges that fire before attach validates the
+  // profile are forwarded but harmless (the client filters by kind +
+  // status).
+  const payload = event.message.payload as
+    | { profile?: unknown }
+    | null
+    | undefined;
 
-  // Stream every subsequent session event on the same socket, reusing the
-  // subscription id so the client can route it back to this subscription.
+  // Register the event listener and onClose hook FIRST (see comment
+  // above). detach() is captured here so a subsequent attach error
+  // can tear it down before we return.
   const push = (evt: SessionEvent): void => {
     event.reply({
       type: "event",
@@ -398,8 +485,63 @@ function handleEventsSubscribe(
     });
   };
   const detach = supervisor.onEvent(push);
+  const subscribeConnId = event.connectionId;
+  let isAttacher = false;
   event.onClose(() => {
     detach();
+    if (isAttacher) {
+      // supervisor.release is idempotent on unknown ids so an explicit
+      // `session/release` followed by socket-close is safe.
+      void supervisor.release(subscribeConnId);
+    }
+  });
+
+  let attachResult: AttachSessionResult | null = null;
+  if (payload && payload.profile !== undefined) {
+    const validation = validateProfile(payload.profile);
+    if (!validation.ok) {
+      detach();
+      event.reply({
+        type: "response",
+        action: "events/subscribe",
+        id: event.message.id,
+        payload: { code: validation.code, message: validation.message },
+      });
+      return;
+    }
+    attachResult = await supervisor.attach(event.connectionId, {
+      profile: validation.profile,
+    });
+    if (attachResult.kind === "error") {
+      detach();
+      event.reply({
+        type: "response",
+        action: "events/subscribe",
+        id: event.message.id,
+        payload: { code: attachResult.code, message: attachResult.message },
+      });
+      return;
+    }
+    isAttacher = true;
+  }
+
+  // Confirm the subscription. The response shape stays
+  // backwards-compatible — `subscribed: true` is the only field old
+  // clients read. New fields (`connectionId`, `status`, `started`,
+  // `attached`) populate when this is an attacher subscription so
+  // joiners can detect the running-already case without a separate
+  // status RPC.
+  event.reply({
+    type: "response",
+    action: "events/subscribe",
+    id: event.message.id,
+    payload: {
+      subscribed: true,
+      connectionId: event.connectionId,
+      status: attachResult?.status,
+      started: attachResult?.started,
+      attached: attachResult?.attached,
+    },
   });
 }
 
