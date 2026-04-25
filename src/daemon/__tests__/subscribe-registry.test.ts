@@ -74,4 +74,30 @@ describe("parseKinds", () => {
     expect(parseKinds(["foo/*/bar"]).ok).toBe(false);
     expect(parseKinds(["*"]).ok).toBe(false);
   });
+
+  // P1-4: size + length bounds
+  it("rejects arrays exceeding 256 entries", () => {
+    const oversized = Array.from({ length: 257 }, (_, i) => `metro/log-${i}`);
+    const r = parseKinds(oversized);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("E_SUBSCRIBE_INVALID_KINDS");
+  });
+
+  it("rejects entries longer than 128 chars", () => {
+    const longEntry = "a/".padEnd(130, "b");
+    const r = parseKinds([longEntry]);
+    expect(r.ok).toBe(false);
+  });
+
+  // P1-2: result is a defensive copy — mutating input does not affect kinds
+  it("returns a defensive copy (P1-2: no post-parse mutation poisoning)", () => {
+    const input = ["metro/log", "modules/*"];
+    const r = parseKinds(input);
+    expect(r.ok).toBe(true);
+    if (r.ok && r.kinds) {
+      input.push("injected/evil");
+      // The returned array must be a copy — pushed entry must NOT appear
+      expect(r.kinds).not.toContain("injected/evil");
+    }
+  });
 });

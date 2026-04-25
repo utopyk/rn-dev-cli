@@ -523,13 +523,13 @@ async function handleEventsSubscribe(
     return;
   }
 
-  const payload = event.message.payload as
-    | { profile?: unknown; kinds?: unknown; supportsBidirectionalRpc?: unknown }
-    | null
-    | undefined;
+  // P1-3: runtime parser — replace the raw `as` cast with a typed guard.
+  // Mirrors parseSessionEventEnvelope + parseSubscribeResponse discipline
+  // from Phase 13.5 (Kieran P1-3 on PR #17).
+  const payload = parseSubscribePayload(event.message.payload);
 
   // Parse kinds first — invalid kinds aborts before any side effects.
-  const kindsResult = parseKinds(payload?.kinds);
+  const kindsResult = parseKinds(payload.kinds);
   if (!kindsResult.ok) {
     event.reply({
       type: "response",
@@ -541,7 +541,7 @@ async function handleEventsSubscribe(
   }
   const kindFilter = kindsResult.kinds;
 
-  const bidirectional = payload?.supportsBidirectionalRpc === true;
+  const bidirectional = payload.supportsBidirectionalRpc === true;
 
   const push = (evt: SessionEvent): void => {
     if (!matchesKindFilter(kindFilter, evt.kind)) return;
@@ -572,7 +572,7 @@ async function handleEventsSubscribe(
   // No refcount; the connection just receives the event stream until
   // the socket closes. Phase 13.6 may delete this branch after
   // migrating the last session-boot.test.ts callers.
-  if (!payload || payload.profile === undefined) {
+  if (payload.profile === undefined) {
     event.reply({
       type: "response",
       action: "events/subscribe",
@@ -621,6 +621,33 @@ async function handleEventsSubscribe(
       attached: attachResult.attached,
     },
   });
+}
+
+/**
+ * P1-3 — runtime parser for the events/subscribe wire payload. Mirrors the
+ * `parseSessionEventEnvelope` / `parseSubscribeResponse` discipline established
+ * in Phase 13.5 (Kieran P1-3 on PR #17). Replaces the raw `as { profile?:
+ * unknown; … }` cast in `handleEventsSubscribe` with an explicit narrowing
+ * that drops unrecognised fields instead of forwarding them unchecked.
+ *
+ * Returns a safe default (`{ profile: undefined, kinds: undefined,
+ * supportsBidirectionalRpc: false }`) when the payload is absent or malformed,
+ * so every callsite can assume the return type is always fully initialised.
+ */
+function parseSubscribePayload(raw: unknown): {
+  profile: unknown;
+  kinds: unknown;
+  supportsBidirectionalRpc: boolean;
+} {
+  if (!raw || typeof raw !== "object") {
+    return { profile: undefined, kinds: undefined, supportsBidirectionalRpc: false };
+  }
+  const p = raw as Record<string, unknown>;
+  return {
+    profile: "profile" in p ? p.profile : undefined,
+    kinds: "kinds" in p ? p.kinds : undefined,
+    supportsBidirectionalRpc: p.supportsBidirectionalRpc === true,
+  };
 }
 
 function detachAndExit(worktree: string, daemonEntryOverride?: string): never {

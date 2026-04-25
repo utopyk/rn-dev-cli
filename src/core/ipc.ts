@@ -307,15 +307,22 @@ export class IpcClient {
         }
       >();
 
+      // P1-8: single helper — three callsites (close, error, close-after-confirm)
+      // previously copy-pasted the reject+clear loop. One function with a
+      // descriptive parameter keeps them in sync when the entry shape changes.
+      const rejectAllInflight = (err: Error): void => {
+        for (const entry of inflight.values()) {
+          clearTimeout(entry.timer);
+          entry.reject(err);
+        }
+        inflight.clear();
+      };
+
       const close = (): void => {
         if (closed) return;
         closed = true;
         // Reject any pending RPC over the multiplexed socket.
-        for (const [, entry] of inflight) {
-          clearTimeout(entry.timer);
-          entry.reject(new Error("subscribe: connection closed before response"));
-        }
-        inflight.clear();
+        rejectAllInflight(new Error("subscribe: connection closed before response"));
         socket.destroy();
       };
 
@@ -323,6 +330,14 @@ export class IpcClient {
         return new Promise((res, rej) => {
           if (closed || socket.destroyed) {
             rej(new Error("subscribe.send: connection already closed"));
+            return;
+          }
+          // P1-5: reject duplicate inflight id rather than silently overwriting.
+          // session.ts's idGen generates each id once so this is unreachable in
+          // production, but a collision would cause the earlier caller's promise
+          // to never settle. Fail loudly instead.
+          if (inflight.has(msg.id)) {
+            rej(new Error(`send: id collision in inflight Map (id="${msg.id}")`));
             return;
           }
           const timer = setTimeout(() => {
@@ -357,24 +372,26 @@ export class IpcClient {
           }
 
           if (parsed.type === "response") {
-            // Only the `response` matching the subscribe id confirms the
-            // subscription. The daemon may push `event`-typed messages
-            // sharing the same id (events/subscribe used the request id
-            // as the subscription id) BEFORE the response if the
-            // handler registers its event listener early — Phase 13.5
-            // tightens this to avoid a race where the first event was
-            // mistaken for the confirmation.
-            if (!confirmed && parsed.id === message.id) {
-              confirmed = true;
-              resolve({ initial: parsed, send, close });
-              continue;
-            }
-            // Multiplexed RPC response.
+            // P1-1: inflight-first ordering. Multiplexed RPC responses take
+            // precedence over the subscribe confirmation check. Caller-supplied
+            // ids could in theory collide with the subscribe id; checking
+            // inflight first closes that latent footgun. session.ts's idGen
+            // generates each id once so the collision is unreachable in
+            // production, but the ordering makes the invariant explicit.
             const entry = inflight.get(parsed.id);
             if (entry) {
               clearTimeout(entry.timer);
               inflight.delete(parsed.id);
               entry.resolve(parsed);
+              continue;
+            }
+            // Subscribe confirmation — the response whose id matches the
+            // original subscribe message id. Only checked after inflight so
+            // a multiplexed RPC whose id happens to match the subscribe id
+            // is handled correctly (YAGNI, but the ordering is now safe).
+            if (!confirmed && parsed.id === message.id) {
+              confirmed = true;
+              resolve({ initial: parsed, send, close });
               continue;
             }
             // Orphan response — drop silently.
@@ -397,12 +414,7 @@ export class IpcClient {
           reject(err);
           return;
         }
-        // Reject any pending RPC.
-        for (const [, entry] of inflight) {
-          clearTimeout(entry.timer);
-          entry.reject(err);
-        }
-        inflight.clear();
+        rejectAllInflight(err);
         options.onError?.(err);
       });
 
@@ -411,12 +423,7 @@ export class IpcClient {
           reject(new Error("IPC subscribe: connection closed before confirmation"));
           return;
         }
-        // Reject any pending RPC.
-        for (const [, entry] of inflight) {
-          clearTimeout(entry.timer);
-          entry.reject(new Error("subscribe: connection closed before response"));
-        }
-        inflight.clear();
+        rejectAllInflight(new Error("subscribe: connection closed before response"));
         if (!closed) closed = true;
         options.onClose?.();
       });

@@ -85,12 +85,32 @@ export function parseKinds(raw: unknown): ParseKindsResult {
       message: "kinds must be an array of strings",
     };
   }
+  // P1-4: size bound — reject pathologically large arrays before iterating.
+  if (raw.length > 256) {
+    return {
+      ok: false,
+      code: "E_SUBSCRIBE_INVALID_KINDS",
+      message: "kinds array exceeds the 256-entry limit",
+    };
+  }
+  // P1-2: typed accumulator — defensive copy prevents post-parse mutation
+  // poisoning and avoids the `as string[]` cast that lets a mutable input
+  // array bypass the per-entry validation done below.
+  const kinds: string[] = [];
   for (const entry of raw) {
     if (typeof entry !== "string" || entry.length === 0) {
       return {
         ok: false,
         code: "E_SUBSCRIBE_INVALID_KINDS",
         message: "kinds entries must be non-empty strings",
+      };
+    }
+    // P1-4: entry length bound.
+    if (entry.length > 128) {
+      return {
+        ok: false,
+        code: "E_SUBSCRIBE_INVALID_KINDS",
+        message: `kinds entry exceeds the 128-character limit: "${entry.slice(0, 20)}…"`,
       };
     }
     // Only trailing /* is allowed as a glob; reject any other * placement.
@@ -104,6 +124,7 @@ export function parseKinds(raw: unknown): ParseKindsResult {
         };
       }
     }
+    kinds.push(entry);
   }
-  return { ok: true, kinds: raw as string[] };
+  return { ok: true, kinds };
 }

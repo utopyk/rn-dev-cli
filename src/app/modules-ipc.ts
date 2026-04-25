@@ -860,10 +860,22 @@ export type BindSenderReply =
   | { kind: "ok" }
   | { kind: "error"; code: "BIND_INVALID_PAYLOAD"; message: string };
 
+/**
+ * P1-6 — moduleId length and charset validation. Bounds match npm-style
+ * package-name constraints (lowercase alphanumeric, hyphens, dots, at-scope;
+ * max 128 chars). The regex is deliberately permissive for scoped packages
+ * (`@org/pkg`) and dotted subnames; the pre-install manifest validation
+ * enforces stricter shape constraints. The goal here is to prevent
+ * oversized or control-character-laden strings from reaching the
+ * senderBindings Map and the audit log.
+ */
+const MODULE_ID_RE = /^[@a-z0-9][a-z0-9._\-/@]{0,126}$/;
+
 function parseBindSenderRequest(payload: unknown): { moduleId: string } | null {
   if (!payload || typeof payload !== "object") return null;
   const p = payload as Record<string, unknown>;
   if (typeof p.moduleId !== "string" || p.moduleId.length === 0) return null;
+  if (p.moduleId.length > 128 || !MODULE_ID_RE.test(p.moduleId)) return null;
   return { moduleId: p.moduleId };
 }
 
