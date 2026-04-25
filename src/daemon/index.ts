@@ -51,6 +51,18 @@ import {
 const DAEMON_VERSION = "0.1.0";
 const HOST_RANGE = ">=0.1.0";
 
+// Phase 13.6 PR-C — actions always permitted on a subscribe socket,
+// even without `supportsBidirectionalRpc`. Pre-dispatch check in
+// handleMessage uses this set. Declared at module scope so it is
+// allocated once, not reconstructed on every message.
+const SUBSCRIBE_ALWAYS_ALLOWED = new Set<string>([
+  "events/subscribe", // re-subscribe: rejected separately in Task 1.5,
+  //                     but this gate must skip it so the re-subscribe
+  //                     path runs and replies.
+  "daemon/ping",
+  "daemon/shutdown",
+]);
+
 export interface RunDaemonOptions {
   worktree: string;
   foreground?: boolean;
@@ -244,6 +256,30 @@ function handleMessage(
   shutdown: () => Promise<void>,
 ): void {
   const { message, reply } = event;
+
+  // Phase 13.6 PR-C — bidirectional flag enforcement. A connection
+  // registered as a subscribe socket without supportsBidirectionalRpc
+  // can only call the admin / re-subscribe set. Any other RPC is
+  // rejected pre-dispatch so it never reaches the switch below.
+  // Fresh-socket sends (not in subscribeRegistry) bypass this gate
+  // entirely; so do subscribe sockets with bidirectional=true.
+  if (
+    subscribeRegistry.has(event.connectionId) &&
+    !subscribeRegistry.isBidirectional(event.connectionId) &&
+    !SUBSCRIBE_ALWAYS_ALLOWED.has(message.action)
+  ) {
+    reply({
+      type: "response",
+      action: message.action,
+      id: message.id,
+      payload: {
+        code: "E_RPC_NOT_AUTHORIZED",
+        message: `action "${message.action}" requires supportsBidirectionalRpc on this subscribe socket`,
+      },
+    });
+    return;
+  }
+
   switch (message.action) {
     case "daemon/ping":
       reply({
