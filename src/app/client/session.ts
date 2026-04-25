@@ -75,6 +75,12 @@ export interface DaemonSession {
 export interface ConnectToDaemonSessionOptions extends ConnectToDaemonOptions {
   /** Upper bound for waiting on the session to transition to "running". */
   sessionReadyTimeoutMs?: number;
+  /**
+   * Per-subscriber event-kind filter. Default = all kinds (every
+   * session event delivered). Pass `["modules/*"]` for MCP to skip
+   * the metro/builder/devtools firehose.
+   */
+  kinds?: string[];
 }
 
 export async function connectToDaemonSession(
@@ -174,7 +180,11 @@ export async function connectToDaemonSession(
       type: "command",
       action: "events/subscribe",
       id: idGen(),
-      payload: { profile },
+      payload: {
+        profile,
+        supportsBidirectionalRpc: true,
+        ...(opts.kinds !== undefined ? { kinds: opts.kinds } : {}),
+      },
     },
     {
       onEvent: onIncomingEvent,
