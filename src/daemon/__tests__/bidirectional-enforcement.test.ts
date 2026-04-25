@@ -16,9 +16,7 @@ describe("bidirectional flag enforcement", () => {
     for (const c of cleanups.splice(0)) c();
   });
 
-  it.skip("rejects RPC on a subscribe socket without supportsBidirectionalRpc", async () => {
-    // Wired in Task 2.3 once IpcClient gains the multiplexer's send() method.
-    // Daemon-side check is implemented in this task; client-side is in Phase 2.
+  it("rejects RPC on a subscribe socket without supportsBidirectionalRpc", async () => {
     const { path: worktree, cleanup } = makeTestWorktree();
     cleanups.push(cleanup);
     const daemon = await spawnTestDaemon(worktree, {
@@ -32,14 +30,49 @@ describe("bidirectional flag enforcement", () => {
         type: "command",
         action: "events/subscribe",
         id: "sub-1",
-        payload: {},
+        payload: {},   // no supportsBidirectionalRpc
       },
       { onEvent: () => {} },
     );
-
     try {
-      // Placeholder — real assertion gets wired in Task 2.3.
-      expect(sub).toBeDefined();
+      const r = await sub.send({
+        type: "command",
+        action: "metro/reload",
+        id: "rpc-x",
+      });
+      expect((r.payload as { code: string }).code).toBe("E_RPC_NOT_AUTHORIZED");
+    } finally {
+      sub.close();
+    }
+  });
+
+  it("accepts RPC on a subscribe socket WITH supportsBidirectionalRpc", async () => {
+    const { path: worktree, cleanup } = makeTestWorktree();
+    cleanups.push(cleanup);
+    const daemon = await spawnTestDaemon(worktree, {
+      env: { RN_DEV_DAEMON_BOOT_MODE: "fake" },
+    });
+    liveHandles.push(daemon);
+
+    const client = new IpcClient(path.join(worktree, ".rn-dev", "sock"));
+    const sub = await client.subscribe(
+      {
+        type: "command",
+        action: "events/subscribe",
+        id: "sub-1",
+        payload: { supportsBidirectionalRpc: true },
+      },
+      { onEvent: () => {} },
+    );
+    try {
+      // The daemon will reply with E_SESSION_NOT_RUNNING because no
+      // session/start was issued, but crucially NOT E_RPC_NOT_AUTHORIZED.
+      const r = await sub.send({
+        type: "command",
+        action: "metro/reload",
+        id: "rpc-x",
+      });
+      expect((r.payload as { code: string }).code).not.toBe("E_RPC_NOT_AUTHORIZED");
     } finally {
       sub.close();
     }
