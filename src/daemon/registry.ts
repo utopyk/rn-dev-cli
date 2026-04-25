@@ -36,14 +36,18 @@
 
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 export interface DaemonRegistration {
   /** OS pid of the daemon process. */
@@ -56,14 +60,10 @@ export interface DaemonRegistration {
   hostVersion: string;
 }
 
-/** On-disk registry shape. Versioned for future evolution. */
+/** On-disk registry shape. */
 export interface DaemonRegistry {
   daemons: Record<string, DaemonRegistration>;
 }
-
-const EMPTY_REGISTRY: DaemonRegistry = Object.freeze({
-  daemons: {},
-}) as DaemonRegistry;
 
 /**
  * Default registry path. Tests override via `RN_DEV_REGISTRY_PATH` so the
@@ -102,11 +102,21 @@ export function readRegistry(path: string = defaultRegistryPath()): DaemonRegist
     )) {
       if (!raw || typeof raw !== "object") continue;
       const r = raw as Record<string, unknown>;
+      // Tightened validation (Kieran P1): reject negative/NaN/non-
+      // integer pids, empty strings, and unparseable timestamps. Empty
+      // strings would surface as a row with no actual socket; negative
+      // pids would lie to isAlive(); unparseable timestamps trip
+      // future consumers that Date.parse().
       if (
         typeof r.pid !== "number" ||
+        !Number.isInteger(r.pid) ||
+        r.pid <= 1 ||
         typeof r.sockPath !== "string" ||
+        r.sockPath.length === 0 ||
         typeof r.since !== "string" ||
-        typeof r.hostVersion !== "string"
+        Number.isNaN(Date.parse(r.since)) ||
+        typeof r.hostVersion !== "string" ||
+        r.hostVersion.length === 0
       ) {
         continue;
       }
@@ -128,6 +138,11 @@ export function readRegistry(path: string = defaultRegistryPath()): DaemonRegist
  * write can't leave a half-formed file. Mode 0o600 because the
  * registration includes pid + sockPath which leak local-machine
  * topology to other unprivileged users on the same box.
+ *
+ * The temp filename includes a random suffix in addition to the pid
+ * to defend against same-UID adversaries who could otherwise pre-
+ * symlink `${path}.tmp.${pid}` to a path of their choosing (pid is
+ * trivially knowable via /proc).
  */
 export function writeRegistry(
   registry: DaemonRegistry,
@@ -140,12 +155,91 @@ export function writeRegistry(
   } catch {
     /* best-effort */
   }
-  const tmp = `${path}.tmp.${process.pid}`;
+  const tmp = `${path}.tmp.${process.pid}.${randomBytes(8).toString("hex")}`;
   writeFileSync(tmp, JSON.stringify(registry, null, 2), {
     encoding: "utf-8",
     mode: 0o600,
   });
   renameSync(tmp, path);
+}
+
+/**
+ * Acquire an O_EXCL-based advisory lock around the registry's read-
+ * modify-write transaction. Defends against the cross-daemon race
+ * where two daemons booting simultaneously each read-sweep-write the
+ * file and silently overwrite each other's freshly-added rows
+ * (Kieran P0 on PR-B review).
+ *
+ * Lock file: `<dirname(registryPath)>/registry.lock`. Owner is the
+ * pid that wrote it; stale-pid detection lets a crashed daemon's
+ * abandoned lock get reclaimed.
+ *
+ * The retry loop is short and bounded — a real concurrent boot
+ * resolves in microseconds. Falling through to the unlocked write
+ * after the budget is the safer-than-deadlock choice; the worst case
+ * remains the documented "one entry briefly missing, next boot
+ * sweep heals it" race that we already accepted before the lock.
+ */
+function acquireRegistryLock(registryPath: string): { release: () => void } {
+  const lockPath = `${dirname(registryPath)}/registry.lock`;
+  const deadline = Date.now() + 200;
+  let fd: number | null = null;
+  while (Date.now() < deadline) {
+    try {
+      fd = openSync(lockPath, "wx", 0o600);
+      break;
+    } catch {
+      // Lock held — check for staleness via pid.
+      try {
+        const holderPid = parseInt(readFileSync(lockPath, "utf-8"), 10);
+        if (!Number.isFinite(holderPid) || !isAlive(holderPid)) {
+          // Stale; reclaim.
+          try {
+            unlinkSync(lockPath);
+          } catch {
+            /* race with another reclaimer — let next iteration retry */
+          }
+          continue;
+        }
+      } catch {
+        // Couldn't read holder — try to clear and retry.
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          /* ignore */
+        }
+        continue;
+      }
+      // Live holder — back off briefly.
+      const backoff = 5 + Math.floor(Math.random() * 10);
+      const sleepDeadline = Date.now() + backoff;
+      while (Date.now() < sleepDeadline) {
+        /* busy-wait — durations are tiny and this is sync code */
+      }
+    }
+  }
+  if (fd === null) {
+    // Budget exhausted. Return a no-op release; the caller falls
+    // through to an unlocked write. Logged-and-continue posture
+    // matches the rest of the registry's "non-fatal best-effort"
+    // failure mode.
+    return { release: () => {} };
+  }
+  try {
+    writeFileSync(fd, String(process.pid), "utf-8");
+  } catch {
+    /* best-effort write of holder pid */
+  }
+  closeSync(fd);
+  return {
+    release: () => {
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        /* lock may have been reclaimed by a later boot's stale-sweep */
+      }
+    },
+  };
 }
 
 /**
@@ -176,17 +270,22 @@ export function registerDaemon(
   entry: DaemonRegistration,
   path: string = defaultRegistryPath(),
 ): void {
-  const current = readRegistry(path);
-  const next: DaemonRegistry = { daemons: {} };
-  for (const [wt, reg] of Object.entries(current.daemons)) {
-    // Skip self-entries (we'll write the fresh row at the end) and any
-    // stale entries pointing at a dead pid.
-    if (wt === worktree) continue;
-    if (!isAlive(reg.pid)) continue;
-    next.daemons[wt] = reg;
+  const lock = acquireRegistryLock(path);
+  try {
+    const current = readRegistry(path);
+    const next: DaemonRegistry = { daemons: {} };
+    for (const [wt, reg] of Object.entries(current.daemons)) {
+      // Skip self-entries (we'll write the fresh row at the end) and any
+      // stale entries pointing at a dead pid.
+      if (wt === worktree) continue;
+      if (!isAlive(reg.pid)) continue;
+      next.daemons[wt] = reg;
+    }
+    next.daemons[worktree] = entry;
+    writeRegistry(next, path);
+  } finally {
+    lock.release();
   }
-  next.daemons[worktree] = entry;
-  writeRegistry(next, path);
 }
 
 /**
@@ -198,14 +297,19 @@ export function unregisterDaemon(
   worktree: string,
   path: string = defaultRegistryPath(),
 ): void {
-  const current = readRegistry(path);
-  if (!(worktree in current.daemons)) return;
-  const next: DaemonRegistry = { daemons: {} };
-  for (const [wt, reg] of Object.entries(current.daemons)) {
-    if (wt === worktree) continue;
-    next.daemons[wt] = reg;
+  const lock = acquireRegistryLock(path);
+  try {
+    const current = readRegistry(path);
+    if (!(worktree in current.daemons)) return;
+    const next: DaemonRegistry = { daemons: {} };
+    for (const [wt, reg] of Object.entries(current.daemons)) {
+      if (wt === worktree) continue;
+      next.daemons[wt] = reg;
+    }
+    writeRegistry(next, path);
+  } finally {
+    lock.release();
   }
-  writeRegistry(next, path);
 }
 
 /**
