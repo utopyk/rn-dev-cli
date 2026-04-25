@@ -12,12 +12,11 @@
 export interface SubscribeEntry {
   /** Whether the client declared `supportsBidirectionalRpc: true`. */
   readonly bidirectional: boolean;
-  /**
-   * Per-subscriber event-kind filter. `null` = all kinds (default).
-   * Empty array = no events. Validated entries (each non-empty,
-   * either exact `metro/log` or prefix `modules/*`).
-   */
-  readonly kindFilter: readonly string[] | null;
+  // NOTE: kindFilter was removed (P0-4 Phase 13.6 PR-C). The filter value
+  // is captured as a closure variable inside handleEventsSubscribe and used
+  // directly by the `matchesKindFilter` check there; storing it in the
+  // registry had no readers and was YAGNI. If per-subscriber kind-filter
+  // introspection is ever needed, add it back with a concrete use case.
 }
 
 export class SubscribeRegistry {
@@ -33,10 +32,6 @@ export class SubscribeRegistry {
 
   isBidirectional(connectionId: string): boolean {
     return this.entries.get(connectionId)?.bidirectional === true;
-  }
-
-  kindFilter(connectionId: string): readonly string[] | null {
-    return this.entries.get(connectionId)?.kindFilter ?? null;
   }
 
   clearConnection(connectionId: string): void {

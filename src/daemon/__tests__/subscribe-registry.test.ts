@@ -5,7 +5,10 @@ import { matchesKindFilter, parseKinds } from "../subscribe-registry.js";
 describe("SubscribeRegistry", () => {
   it("records a bidirectional subscriber and reports it", () => {
     const reg = new SubscribeRegistry();
-    reg.register("c1", { bidirectional: true, kindFilter: null });
+    // P0-4: kindFilter is no longer stored in SubscribeEntry — it is captured
+    // as a closure variable in handleEventsSubscribe and not readable from the
+    // registry. Register only the fields the entry actually carries.
+    reg.register("c1", { bidirectional: true });
     expect(reg.isBidirectional("c1")).toBe(true);
     expect(reg.has("c1")).toBe(true);
   });

@@ -558,7 +558,6 @@ async function handleEventsSubscribe(
   // matches a registered entry.
   subscribeRegistry.register(event.connectionId, {
     bidirectional,
-    kindFilter,
   });
 
   const subscribeConnId = event.connectionId;
