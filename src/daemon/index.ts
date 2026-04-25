@@ -291,6 +291,18 @@ function handleMessage(
       return;
 
     case "daemon/shutdown":
+      if (subscribeRegistry.has(event.connectionId)) {
+        reply({
+          type: "response",
+          action: "daemon/shutdown",
+          id: message.id,
+          payload: {
+            code: "E_RPC_NOT_AUTHORIZED",
+            message: "daemon/shutdown is not allowed on a subscribe socket",
+          },
+        });
+        return;
+      }
       reply({
         type: "response",
         action: "daemon/shutdown",
@@ -304,9 +316,22 @@ function handleMessage(
       });
       return;
 
-    case "session/start":
+    case "session/start": {
+      if (subscribeRegistry.has(event.connectionId)) {
+        reply({
+          type: "response",
+          action: "session/start",
+          id: message.id,
+          payload: {
+            code: "E_RPC_NOT_AUTHORIZED",
+            message: "session/start is not allowed on a subscribe socket",
+          },
+        });
+        return;
+      }
       void handleSessionStart(event, supervisor);
       return;
+    }
 
     case "session/stop":
       void handleSessionStop(event, supervisor);
@@ -483,6 +508,21 @@ async function handleEventsSubscribe(
   // listener BEFORE awaiting attach(). bootAsync's "running" edge
   // can fire on the same microtask drain that resolves attach(), and
   // a listener attached after the await would miss it.
+  // Reject re-subscribe on an already-subscribed socket.
+  if (subscribeRegistry.has(event.connectionId)) {
+    event.reply({
+      type: "response",
+      action: "events/subscribe",
+      id: event.message.id,
+      payload: {
+        code: "E_RPC_NOT_AUTHORIZED",
+        message:
+          "this connection is already subscribed; close and reopen to re-subscribe",
+      },
+    });
+    return;
+  }
+
   const payload = event.message.payload as
     | { profile?: unknown; kinds?: unknown; supportsBidirectionalRpc?: unknown }
     | null
