@@ -28,6 +28,7 @@
 import { EventEmitter } from "node:events";
 import type { IpcClient } from "../../core/ipc.js";
 import type { AdapterSink, ModuleHostEventKind } from "./adapter-sink.js";
+import type { IpcSender } from "./session.js";
 import type {
   HostCallReply,
   HostCallRequest,
@@ -81,8 +82,21 @@ export class ModuleHostClient
 {
   private eventSub: { close: () => void } | null = null;
 
+  /**
+   * Phase 13.6 PR-C — constructor split:
+   *   - `sender`    : IpcSender (proxied through the session subscribe
+   *                   socket). All RPC `.send()` calls use this so that
+   *                   `modules/bind-sender` and `modules/host-call` ride
+   *                   the same long-lived connectionId.
+   *   - `rawClient` : IpcClient. Used ONLY by `subscribeToEvents()` to
+   *                   open a separate `modules/subscribe` stream for
+   *                   Electron's Marketplace + Settings panels. This
+   *                   subscription is a distinct long-lived channel and
+   *                   intentionally does NOT share the session socket.
+   */
   constructor(
-    private client: IpcClient,
+    private client: IpcSender,
+    private rawClient: IpcClient,
     private nextId: () => string,
   ) {
     super();
@@ -107,7 +121,7 @@ export class ModuleHostClient
    */
   async subscribeToEvents(): Promise<{ close: () => void }> {
     if (this.eventSub) return this.eventSub;
-    const sub = await this.client.subscribe(
+    const sub = await this.rawClient.subscribe(
       {
         type: "command",
         action: "modules/subscribe",

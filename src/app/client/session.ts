@@ -35,8 +35,25 @@ import { BuilderClient } from "./builder-adapter.js";
 import { WatcherClient } from "./watcher-adapter.js";
 import { ModuleHostClient } from "./module-host-adapter.js";
 
+/**
+ * Minimal send-only interface used by adapter constructors. All adapter
+ * RPC calls use only `.send()`; the narrowed type enforces this
+ * statically (metro, devtools, builder, watcher). ModuleHostClient
+ * takes the full IpcClient additionally for its `subscribeToEvents`
+ * call, which opens an independent `modules/subscribe` stream.
+ */
+export interface IpcSender {
+  send: IpcClient["send"];
+}
+
 export interface DaemonSession {
-  client: IpcClient;
+  /**
+   * Phase 13.6 PR-C — narrowed to IpcSender (send-only proxy).
+   * Every call to `session.client.send()` is multiplexed through the
+   * long-lived `events/subscribe` socket so that `modules/bind-sender`
+   * and `modules/host-call` share the same `connectionId`.
+   */
+  client: IpcSender;
   metro: MetroClient;
   devtools: DevToolsClient;
   builder: BuilderClient;
@@ -92,11 +109,30 @@ export async function connectToDaemonSession(
 
   const client = await connectToDaemon(projectRoot, connectOpts);
   const idGen = makeIdGenerator();
-  const metro = new MetroClient(client, idGen);
-  const devtools = new DevToolsClient(client, idGen);
-  const builder = new BuilderClient(client, idGen);
-  const watcher = new WatcherClient(client, idGen);
-  const modules = new ModuleHostClient(client, idGen);
+
+  // Phase 13.6 PR-C — deferred-proxy pattern.
+  // Adapters are constructed before subscribe resolves (preserving the
+  // original construction order so notifyDisconnected closures are valid),
+  // but every `.send()` call they issue is routed through a placeholder
+  // that throws until the subscribe socket is ready. After `sub` resolves,
+  // `resolvedSend` is wired to `sub.send` — at that point, every adapter
+  // and `session.client.send()` call rides the same long-lived socket,
+  // giving bind-sender and host-call the same `connectionId`.
+  let resolvedSend: IpcClient["send"] | null = null;
+  const channelClient: IpcSender = {
+    send: (msg: IpcMessage) => {
+      if (!resolvedSend) {
+        throw new Error("session.client.send: subscribe not yet resolved");
+      }
+      return resolvedSend(msg);
+    },
+  };
+
+  const metro = new MetroClient(channelClient, idGen);
+  const devtools = new DevToolsClient(channelClient, idGen);
+  const builder = new BuilderClient(channelClient, idGen);
+  const watcher = new WatcherClient(channelClient, idGen);
+  const modules = new ModuleHostClient(channelClient, client, idGen);
 
   let worktreeKey: string | null = null;
   let resolveRunning!: () => void;
@@ -201,6 +237,11 @@ export async function connectToDaemonSession(
     );
   }
 
+  // Phase 13.6 PR-C — wire the deferred proxy now that sub is open.
+  // Every subsequent session.client.send() and every adapter .send()
+  // call will use sub.send, keeping the same long-lived connectionId.
+  resolvedSend = (msg: IpcMessage) => sub.send(msg);
+
   const readyTimer = setTimeout(() => {
     rejectRunning(
       new Error(
@@ -215,7 +256,7 @@ export async function connectToDaemonSession(
   if (subPayload.status === "running" && subPayload.started === false) {
     if (!worktreeKey) {
       try {
-        const statusResp = await client.send({
+        const statusResp = await sub.send({
           type: "command",
           action: "session/status",
           id: idGen(),
@@ -263,7 +304,7 @@ export async function connectToDaemonSession(
 
   const stop = async (): Promise<void> => {
     try {
-      await client.send({
+      await sub.send({
         type: "command",
         action: "session/stop",
         id: idGen(),
@@ -274,7 +315,7 @@ export async function connectToDaemonSession(
   };
 
   return {
-    client,
+    client: channelClient,
     metro,
     devtools,
     builder,
