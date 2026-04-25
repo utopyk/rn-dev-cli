@@ -37,7 +37,6 @@ function makeMockContext(overrides: Partial<McpContext> = {}): McpContext {
       fix: vi.fn(async () => false),
     } as unknown as McpContext["preflightEngine"],
     session: null,
-    boundModules: new Set(),
     ...overrides,
   };
 }

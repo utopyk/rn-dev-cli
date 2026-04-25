@@ -135,7 +135,6 @@ export async function startMcpServer(argv: readonly string[] = process.argv): Pr
     metro: null, // MCP server runs standalone, no metro manager
     preflightEngine: createDefaultPreflightEngine(projectRoot),
     session,
-    boundModules: new Set(),
     flags,
   };
 

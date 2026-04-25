@@ -57,13 +57,6 @@ export interface McpContext {
    * the daemon connection drops.
    */
   session: DaemonSession | null;
-  /**
-   * Per-session set of moduleIds that have been bound on this
-   * channel via `modules/bind-sender`. Cleared on
-   * `notifyDisconnected` and re-populated lazily as tool handlers
-   * issue host-calls. (Used in Task 5.2.)
-   */
-  boundModules: Set<string>;
   /** Optional — older call sites pre-date the flag system; default OFF. */
   flags?: McpFlags;
 }

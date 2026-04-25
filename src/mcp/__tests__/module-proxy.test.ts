@@ -63,7 +63,6 @@ function makeCtx(
     metro: null,
     preflightEngine: {} as McpContext["preflightEngine"],
     session,
-    boundModules: new Set(),
   };
 }
 
