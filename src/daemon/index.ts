@@ -16,6 +16,11 @@ import { validateProfile } from "./profile-guard.js";
 import type { SessionEvent } from "./session.js";
 import { handleClientRpc, isClientRpcAction } from "./client-rpcs.js";
 import { MODULES_ACTIONS } from "../app/modules-ipc.js";
+import {
+  SubscribeRegistry,
+  parseKinds,
+  matchesKindFilter,
+} from "./subscribe-registry.js";
 
 // ---------------------------------------------------------------------------
 // Daemon entry for `rn-dev daemon <worktree>`.
@@ -146,9 +151,10 @@ export async function runDaemon(opts: RunDaemonOptions): Promise<void> {
       ? fakeBootSessionServices
       : bootSessionServices;
   const supervisor = new DaemonSupervisor({ worktree, ipc: server, bootFn });
+  const subscribeRegistry = new SubscribeRegistry();
 
   server.on("message", (event: IpcMessageEvent) =>
-    handleMessage(event, supervisor, shutdown),
+    handleMessage(event, supervisor, subscribeRegistry, shutdown),
   );
 
   // Gate the bind with a restrictive umask so the socket file is 0o600
@@ -234,6 +240,7 @@ export async function runDaemon(opts: RunDaemonOptions): Promise<void> {
 function handleMessage(
   event: IpcMessageEvent,
   supervisor: DaemonSupervisor,
+  subscribeRegistry: SubscribeRegistry,
   shutdown: () => Promise<void>,
 ): void {
   const { message, reply } = event;
@@ -274,7 +281,7 @@ function handleMessage(
       return;
 
     case "events/subscribe":
-      void handleEventsSubscribe(event, supervisor);
+      void handleEventsSubscribe(event, supervisor, subscribeRegistry);
       return;
 
     default:
@@ -423,27 +430,45 @@ function handleSessionStatus(
 async function handleEventsSubscribe(
   event: IpcMessageEvent,
   supervisor: DaemonSupervisor,
+  subscribeRegistry: SubscribeRegistry,
 ): Promise<void> {
-  // Phase 13.5 — events/subscribe is the canonical attacher path.
+  // Phase 13.6 — events/subscribe is the canonical attacher path.
   // Payload MUST carry a `profile`: it boots the session if stopped,
   // joins if running with matching profile, rejects on mismatch. The
   // connection's id is added to supervisor.attachedConnections; the
   // socket close auto-releases.
   //
-  // Listener-only subscribe (no profile) was retired pre-merge — the
-  // refcount invariant "every booted session has at least one
-  // attacher" can't hold otherwise.
+  // New in Phase 13.6: optional `kinds` filter (validated by
+  // parseKinds) gates per-event delivery; optional
+  // `supportsBidirectionalRpc` declares that the subscribe socket
+  // may also carry RPC requests (Task 1.4 enforces this).
   //
   // Listener registration ordering: register the supervisor.onEvent
   // listener BEFORE awaiting attach(). bootAsync's "running" edge
   // can fire on the same microtask drain that resolves attach(), and
   // a listener attached after the await would miss it.
   const payload = event.message.payload as
-    | { profile?: unknown }
+    | { profile?: unknown; kinds?: unknown; supportsBidirectionalRpc?: unknown }
     | null
     | undefined;
 
+  // Parse kinds first — invalid kinds aborts before any side effects.
+  const kindsResult = parseKinds(payload?.kinds);
+  if (!kindsResult.ok) {
+    event.reply({
+      type: "response",
+      action: "events/subscribe",
+      id: event.message.id,
+      payload: { code: kindsResult.code, message: kindsResult.message },
+    });
+    return;
+  }
+  const kindFilter = kindsResult.kinds;
+
+  const bidirectional = payload?.supportsBidirectionalRpc === true;
+
   const push = (evt: SessionEvent): void => {
+    if (!matchesKindFilter(kindFilter, evt.kind)) return;
     event.reply({
       type: "event",
       action: "session/event",
@@ -452,9 +477,18 @@ async function handleEventsSubscribe(
     });
   };
   const detach = supervisor.onEvent(push);
+
+  // Register before any await, so socket-close cleanup always
+  // matches a registered entry.
+  subscribeRegistry.register(event.connectionId, {
+    bidirectional,
+    kindFilter,
+  });
+
   const subscribeConnId = event.connectionId;
   event.onClose(() => {
     detach();
+    subscribeRegistry.clearConnection(subscribeConnId);
     void supervisor.release(subscribeConnId);
   });
 
@@ -475,6 +509,7 @@ async function handleEventsSubscribe(
   const validation = validateProfile(payload.profile);
   if (!validation.ok) {
     detach();
+    subscribeRegistry.clearConnection(event.connectionId);
     event.reply({
       type: "response",
       action: "events/subscribe",
@@ -488,6 +523,7 @@ async function handleEventsSubscribe(
   });
   if (attachResult.kind === "error") {
     detach();
+    subscribeRegistry.clearConnection(event.connectionId);
     event.reply({
       type: "response",
       action: "events/subscribe",
