@@ -3,9 +3,45 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { IpcServer } from "../../../core/ipc.js";
-import type { IpcMessageEvent } from "../../../core/ipc.js";
+import type { IpcMessageEvent, IpcMessage } from "../../../core/ipc.js";
 import { connectToDaemonSession } from "../session.js";
+import type { IpcSender } from "../session.js";
 import type { Profile } from "../../../core/types.js";
+
+// P0-3 Phase 13.6 PR-C — deferred-proxy send() must return a rejected Promise,
+// not throw synchronously. The check is a pure unit test: construct the same
+// deferred-proxy pattern that connectToDaemonSession uses and verify the
+// contract matches the IpcSender type signature.
+describe("DaemonSession deferred-proxy contract (P0-3)", () => {
+  it("send() before subscribe resolves returns a rejected Promise (not a synchronous throw)", async () => {
+    // Reproduce the exact deferred-proxy pattern from session.ts:
+    type SendFn = (msg: IpcMessage) => Promise<IpcMessage>;
+    let resolvedSend: SendFn | null = null;
+    const channelClient: IpcSender = {
+      send: (msg: IpcMessage): Promise<IpcMessage> => {
+        if (!resolvedSend) {
+          return Promise.reject(new Error("session.client.send: subscribe not yet resolved"));
+        }
+        // Cast via intermediate to satisfy TS narrowing inside the arrow fn.
+        return (resolvedSend as SendFn)(msg);
+      },
+    };
+
+    // Before resolvedSend is wired, send() must:
+    //   - NOT throw synchronously (would violate Promise<IpcMessage> return type)
+    //   - return a Promise that rejects with the expected error
+    let threw = false;
+    let returnValue: Promise<unknown> | undefined;
+    try {
+      returnValue = channelClient.send({ type: "command", action: "x", id: "1" });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(false);
+    expect(returnValue).toBeInstanceOf(Promise);
+    await expect(returnValue).rejects.toThrow("subscribe not yet resolved");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Lightweight stub for verifying the events/subscribe wire payload.

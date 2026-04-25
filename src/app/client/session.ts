@@ -127,7 +127,14 @@ export async function connectToDaemonSession(
   const channelClient: IpcSender = {
     send: (msg: IpcMessage) => {
       if (!resolvedSend) {
-        throw new Error("session.client.send: subscribe not yet resolved");
+        // Return a rejected promise, NOT a synchronous throw. IpcSender.send
+        // returns Promise<IpcMessage>; a synchronous throw breaks the contract
+        // and causes callers that don't wrap in try/catch to swallow the error
+        // silently. Realistically unreachable in production — adapters are
+        // constructed before subscribe resolves but never call send until after
+        // the await in connectToDaemonSession — but the typed contract must
+        // match. (P0-3 Phase 13.6 PR-C reviewer fix.)
+        return Promise.reject(new Error("session.client.send: subscribe not yet resolved"));
       }
       return resolvedSend(msg);
     },
