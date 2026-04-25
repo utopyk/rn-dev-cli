@@ -60,7 +60,25 @@ const SUBSCRIBE_ALWAYS_ALLOWED = new Set<string>([
   //                     but this gate must skip it so the re-subscribe
   //                     path runs and replies.
   "daemon/ping",
+  // daemon/shutdown is intentionally NOT in SUBSCRIBE_ALWAYS_ALLOWED —
+  // see SUBSCRIBE_NEVER_ALLOWED below. Allowing it here would bypass
+  // the never-allow guard and let subscribe sockets issue shutdown.
+]);
+
+// P1-7 — actions NEVER permitted on ANY subscribe socket, including
+// bidirectional ones. Single declarative source of truth. The pre-dispatch
+// guard in handleMessage checks this before the bidirectional gate, so both
+// gated (bidirectional) and ungated (non-bidirectional) subscribe sockets
+// are covered without per-case rejection branches in the switch.
+//
+// daemon/shutdown: a subscribe socket is a long-lived fan-out channel; it
+//   must not be able to nuke the daemon — the risk of an accidental or
+//   malicious shutdown is too high. Plain RPC connections can still call it.
+// session/start: pre-Phase-13.5 back-compat path; subscribe sockets
+//   boot via events/subscribe+profile instead.
+const SUBSCRIBE_NEVER_ALLOWED = new Set<string>([
   "daemon/shutdown",
+  "session/start",
 ]);
 
 export interface RunDaemonOptions {
@@ -257,12 +275,34 @@ function handleMessage(
 ): void {
   const { message, reply } = event;
 
-  // Phase 13.6 PR-C — bidirectional flag enforcement. A connection
-  // registered as a subscribe socket without supportsBidirectionalRpc
-  // can only call the admin / re-subscribe set. Any other RPC is
-  // rejected pre-dispatch so it never reaches the switch below.
-  // Fresh-socket sends (not in subscribeRegistry) bypass this gate
-  // entirely; so do subscribe sockets with bidirectional=true.
+  // P1-7 — single declarative source of truth for subscribe-socket
+  // authorization. Two tiers of pre-dispatch enforcement; the switch
+  // cases themselves do NOT contain per-action rejection branches for
+  // subscribe sockets — all such rejections happen here.
+  //
+  // Tier 1: SUBSCRIBE_NEVER_ALLOWED — blocked on ALL subscribe sockets,
+  // including bidirectional ones. Checked before the bidirectional gate
+  // so both tiers of subscribers are covered.
+  if (
+    subscribeRegistry.has(event.connectionId) &&
+    SUBSCRIBE_NEVER_ALLOWED.has(message.action)
+  ) {
+    reply({
+      type: "response",
+      action: message.action,
+      id: message.id,
+      payload: {
+        code: "E_RPC_NOT_AUTHORIZED",
+        message: `action "${message.action}" is not allowed on a subscribe socket`,
+      },
+    });
+    return;
+  }
+
+  // Tier 2: bidirectional flag enforcement. A connection registered as a
+  // subscribe socket without supportsBidirectionalRpc can only call the
+  // always-allowed admin/re-subscribe set. Fresh-socket sends (not in
+  // subscribeRegistry) bypass this gate entirely.
   if (
     subscribeRegistry.has(event.connectionId) &&
     !subscribeRegistry.isBidirectional(event.connectionId) &&
@@ -291,18 +331,8 @@ function handleMessage(
       return;
 
     case "daemon/shutdown":
-      if (subscribeRegistry.has(event.connectionId)) {
-        reply({
-          type: "response",
-          action: "daemon/shutdown",
-          id: message.id,
-          payload: {
-            code: "E_RPC_NOT_AUTHORIZED",
-            message: "daemon/shutdown is not allowed on a subscribe socket",
-          },
-        });
-        return;
-      }
+      // Subscribe-socket rejection is handled pre-dispatch by
+      // SUBSCRIBE_NEVER_ALLOWED — no per-case check needed here.
       reply({
         type: "response",
         action: "daemon/shutdown",
@@ -317,18 +347,8 @@ function handleMessage(
       return;
 
     case "session/start": {
-      if (subscribeRegistry.has(event.connectionId)) {
-        reply({
-          type: "response",
-          action: "session/start",
-          id: message.id,
-          payload: {
-            code: "E_RPC_NOT_AUTHORIZED",
-            message: "session/start is not allowed on a subscribe socket",
-          },
-        });
-        return;
-      }
+      // Subscribe-socket rejection is handled pre-dispatch by
+      // SUBSCRIBE_NEVER_ALLOWED — no per-case check needed here.
       void handleSessionStart(event, supervisor);
       return;
     }
