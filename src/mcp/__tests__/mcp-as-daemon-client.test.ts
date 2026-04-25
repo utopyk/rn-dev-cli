@@ -12,9 +12,8 @@ import type { Profile } from "../../core/types.js";
 // Pins two complementary properties:
 //
 //   1. MCP-shaped client works under the new long-lived channel.
-//      A client that attaches with `kinds: ["modules/*", "session/status"]`
-//      (filtering out the metro/builder/devtools firehose while keeping
-//      the status edges needed for the session-ready handshake) successfully:
+//      A client that attaches with `kinds: ["modules/*"]`
+//      (filtering out the metro/builder/devtools firehose) successfully:
 //        - receives the events/subscribe response (refcount slot acquired)
 //        - issues modules/bind-sender over the same socket → succeeds
 //        - issues modules/host-call over the same socket → succeeds
@@ -33,11 +32,9 @@ import type { Profile } from "../../core/types.js";
 // (method "info") is the actual capability registered by fakeBootSessionServices;
 // see src/daemon/__tests__/sender-bindings-integration.test.ts for the reference.
 //
-// Note on kinds filter design: the MCP-shaped kinds filter is
-// `["modules/*", "session/status"]` rather than just `["modules/*"]`.
-// `session/status` events are how connectToDaemonSession observes the
-// starting→running transition to resolve the session-ready gate. A filter
-// that drops session/status would hang forever waiting for the running edge.
+// `connectToDaemonSession` automatically appends `session/status` to any
+// caller-supplied `kinds` so the boot handshake can observe the running
+// edge — callers don't need to remember.
 
 describe("MCP as daemon client (Phase 13.6 PR-C keystone)", () => {
   const live: TestDaemonHandle[] = [];
@@ -77,12 +74,12 @@ describe("MCP as daemon client (Phase 13.6 PR-C keystone)", () => {
       live.push(daemon);
 
       // Simulate the MCP client's attach: kinds filter to skip the metro/
-      // builder/devtools firehose while keeping session/status so the
-      // session-ready handshake (starting→running edge) completes normally.
+      // builder/devtools firehose. `connectToDaemonSession` appends
+      // session/status automatically so the boot handshake completes.
       const mcpSession = await connectToDaemonSession(
         worktree,
         fakeProfile(worktree),
-        { kinds: ["modules/*", "session/status"] },
+        { kinds: ["modules/*"] },
       );
 
       // Bind the dev-space module on this session.
@@ -136,12 +133,12 @@ describe("MCP as daemon client (Phase 13.6 PR-C keystone)", () => {
         worktree,
         fakeProfile(worktree),
       );
-      // MCP-shaped: kinds filter includes session/status so the
-      // session-ready handshake completes (starting→running edge needed).
+      // MCP-shaped: kinds filter to skip metro/builder/devtools.
+      // session/status auto-appended by connectToDaemonSession.
       const mcp = await connectToDaemonSession(
         worktree,
         fakeProfile(worktree),
-        { kinds: ["modules/*", "session/status"] },
+        { kinds: ["modules/*"] },
       );
 
       // Both bind dev-space on their own sessions; both host-calls must

@@ -144,7 +144,7 @@ describe("connectToDaemonSession — events/subscribe wire payload", () => {
     expect(payload.kinds).toBeUndefined();
   }, 10_000);
 
-  it("with kinds: subscribe payload includes both supportsBidirectionalRpc and kinds", async () => {
+  it("with kinds: subscribe payload includes both supportsBidirectionalRpc and kinds (with auto-appended session/status)", async () => {
     const session = await connectToDaemonSession("/fake/root", makeProfile("/fake/root"), {
       sessionReadyTimeoutMs: 5_000,
       kinds: ["modules/*"],
@@ -154,6 +154,21 @@ describe("connectToDaemonSession — events/subscribe wire payload", () => {
     expect(capturedSubscribePayloads).toHaveLength(1);
     const payload = capturedSubscribePayloads[0] as Record<string, unknown>;
     expect(payload.supportsBidirectionalRpc).toBe(true);
-    expect(payload.kinds).toEqual(["modules/*"]);
+    // session/status is auto-appended by connectToDaemonSession so the
+    // boot handshake (starting → running edge) reaches the caller even
+    // when the caller's filter would otherwise drop it.
+    expect(payload.kinds).toEqual(["modules/*", "session/status"]);
+  }, 10_000);
+
+  it("with kinds already containing session/status: not duplicated", async () => {
+    const session = await connectToDaemonSession("/fake/root", makeProfile("/fake/root"), {
+      sessionReadyTimeoutMs: 5_000,
+      kinds: ["modules/*", "session/status"],
+    });
+    session.disconnect();
+
+    expect(capturedSubscribePayloads).toHaveLength(1);
+    const payload = capturedSubscribePayloads[0] as Record<string, unknown>;
+    expect(payload.kinds).toEqual(["modules/*", "session/status"]);
   }, 10_000);
 });

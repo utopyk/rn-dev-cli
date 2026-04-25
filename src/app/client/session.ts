@@ -96,6 +96,11 @@ export interface ConnectToDaemonSessionOptions extends ConnectToDaemonOptions {
    * Per-subscriber event-kind filter. Default = all kinds (every
    * session event delivered). Pass `["modules/*"]` for MCP to skip
    * the metro/builder/devtools firehose.
+   *
+   * `session/status` is automatically appended to any non-empty
+   * caller-supplied filter — `connectToDaemonSession` itself reads
+   * the `starting → running` edge to resolve, and silently filtering
+   * that out would hang the boot. Callers don't need to remember.
    */
   kinds?: string[];
 }
@@ -211,6 +216,15 @@ export async function connectToDaemonSession(
   // joins the session in a single round-trip. `onClose` / `onError`
   // route into `notifyDisconnected` so an unexpected daemon death
   // surfaces as a 'disconnected' event on every adapter.
+  // Auto-augment kinds with session/status — `connectToDaemonSession`
+  // depends on that edge to resolve. If the caller filters it out
+  // (e.g. MCP passing only ["modules/*"]), boot would hang.
+  const effectiveKinds = opts.kinds !== undefined
+    ? (opts.kinds.includes("session/status")
+        ? opts.kinds
+        : [...opts.kinds, "session/status"])
+    : undefined;
+
   const sub = await client.subscribe(
     {
       type: "command",
@@ -219,7 +233,7 @@ export async function connectToDaemonSession(
       payload: {
         profile,
         supportsBidirectionalRpc: true,
-        ...(opts.kinds !== undefined ? { kinds: opts.kinds } : {}),
+        ...(effectiveKinds !== undefined ? { kinds: effectiveKinds } : {}),
       },
     },
     {
