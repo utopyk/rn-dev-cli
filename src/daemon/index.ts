@@ -6,11 +6,7 @@ import {
   type IpcMessageEvent,
 } from "../core/ipc.js";
 import { ModuleLockfile } from "../core/module-host/lockfile.js";
-import {
-  DaemonSupervisor,
-  type SessionBootFn,
-  type AttachSessionResult,
-} from "./supervisor.js";
+import { DaemonSupervisor, type SessionBootFn } from "./supervisor.js";
 import { bootSessionServices } from "../core/session/boot.js";
 import { fakeBootSessionServices } from "./fake-boot.js";
 import { spawnDetachedDaemon } from "./spawn.js";
@@ -242,10 +238,6 @@ function handleMessage(
       void handleSessionStart(event, supervisor);
       return;
 
-    case "session/release":
-      void handleSessionRelease(event, supervisor);
-      return;
-
     case "session/stop":
       void handleSessionStop(event, supervisor);
       return;
@@ -306,15 +298,21 @@ async function handleSessionStart(
   event: IpcMessageEvent,
   supervisor: DaemonSupervisor,
 ): Promise<void> {
-  // Phase 13.5 — refcount migrated to the long-lived events/subscribe
-  // socket (handleEventsSubscribe is the new attach point). This
-  // handler stays for backwards compatibility with callers that
-  // expect a separate session/start RPC, but it does NOT participate
-  // in the refcount. It's effectively a no-op when a session is
-  // already running with a matching profile, and triggers the boot
-  // when stopped — but without an attacher, the next subscribe close
-  // (if any) would tear it down. Real clients should send `profile`
-  // with `events/subscribe` and skip session/start entirely.
+  // Phase 13.5 — `session/start` is a back-compat path retained for
+  // tests + tooling that drive the boot via a separate RPC (the
+  // canonical Phase 13.5 flow is `events/subscribe { profile }`,
+  // which boots-and-attaches in one round-trip). This handler does
+  // NOT add the calling connection to the supervisor's refcount —
+  // doing so would auto-release on send-conn close (a few ms after
+  // the response) and tear the session down underneath the caller.
+  //
+  // Trade-off: a session booted via session/start with no follow-on
+  // events/subscribe is "running with attached.size === 0," which
+  // never tears down via the refcount path. Safe in tests because
+  // the daemon is killed by SIGTERM in afterEach. In production,
+  // callers should always subscribe — the only way to receive
+  // session events anyway. Phase 13.6 may delete this handler
+  // outright after migrating session-boot.test.ts and friends.
   const payloadCandidate = event.message.payload;
   const profileCandidate =
     payloadCandidate &&
@@ -349,50 +347,6 @@ async function handleSessionStart(
     action: "session/start",
     id: event.message.id,
     payload: { status: result.status },
-  });
-}
-
-async function handleSessionRelease(
-  event: IpcMessageEvent,
-  supervisor: DaemonSupervisor,
-): Promise<void> {
-  // Phase 13.5 — explicit ref-counted detach for clients that want
-  // to capture the intent in the audit log without dropping their
-  // events/subscribe socket. The released conn id comes from the
-  // payload because the request itself runs on a short-lived
-  // send-conn whose own connectionId is irrelevant. Idempotent on
-  // unknown ids.
-  const payload = event.message.payload as
-    | { connectionId?: unknown }
-    | null
-    | undefined;
-  const subscribeConnId =
-    payload && typeof payload.connectionId === "string"
-      ? payload.connectionId
-      : null;
-  if (!subscribeConnId) {
-    event.reply({
-      type: "response",
-      action: "session/release",
-      id: event.message.id,
-      payload: {
-        code: "E_RPC_INVALID_PAYLOAD",
-        message:
-          "session/release requires { connectionId } from the events/subscribe response",
-      },
-    });
-    return;
-  }
-  const result = await supervisor.release(subscribeConnId);
-  event.reply({
-    type: "response",
-    action: "session/release",
-    id: event.message.id,
-    payload: {
-      ok: true,
-      attached: result.attached,
-      stoppedSession: result.stoppedSession,
-    },
   });
 }
 
@@ -443,39 +397,25 @@ async function handleEventsSubscribe(
   event: IpcMessageEvent,
   supervisor: DaemonSupervisor,
 ): Promise<void> {
-  // Phase 13.5 — `events/subscribe` carries an optional `profile`:
-  //   - profile present  → "attacher" subscription. Boots the session
-  //                        if stopped, joins if running with matching
-  //                        profile, rejects on profile mismatch. The
-  //                        connection holds a refcount; socket-close
-  //                        decrements via `supervisor.release`.
-  //   - profile absent   → "listener" subscription. Backwards-compat
-  //                        path for tests + tooling that drives the
-  //                        boot via `session/start` separately. No
-  //                        refcount entry; socket-close just detaches
-  //                        the event listener.
-  // Both shapes still receive every session event on the same socket.
+  // Phase 13.5 — events/subscribe is the canonical attacher path.
+  // Payload MUST carry a `profile`: it boots the session if stopped,
+  // joins if running with matching profile, rejects on mismatch. The
+  // connection's id is added to supervisor.attachedConnections; the
+  // socket close auto-releases.
   //
-  // Critical ordering: we register the supervisor.onEvent listener
-  // BEFORE calling supervisor.attach(). If we awaited attach() first
-  // — which awaits start() — the bootAsync continuation can run to
-  // completion (including the "running" emitStateChanged call) on
-  // the same microtask drain, BEFORE this function resumes to attach
-  // its listener. The result was a silent missed-event regression
-  // diagnosed during Phase 13.5: every "running" edge fired into
-  // listeners=0 and the client hung waiting for an edge that had
-  // already passed. The workaround is to subscribe to `event` first;
-  // any "starting" edges that fire before attach validates the
-  // profile are forwarded but harmless (the client filters by kind +
-  // status).
+  // Listener-only subscribe (no profile) was retired pre-merge — the
+  // refcount invariant "every booted session has at least one
+  // attacher" can't hold otherwise.
+  //
+  // Listener registration ordering: register the supervisor.onEvent
+  // listener BEFORE awaiting attach(). bootAsync's "running" edge
+  // can fire on the same microtask drain that resolves attach(), and
+  // a listener attached after the await would miss it.
   const payload = event.message.payload as
     | { profile?: unknown }
     | null
     | undefined;
 
-  // Register the event listener and onClose hook FIRST (see comment
-  // above). detach() is captured here so a subsequent attach error
-  // can tear it down before we return.
   const push = (evt: SessionEvent): void => {
     event.reply({
       type: "event",
@@ -486,61 +426,61 @@ async function handleEventsSubscribe(
   };
   const detach = supervisor.onEvent(push);
   const subscribeConnId = event.connectionId;
-  let isAttacher = false;
   event.onClose(() => {
     detach();
-    if (isAttacher) {
-      // supervisor.release is idempotent on unknown ids so an explicit
-      // `session/release` followed by socket-close is safe.
-      void supervisor.release(subscribeConnId);
-    }
+    void supervisor.release(subscribeConnId);
   });
 
-  let attachResult: AttachSessionResult | null = null;
-  if (payload && payload.profile !== undefined) {
-    const validation = validateProfile(payload.profile);
-    if (!validation.ok) {
-      detach();
-      event.reply({
-        type: "response",
-        action: "events/subscribe",
-        id: event.message.id,
-        payload: { code: validation.code, message: validation.message },
-      });
-      return;
-    }
-    attachResult = await supervisor.attach(event.connectionId, {
-      profile: validation.profile,
+  // No profile → listener-only subscription. Back-compat path for
+  // tests + tooling that drive the boot via session/start separately.
+  // No refcount; the connection just receives the event stream until
+  // the socket closes. Phase 13.6 may delete this branch after
+  // migrating the last session-boot.test.ts callers.
+  if (!payload || payload.profile === undefined) {
+    event.reply({
+      type: "response",
+      action: "events/subscribe",
+      id: event.message.id,
+      payload: { subscribed: true },
     });
-    if (attachResult.kind === "error") {
-      detach();
-      event.reply({
-        type: "response",
-        action: "events/subscribe",
-        id: event.message.id,
-        payload: { code: attachResult.code, message: attachResult.message },
-      });
-      return;
-    }
-    isAttacher = true;
+    return;
   }
-
-  // Confirm the subscription. The response shape stays
-  // backwards-compatible — `subscribed: true` is the only field old
-  // clients read. New fields (`connectionId`, `status`, `started`,
-  // `attached`) populate when this is an attacher subscription so
-  // joiners can detect the running-already case without a separate
-  // status RPC.
+  const validation = validateProfile(payload.profile);
+  if (!validation.ok) {
+    detach();
+    event.reply({
+      type: "response",
+      action: "events/subscribe",
+      id: event.message.id,
+      payload: { code: validation.code, message: validation.message },
+    });
+    return;
+  }
+  const attachResult = await supervisor.attach(event.connectionId, {
+    profile: validation.profile,
+  });
+  if (attachResult.kind === "error") {
+    detach();
+    event.reply({
+      type: "response",
+      action: "events/subscribe",
+      id: event.message.id,
+      payload: { code: attachResult.code, message: attachResult.message },
+    });
+    return;
+  }
+  // Confirm the subscription. `subscribed: true` is the load-bearing
+  // field; status/started/attached let joiners detect the running-
+  // already case without a separate status RPC.
   event.reply({
     type: "response",
     action: "events/subscribe",
     id: event.message.id,
     payload: {
       subscribed: true,
-      connectionId: event.connectionId,
-      status: attachResult?.status,
-      started: attachResult?.started,
-      attached: attachResult?.attached,
+      status: attachResult.status,
+      started: attachResult.started,
+      attached: attachResult.attached,
     },
   });
 }

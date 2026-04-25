@@ -149,11 +149,10 @@ export function registerInstanceHandlers() {
     // instance record without opening a second daemon session. The
     // existing `state.daemonSession` keeps publishing events that the
     // renderer can route to either instance.
-    const activeProfileName = (state.daemonSession as { profileName?: string } | null)
-      ?.profileName;
+    const activeProfileName = state.daemonSessionProfileName;
     const incomingProfileName = profileData.name;
     if (
-      activeProfileName !== undefined &&
+      activeProfileName !== null &&
       incomingProfileName !== undefined &&
       activeProfileName === incomingProfileName
     ) {

@@ -75,13 +75,12 @@ export type AttachSessionResult =
     }
   | { kind: "error"; code: string; message: string };
 
-export type ReleaseSessionResult =
-  | {
-      kind: "ok";
-      attached: number;
-      /** True iff this release dropped the last attacher → supervisor.stop(). */
-      stoppedSession: boolean;
-    };
+export interface ReleaseSessionResult {
+  kind: "ok";
+  attached: number;
+  /** True iff this release dropped the last attacher → supervisor.stop(). */
+  stoppedSession: boolean;
+}
 
 type WiredServices = {
   services: SessionServices;
@@ -251,43 +250,16 @@ export class DaemonSupervisor extends EventEmitter {
   }
 
   /**
-   * Phase 13.5 — subscribe-only attach for clients that don't carry
-   * a profile (the rare "I want to listen to whatever's running"
-   * case). Only valid against a non-stopped supervisor; the caller
-   * (handleEventsSubscribe) gates the stopped case before reaching
-   * here. Synchronous because there's no profile validation.
-   */
-  attachWithoutProfile(connectionId: string): AttachSessionResult {
-    if (this.state.status === "stopped") {
-      return {
-        kind: "error",
-        code: "E_NO_SESSION_TO_SUBSCRIBE",
-        message: "no session is running; cannot attach without a profile",
-      };
-    }
-    if (this.state.status === "stopping") {
-      return {
-        kind: "error",
-        code: "E_SESSION_STOPPING",
-        message: "session is stopping; wait for stopped before attaching",
-      };
-    }
-    this.attachedConnections.add(connectionId);
-    return {
-      kind: "ok",
-      status: this.state.status,
-      started: false,
-      attached: this.attachedConnections.size,
-    };
-  }
-
-  /**
    * Phase 13.5 — release a connection from the active session. Last
    * release tears down (delegates to `stop()`); intermediate releases
    * just remove the connection from the attached set.
    *
    * Idempotent — releasing an unknown connectionId is a no-op (matches
    * the socket-close path which fires unconditionally).
+   *
+   * Concurrent release safety: stop() clears attachedConnections, so a
+   * release racing alongside a stop() returns wasAttached=false on the
+   * second branch and short-circuits — no double tear-down.
    */
   async release(connectionId: string): Promise<ReleaseSessionResult> {
     const wasAttached = this.attachedConnections.delete(connectionId);
@@ -346,6 +318,15 @@ export class DaemonSupervisor extends EventEmitter {
         // may have already reset the state.
         if (this.bootEpoch === myEpoch) {
           this.activeProfile = null;
+          // Phase 13.5 — drop the first attacher's refcount entry on
+          // boot failure. Otherwise the connId added by attach() before
+          // bootAsync ran stays in the set across a transition to
+          // "stopped"; the next attach (from a new client whose
+          // dispatcher sees state=stopped) re-enters the first-
+          // attacher branch and boots a fresh session, but the stale
+          // entry then blocks last-release teardown until that conn's
+          // socket eventually closes.
+          this.attachedConnections.clear();
           this.transition("stopped");
         }
       },

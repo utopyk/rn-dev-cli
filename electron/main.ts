@@ -149,27 +149,20 @@ app.on('window-all-closed', () => {
   // disconnected" warning at a window that's about to tear down.
   setElectronQuitting(true);
 
-  // Phase 13.5 — release (don't stop) so any other client attached
-  // to the same daemon (CLI, MCP) keeps working after the Electron
-  // window goes away. `release()` tells the daemon to decrement the
-  // session refcount; if Electron was the last attacher the daemon
-  // tears down on its own. `stop()` here would be wrong: it tells the
-  // daemon to tear the session down for everyone, regardless of
-  // refcount. Falling back to a synchronous disconnect-after-release
-  // ensures the socket closes promptly even if the daemon is slow to
-  // ack — the daemon's socket-close auto-release covers any in-flight
-  // wire ops we abandon.
+  // Phase 13.5 — close the subscribe socket; the daemon's socket-close
+  // auto-release decrements its session refcount and tears the session
+  // down if Electron was the last attacher. Any other clients (CLI,
+  // MCP) attached to the same daemon stay running. `stop()` here would
+  // be wrong: it's the kill-for-everyone path regardless of refcount.
   if (state.daemonSession) {
     const session = state.daemonSession;
     state.daemonSession = null;
     state.daemonSessionProfileName = null;
-    void session.release().catch(() => {
-      try {
-        session.disconnect();
-      } catch {
-        /* best-effort on shutdown */
-      }
-    });
+    try {
+      session.disconnect();
+    } catch {
+      /* best-effort on shutdown */
+    }
   }
   app.quit();
 });
