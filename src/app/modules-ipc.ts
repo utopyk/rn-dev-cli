@@ -104,15 +104,14 @@ export interface ModulesIpcOptions {
    */
   arboristFactory?: ArboristFactory;
   /**
-   * Phase 13.5 — per-connection sender-binding table. When supplied,
-   * `modules/host-call` requires the calling connection to have
-   * pre-registered its `moduleId` via `modules/bind-sender`; absent
-   * the binding, the call is denied with `MODULE_UNAVAILABLE`. Tests
-   * that exercise the host-call dispatcher directly without bindings
-   * can omit this — the gate skips when bindings is null. Production
-   * `registerModulesIpc` always passes a SenderBindings instance.
+   * Phase 13.5 — per-connection sender-binding table. Always present
+   * once `registerModulesIpc` runs. Tests that exercise the
+   * dispatcher directly omit it; the host-call gate is gated on
+   * `RN_DEV_HOSTCALL_BIND_GATE` env flag (default off until PR-C
+   * lands the long-lived RPC channel that makes bind-sender usable
+   * from production callers).
    */
-  senderBindings?: SenderBindings | null;
+  senderBindings?: SenderBindings;
 }
 
 /**
@@ -755,15 +754,25 @@ export async function hostCall(
     };
   }
 
-  // Phase 13.5 — sender-binding gate. The connection must have
-  // pre-registered `payload.moduleId` via `modules/bind-sender`. Tests
-  // that exercise this dispatcher directly without bindings opt out by
-  // omitting `senderBindings`. When `connectionId` is undefined (e.g.
-  // dispatchModulesAction called from a unit test that doesn't go
-  // through the IPC server), we bypass the gate — it's not the
-  // dispatcher's job to invent identities.
-  if (opts.senderBindings && connectionId !== undefined) {
-    if (!opts.senderBindings.canCall(connectionId, payload.moduleId)) {
+  // Phase 13.5 — sender-binding gate, env-flag gated to default-off
+  // until PR-C lands the long-lived RPC channel. With every existing
+  // production caller using `IpcClient.send()` (fresh socket per
+  // call), enforcing the gate by default would break Electron's
+  // host-call bridge entirely. Operators opt in via
+  // `RN_DEV_HOSTCALL_BIND_GATE=1`; once PR-C is in, the default flips.
+  //
+  // The undefined-connectionId branch denies (rather than skipping)
+  // because `bindSenderAction` already requires connectionId; the
+  // two halves of the gate now agree on what an anonymous caller
+  // means: rejection.
+  const gateEnabled =
+    process.env.RN_DEV_HOSTCALL_BIND_GATE === "1" &&
+    opts.senderBindings !== undefined;
+  if (gateEnabled) {
+    if (
+      connectionId === undefined ||
+      !opts.senderBindings!.canCall(connectionId, payload.moduleId)
+    ) {
       auditOutcome("denied");
       return {
         kind: "error",
@@ -827,26 +836,45 @@ export async function hostCall(
 // to act on behalf of `moduleId` on subsequent host-call requests.
 // Idempotent on (connectionId, moduleId).
 //
-// The check is enforced in `hostCall` (above). Without a binding,
-// host-call returns MODULE_UNAVAILABLE — same code as "module not
-// registered" so a malicious enumerator can't distinguish "I haven't
-// bound this id" from "this id doesn't exist." Deliberate.
+// Deliberately does NOT pre-check that the moduleId is registered.
+// `modules/list` already discloses registered names without auth,
+// so the registered-only-check provides no enumeration defense; it
+// would only convert a deferred host-call MODULE_UNAVAILABLE into
+// an early bind-time MODULE_NOT_REGISTERED, which is a UX preference,
+// not a security feature. The host-call gate already returns
+// MODULE_UNAVAILABLE for unregistered ids.
 // ---------------------------------------------------------------------------
 
 export type BindSenderReply =
   | { kind: "ok" }
-  | {
-      kind: "error";
-      code: "BIND_INVALID_PAYLOAD" | "MODULE_NOT_REGISTERED";
-      message: string;
-    };
+  | { kind: "error"; code: "BIND_INVALID_PAYLOAD"; message: string };
+
+function parseBindSenderRequest(payload: unknown): { moduleId: string } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  if (typeof p.moduleId !== "string" || p.moduleId.length === 0) return null;
+  return { moduleId: p.moduleId };
+}
 
 export function bindSenderAction(
   opts: ModulesIpcOptions,
   payload: unknown,
   connectionId: string | undefined,
 ): BindSenderReply {
+  const auditOutcome = (
+    outcome: "ok" | "error",
+    moduleId: string = "",
+  ): void => {
+    void getDefaultAuditLog().append({
+      kind: "host-call",
+      moduleId,
+      outcome,
+      capabilityId: "<bind-sender>",
+      method: "<bind>",
+    });
+  };
   if (!connectionId) {
+    auditOutcome("error");
     return {
       kind: "error",
       code: "BIND_INVALID_PAYLOAD",
@@ -854,39 +882,19 @@ export function bindSenderAction(
         "modules/bind-sender requires a connection id (received via IPC server)",
     };
   }
-  if (
-    !payload ||
-    typeof payload !== "object" ||
-    typeof (payload as Record<string, unknown>).moduleId !== "string"
-  ) {
+  const parsed = parseBindSenderRequest(payload);
+  if (!parsed) {
+    auditOutcome("error");
     return {
       kind: "error",
       code: "BIND_INVALID_PAYLOAD",
       message: "modules/bind-sender requires { moduleId: string }",
     };
   }
-  const moduleId = (payload as { moduleId: string }).moduleId;
-  // Reject binding to a moduleId that isn't registered — a same-UID
-  // enumerator could otherwise bind every imaginable name and then
-  // pick whichever passes the existence check. Only-real-modules
-  // enforced here; the existence-disclosure leak is acceptable
-  // because the registry is already readable via `modules/list`.
-  const reg = resolveRegistered(opts, moduleId, undefined);
-  if (!reg) {
-    return {
-      kind: "error",
-      code: "MODULE_NOT_REGISTERED",
-      message: `modules/bind-sender: module "${moduleId}" is not registered`,
-    };
+  if (opts.senderBindings) {
+    opts.senderBindings.bind(connectionId, parsed.moduleId);
   }
-  if (!opts.senderBindings) {
-    // Without a bindings table the call is a structural no-op. The
-    // host-call gate also short-circuits when bindings is null, so
-    // returning "ok" here matches the gate's open-by-default
-    // semantics for tests that don't wire a bindings table.
-    return { kind: "ok" };
-  }
-  opts.senderBindings.bind(connectionId, moduleId);
+  auditOutcome("ok", parsed.moduleId);
   return { kind: "ok" };
 }
 
@@ -1022,16 +1030,11 @@ export function registerModulesIpc(
   // Callers may supply their own for test introspection; default one is
   // created here so the dispatcher always has a destination.
   const moduleEvents = options.moduleEvents ?? new EventEmitter();
-  // Phase 13.5 — sender-bindings table for the host-call gate. Default
-  // to a fresh instance per registerModulesIpc call so each session
-  // boot starts with empty bindings; clients re-bind every session.
-  // Tests that exercise the dispatcher directly opt out by passing
-  // `senderBindings: null` (the gate short-circuits when bindings is
-  // null/undefined).
-  const senderBindings =
-    options.senderBindings === undefined
-      ? new SenderBindings()
-      : options.senderBindings;
+  // Phase 13.5 — sender-bindings table for the host-call gate.
+  // Default to a fresh instance per registerModulesIpc call so each
+  // session boot starts with empty bindings; clients re-bind every
+  // session.
+  const senderBindings = options.senderBindings ?? new SenderBindings();
   const effectiveOptions: ModulesIpcOptions = {
     ...options,
     moduleEvents,
