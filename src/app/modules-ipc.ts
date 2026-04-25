@@ -754,19 +754,20 @@ export async function hostCall(
     };
   }
 
-  // Phase 13.5 — sender-binding gate, env-flag gated to default-off
-  // until PR-C lands the long-lived RPC channel. With every existing
-  // production caller using `IpcClient.send()` (fresh socket per
-  // call), enforcing the gate by default would break Electron's
-  // host-call bridge entirely. Operators opt in via
-  // `RN_DEV_HOSTCALL_BIND_GATE=1`; once PR-C is in, the default flips.
+  // Phase 13.6 PR-C — sender-binding gate, default-ON. Production callers
+  // (Electron, MCP) attach via connectToDaemonSession, which rides a
+  // long-lived multiplexed subscribe socket — bind-sender + host-call
+  // share connectionId on the same connection. The env flag stays as an
+  // emergency off-switch:
+  //   - unset / "1" / any non-"0" value → enforced (default)
+  //   - "0" → disabled (host-call without prior bind succeeds)
   //
   // The undefined-connectionId branch denies (rather than skipping)
   // because `bindSenderAction` already requires connectionId; the
   // two halves of the gate now agree on what an anonymous caller
   // means: rejection.
   const gateEnabled =
-    process.env.RN_DEV_HOSTCALL_BIND_GATE === "1" &&
+    process.env.RN_DEV_HOSTCALL_BIND_GATE !== "0" &&
     opts.senderBindings !== undefined;
   if (gateEnabled) {
     if (
