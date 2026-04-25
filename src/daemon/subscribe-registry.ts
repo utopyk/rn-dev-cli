@@ -43,3 +43,72 @@ export class SubscribeRegistry {
     this.entries.delete(connectionId);
   }
 }
+
+/**
+ * Returns true if `eventKind` passes the given filter.
+ *
+ * - `null`  → subscriber wants all events (back-compat default)
+ * - `[]`    → subscriber wants no events
+ * - entries are either exact (`metro/log`) or prefix-glob (`modules/*`)
+ */
+export function matchesKindFilter(
+  filter: readonly string[] | null,
+  eventKind: string,
+): boolean {
+  if (filter === null) return true;
+  for (const entry of filter) {
+    if (entry.endsWith("/*")) {
+      const prefix = entry.slice(0, -1); // keep the trailing slash: "modules/"
+      if (eventKind.startsWith(prefix)) return true;
+    } else if (entry === eventKind) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export type ParseKindsResult =
+  | { ok: true; kinds: readonly string[] | null }
+  | { ok: false; code: "E_SUBSCRIBE_INVALID_KINDS"; message: string };
+
+/**
+ * Validates and normalises the raw `kinds` field from the wire payload.
+ *
+ * - `undefined` → `{ ok: true, kinds: null }` (all events — back-compat)
+ * - `[]`        → `{ ok: true, kinds: [] }` (no events)
+ * - valid array of non-empty strings, each either exact or trailing-`/*` glob
+ *
+ * Rejects: non-array, non-string entries, empty strings, any `*` not in
+ * the trailing `/*` position.
+ */
+export function parseKinds(raw: unknown): ParseKindsResult {
+  if (raw === undefined) return { ok: true, kinds: null };
+  if (!Array.isArray(raw)) {
+    return {
+      ok: false,
+      code: "E_SUBSCRIBE_INVALID_KINDS",
+      message: "kinds must be an array of strings",
+    };
+  }
+  for (const entry of raw) {
+    if (typeof entry !== "string" || entry.length === 0) {
+      return {
+        ok: false,
+        code: "E_SUBSCRIBE_INVALID_KINDS",
+        message: "kinds entries must be non-empty strings",
+      };
+    }
+    // Only trailing /* is allowed as a glob; reject any other * placement.
+    const starIndex = entry.indexOf("*");
+    if (starIndex !== -1) {
+      if (!entry.endsWith("/*") || starIndex !== entry.length - 1) {
+        return {
+          ok: false,
+          code: "E_SUBSCRIBE_INVALID_KINDS",
+          message: `kinds entry "${entry}" — only trailing "/*" is allowed as glob`,
+        };
+      }
+    }
+  }
+  return { ok: true, kinds: raw as string[] };
+}
