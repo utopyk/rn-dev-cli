@@ -264,6 +264,20 @@ async function connectAndWire(
   serviceBus.setBuilder(ready.builder);
   serviceBus.setWatcher(ready.watcher);
   serviceBus.setWorktreeKey(ready.worktreeKey);
+
+  // Bug 6 — surface daemon-emitted `session/log` lines in the TUI's
+  // log pane via the existing `serviceBus.log` topic. Backfill from
+  // the SessionClient's internal ring first to catch boot-progress
+  // lines that fired BEFORE `connectToDaemonSession` returned (the
+  // events/subscribe ACK → session/status:running interval), then
+  // subscribe live.
+  for (const evt of ready.session.recentLogs()) {
+    serviceBus.log(`[daemon] ${evt.message}`);
+  }
+  ready.session.on("log", (evt) => {
+    serviceBus.log(`[daemon] ${evt.message}`);
+  });
+
   return ready;
 }
 
