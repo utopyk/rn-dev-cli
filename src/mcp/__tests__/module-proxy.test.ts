@@ -42,6 +42,7 @@ function makeSession(options: {
     builder: {} as DaemonSession["builder"],
     watcher: {} as DaemonSession["watcher"],
     modules: {} as DaemonSession["modules"],
+    session: {} as DaemonSession["session"],
     worktreeKey: "root",
     disconnect: vi.fn(),
     release: vi.fn(async () => {}),
@@ -63,6 +64,7 @@ function makeCtx(
     metro: null,
     preflightEngine: {} as McpContext["preflightEngine"],
     session,
+    sessionLogRing: [],
   };
 }
 

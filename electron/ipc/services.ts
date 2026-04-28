@@ -271,6 +271,28 @@ export async function attachDaemonSession(
  * helper rather than adding a third call site.
  */
 export function wireInstanceEvents(instance: InstanceState, session: DaemonSession): void {
+  // Bug 6 — surface the daemon's `bootSessionServices` progress
+  // (preflight, install, watchman setup, port-kill, simulator boot —
+  // every line `supervisor.ts` emits as `session/log`) on the
+  // renderer's `instance:log` channel. Pre-fix the renderer only saw
+  // Electron-local sources (the package-manager and code-signing
+  // prompts above); the daemon-driven boot was invisible.
+  //
+  // Backfill from the SessionClient's internal ring before subscribing
+  // live — by the time `wireInstanceEvents` runs, `connectToDaemonSession`
+  // has already returned, which means the daemon's boot-progress lines
+  // have already fired through the SessionClient. Same race as MCP.
+  for (const evt of session.session.recentLogs()) {
+    const text = `[daemon] ${evt.message}`;
+    appendLog(instance, 'service', text);
+    send('instance:log', { instanceId: instance.id, text });
+  }
+  session.session.on('log', (evt) => {
+    const text = `[daemon] ${evt.message}`;
+    appendLog(instance, 'service', text);
+    send('instance:log', { instanceId: instance.id, text });
+  });
+
   session.metro.on('log', (evt: { line: string }) => {
     appendLog(instance, 'metro', evt.line);
     send('instance:metro', { instanceId: instance.id, text: evt.line });

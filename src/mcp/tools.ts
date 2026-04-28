@@ -43,6 +43,13 @@ export interface McpFlags {
   allowDestructiveTools: boolean;
 }
 
+export interface SessionLogEntry {
+  level: string;
+  message: string;
+  /** ms since epoch — captured when the line landed at the MCP server. */
+  ts: number;
+}
+
 export interface McpContext {
   projectRoot: string;
   profileStore: ProfileStore;
@@ -57,6 +64,15 @@ export interface McpContext {
    * the daemon connection drops.
    */
   session: DaemonSession | null;
+  /**
+   * Bug 6 — bounded ring of recent `session/log` lines, populated by
+   * the SessionClient adapter that `connectToDaemonSession` publishes.
+   * The `rn-dev/session-logs` tool reads this so an agent can observe
+   * the daemon's `bootSessionServices` progress after a `start-session`
+   * call. The array is mutated by the server's adapter listener; tools
+   * read it as a snapshot at call time.
+   */
+  sessionLogRing: SessionLogEntry[];
   /** Optional — older call sites pre-date the flag system; default OFF. */
   flags?: McpFlags;
 }
@@ -279,6 +295,52 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
           }));
         }
         return { error: "No running session" };
+      },
+    },
+    {
+      name: "rn-dev/session-logs",
+      description:
+        "Return recent daemon-emitted session log lines. Surfaces boot progress (preflight, install, watchman setup, port-kill, simulator boot) and other session-level state changes that the daemon emits while a session is running. Useful immediately after `rn-dev/start-session` to observe what the daemon is doing.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description:
+              "Maximum number of most-recent lines to return. Default: 50. Max: 200 (the server's ring-buffer size).",
+          },
+          sinceTs: {
+            type: "number",
+            description:
+              "Only return lines with `ts >= sinceTs` (ms since epoch). Useful for polling — pass the largest `ts` from the previous response.",
+          },
+        },
+      },
+      handler: async (args) => {
+        const limit =
+          typeof args.limit === "number" && args.limit > 0
+            ? Math.min(args.limit, 200)
+            : 50;
+        const sinceTs =
+          typeof args.sinceTs === "number" ? args.sinceTs : 0;
+
+        const filtered = ctx.sessionLogRing.filter((e) => e.ts >= sinceTs);
+        const lines = filtered.slice(-limit);
+
+        return {
+          structuredContent: {
+            lines,
+            // `latestTs` is the cursor a polling agent should pass back
+            // as `sinceTs` next call. 0 when the ring is empty so the
+            // agent doesn't have to special-case "no logs yet."
+            latestTs:
+              ctx.sessionLogRing.length > 0
+                ? ctx.sessionLogRing[ctx.sessionLogRing.length - 1].ts
+                : 0,
+            droppedFromRing:
+              filtered.length > limit ? filtered.length - limit : 0,
+          },
+        };
       },
     },
     // Metro control
