@@ -25,6 +25,7 @@ const CLIENT_RPC_ACTIONS = new Set<string>([
   "devtools/status",
   "devtools/clear",
   "devtools/selectTarget",
+  "devtools/restart",
   "builder/build",
   "watcher/start",
   "watcher/stop",
@@ -118,6 +119,16 @@ async function dispatch(
       }
       await services.devtools.selectTarget(services.worktreeKey, targetId);
       return { ok: true };
+    }
+    case "devtools/restart": {
+      // stop() is idempotent (no-op if not started); start() throws when
+      // Metro isn't running. The Electron "Reconnect" button uses this
+      // to rediscover targets after the app launches — Phase 13.4 left
+      // it stranded because the renderer's restart handler still went
+      // through `inst.devtools.dispose() + new DevToolsManager()`.
+      await services.devtools.stop(services.worktreeKey);
+      const info = await services.devtools.start(services.worktreeKey);
+      return info;
     }
     case "builder/build": {
       const parsed = parseBuildOptions(message.payload, supervisor.getWorktree());

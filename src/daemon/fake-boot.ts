@@ -62,6 +62,8 @@ interface FakeDevtoolsSurface {
   status(worktreeKey: string): Record<string, unknown>;
   clear(worktreeKey: string): void;
   selectTarget(worktreeKey: string, targetId: string): Promise<void>;
+  start(worktreeKey: string): Promise<{ proxyPort: number; sessionNonce: string }>;
+  stop(worktreeKey: string): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -213,6 +215,15 @@ function makeFakeDevtools(): EventEmitter & FakeDevtoolsSurface {
     _worktreeKey: string,
     _targetId: string,
   ): Promise<void> => {
+    /* no-op in fake */
+  };
+  emitter.start = async (
+    _worktreeKey: string,
+  ): Promise<{ proxyPort: number; sessionNonce: string }> => ({
+    proxyPort: 9999,
+    sessionNonce: "fake-nonce",
+  });
+  emitter.stop = async (_worktreeKey: string): Promise<void> => {
     /* no-op in fake */
   };
   emitter.dispose = async (): Promise<void> => {
