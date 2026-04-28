@@ -99,13 +99,27 @@ export class DevToolsClient
       action: "devtools/restart",
       id: this.nextId(),
     });
+    // Mirror selectTarget's `p?.code` pattern + add a malformed-response
+    // guard so a daemon that ever returns null/undefined doesn't trip
+    // `'code' in p` with a TypeError, and so the renderer can't splice
+    // `undefined` into Fusebox's `ws=` URL on a malformed reply.
+    // Kieran TS P1-1 on PR #26.
     const p = resp.payload as
-      | { proxyPort: number; sessionNonce: string }
-      | { code: string; message: string };
-    if ("code" in p) {
+      | {
+          proxyPort?: number;
+          sessionNonce?: string;
+          code?: string;
+          message?: string;
+        }
+      | null
+      | undefined;
+    if (p?.code) {
       throw new Error(`devtools/restart: ${p.code}: ${p.message ?? ""}`);
     }
-    return p;
+    if (typeof p?.proxyPort !== "number" || typeof p?.sessionNonce !== "string") {
+      throw new Error("devtools/restart: malformed daemon response");
+    }
+    return { proxyPort: p.proxyPort, sessionNonce: p.sessionNonce };
   }
 
   dispatch(kind: DevToolsEventKind, data: unknown): void {

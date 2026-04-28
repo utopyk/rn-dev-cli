@@ -18,32 +18,40 @@ import { instances, send } from './state.js';
 // `restart` to dispose + re-start (rediscovers targets when the app
 // finally connects). Push events arrive on `devtools-network:change`.
 //
-// One daemon = one session = one DevToolsClient. Today there is also
-// at most one instance per port, so events fan symmetrically across
-// every Electron instance map entry — the renderer filters by `port`
-// to pick its own.
+// Event fan-out: one daemon = one DevToolsClient = one session. Events
+// are scoped to the daemon's worktree, NOT to a particular Electron
+// instance — the renderer filters by `port` (which still 1:1 maps to
+// the daemon's Metro instance). `instanceId` was deliberately dropped
+// from the payload (Architecture P1-1 on PR #26) because in the same-
+// profile multi-instance case it would conflate views: both instances
+// share the same daemon, so stamping each fan-out with one instance's
+// id would mislead. When Phase 13.5 grows worktree-scoped events that
+// need a discriminator beyond `port`, switch to `worktreeKey` here.
 
 let devtoolsClient: DevToolsClient | null = null;
-let detachListeners: (() => void) | null = null;
+let detachClient: (() => void) | null = null;
 
 serviceBus.on('devtools', (client: DevToolsClient) => {
-  if (detachListeners) detachListeners();
+  if (detachClient) detachClient();
   devtoolsClient = client;
 
   const onDelta = (payload: unknown) => fanChange('delta', payload);
   const onStatus = (payload: unknown) => fanChange('status', payload);
   client.on('delta', onDelta);
   client.on('status', onStatus);
-  detachListeners = () => {
+  detachClient = () => {
     client.off('delta', onDelta);
     client.off('status', onStatus);
   };
 });
 
 function fanChange(kind: 'delta' | 'status', payload: unknown): void {
+  // One emit per known instance — the renderer filters on `port`. We
+  // could collapse to a single broadcast and let the renderer handle
+  // routing, but per-instance emits keep `appendInstanceLog`-style
+  // call sites consistent with the rest of `electron/ipc/`.
   for (const inst of instances.values()) {
     send('devtools-network:change', {
-      instanceId: inst.id,
       port: inst.port,
       kind,
       payload,

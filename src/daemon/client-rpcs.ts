@@ -121,14 +121,11 @@ async function dispatch(
       return { ok: true };
     }
     case "devtools/restart": {
-      // stop() is idempotent (no-op if not started); start() throws when
-      // Metro isn't running. The Electron "Reconnect" button uses this
-      // to rediscover targets after the app launches — Phase 13.4 left
-      // it stranded because the renderer's restart handler still went
-      // through `inst.devtools.dispose() + new DevToolsManager()`.
-      await services.devtools.stop(services.worktreeKey);
-      const info = await services.devtools.start(services.worktreeKey);
-      return info;
+      // Composition lives in DevToolsManager.restart() — the manager
+      // owns the per-worktree state machine, so exposing the boundary
+      // as a single atomic verb here keeps concurrent observers from
+      // seeing the stop/start gap. Architecture P1-2 on PR #26.
+      return services.devtools.restart(services.worktreeKey);
     }
     case "builder/build": {
       const parsed = parseBuildOptions(message.payload, supervisor.getWorktree());
