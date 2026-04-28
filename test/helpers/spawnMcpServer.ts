@@ -44,11 +44,17 @@ export interface SpawnMcpServerOptions {
    * + `ProfileStore` reads + `connectToDaemonSession` all key off this
    * — point at a worktree that has `.rn-dev/profiles/<name>.json` so
    * the MCP server connects to the daemon you've spawned there.
+   *
+   * Trust note: callers pass paths from `makeTestWorktree()` (mkdtemp).
+   * Tests are responsible for not feeding user-supplied paths here —
+   * if a future fixture-loader gets a `cwd` from a fixture file, that
+   * file becomes a code-execution vector.
    */
   cwd: string;
   /**
    * Optional flags passed as argv. Common: `--enable-module:<id>`,
    * `--allow-destructive-tools`. Mirrors the production CLI surface.
+   * Trusted-input only — see `cwd` note.
    */
   flags?: string[];
   /**
@@ -57,7 +63,22 @@ export interface SpawnMcpServerOptions {
    * shared worktree. Only set this if you specifically need to override
    * `RN_DEV_DAEMON_SOCK` etc.
    */
-  env?: NodeJS.ProcessEnv;
+  env?: Record<string, string>;
+}
+
+/**
+ * `process.env` is `{ [k: string]: string | undefined }` but the MCP
+ * SDK's `StdioServerParameters.env` is `Record<string, string>`. Node's
+ * `child_process.spawn` coerces undefined values to the string
+ * `"undefined"` — a known footgun. Filter undefined values before
+ * handing off. Kieran TS P0 on PR #27.
+ */
+function inheritedEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v === "string") out[k] = v;
+  }
+  return out;
 }
 
 export async function spawnMcpServer(
@@ -67,10 +88,7 @@ export async function spawnMcpServer(
     command: "bun",
     args: ["run", CLI_ENTRY, "mcp", ...(opts.flags ?? [])],
     cwd: opts.cwd,
-    env: {
-      ...(process.env as Record<string, string>),
-      ...(opts.env as Record<string, string> | undefined),
-    },
+    env: { ...inheritedEnv(), ...(opts.env ?? {}) },
     // "pipe" so test failures get the server's diagnostic output. The
     // SDK's transport reads JSON-RPC frames from stdout only, so noisy
     // stderr from the MCP server (preflight warnings, etc.) doesn't

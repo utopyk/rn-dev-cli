@@ -37,7 +37,6 @@ function makeMockContext(overrides: Partial<McpContext> = {}): McpContext {
       fix: vi.fn(async () => false),
     } as unknown as McpContext["preflightEngine"],
     session: null,
-    sessionLogRing: [],
     ...overrides,
   };
 }
@@ -62,7 +61,7 @@ function makeMockSession(
     builder: {} as DaemonSession["builder"],
     watcher: {} as DaemonSession["watcher"],
     modules: {} as DaemonSession["modules"],
-    session: {} as DaemonSession["session"],
+    lifecycle: {} as DaemonSession["lifecycle"],
     worktreeKey: "root",
     disconnect: vi.fn(),
     release: vi.fn(async () => {}),

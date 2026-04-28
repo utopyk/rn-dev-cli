@@ -119,65 +119,19 @@ export async function startMcpServer(argv: readonly string[] = process.argv): Pr
   if (profile) {
     try {
       session = await connectToDaemonSession(projectRoot, profile, {
-        // Bug 6 — broadened from `["modules/*"]` to also include
-        // `session/*` so the daemon's `bootSessionServices` progress
-        // (preflight, install, watchman setup, port-kill, simulator
-        // boot) reaches the SessionClient adapter and can be surfaced
-        // through the new `rn-dev/session-logs` tool. MCP still skips
-        // the metro/builder/devtools firehose — those are interactive
-        // surfaces that don't map to per-tool-call output.
-        kinds: ["modules/*", "session/*"],
+        // Bug 6 — explicit allowlist (not `session/*` glob) so a
+        // future `session/error` event with a sensitive payload
+        // doesn't auto-leak into MCP's process address space.
+        // Security P1-3 on PR #27. Add new entries here when the
+        // daemon emits new session-level kinds and the MCP tool
+        // surface needs them.
+        kinds: ["modules/*", "session/log", "session/status"],
       });
     } catch {
       // Daemon unreachable at startup — degrade to built-ins-only mode
       // (mirrors the old IpcClient-null fallback).
       session = null;
     }
-  }
-
-  // Bug 6 — in-memory ring of recent `session/log` lines, populated by
-  // the SessionClient adapter that `connectToDaemonSession` publishes.
-  // The `rn-dev/session-logs` tool returns this ring's contents so an
-  // agent that just called `start-session` can read what the daemon is
-  // doing. Without this, the daemon's boot progress was invisible to
-  // MCP callers — `routeEventToAdapters` dropped the events on the
-  // floor in its default arm.
-  const SESSION_LOG_RING_SIZE = 200;
-  const sessionLogRing: McpContext["sessionLogRing"] = [];
-  if (session) {
-    // Backfill from the SessionClient's internal ring before live
-    // subscribing — `connectToDaemonSession` runs the daemon's
-    // `bootSessionServices` between the events/subscribe ACK and the
-    // `session/status:running` edge that resolves the await, so by
-    // the time we reach this line the boot-progress log lines have
-    // already fired through the SessionClient. Without this backfill,
-    // an MCP agent calling `session-logs` immediately after MCP
-    // startup would see an empty array even though the daemon emitted
-    // a flurry of boot progress.
-    const ts = Date.now();
-    for (const evt of session.session.recentLogs()) {
-      sessionLogRing.push({
-        level: evt.level,
-        message: evt.message,
-        // No per-event timestamp on the wire today — the SessionClient
-        // ring captures order, not arrival time. Stamp them all with
-        // the backfill instant; subsequent live events get their own.
-        ts,
-      });
-      if (sessionLogRing.length > SESSION_LOG_RING_SIZE) {
-        sessionLogRing.shift();
-      }
-    }
-    session.session.on("log", (evt) => {
-      sessionLogRing.push({
-        level: evt.level,
-        message: evt.message,
-        ts: Date.now(),
-      });
-      if (sessionLogRing.length > SESSION_LOG_RING_SIZE) {
-        sessionLogRing.shift();
-      }
-    });
   }
 
   const ctx: McpContext = {
@@ -187,7 +141,6 @@ export async function startMcpServer(argv: readonly string[] = process.argv): Pr
     metro: null, // MCP server runs standalone, no metro manager
     preflightEngine: createDefaultPreflightEngine(projectRoot),
     session,
-    sessionLogRing,
     flags,
   };
 
