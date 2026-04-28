@@ -276,22 +276,16 @@ export function wireInstanceEvents(instance: InstanceState, session: DaemonSessi
   // every line `supervisor.ts` emits as `session/log`) on the
   // renderer's `instance:log` channel. Pre-fix the renderer only saw
   // Electron-local sources (the package-manager and code-signing
-  // prompts above); the daemon-driven boot was invisible.
-  //
-  // Backfill from the SessionClient's internal ring before subscribing
-  // live — by the time `wireInstanceEvents` runs, `connectToDaemonSession`
-  // has already returned, which means the daemon's boot-progress lines
-  // have already fired through the SessionClient. Same race as MCP.
-  for (const evt of session.session.recentLogs()) {
+  // prompts above); the daemon-driven boot was invisible. See
+  // `SessionClient` for why the snapshot+subscribe pattern is needed
+  // (events fire during the connectToDaemonSession await).
+  const forward = (evt: { message: string }): void => {
     const text = `[daemon] ${evt.message}`;
     appendLog(instance, 'service', text);
     send('instance:log', { instanceId: instance.id, text });
-  }
-  session.session.on('log', (evt) => {
-    const text = `[daemon] ${evt.message}`;
-    appendLog(instance, 'service', text);
-    send('instance:log', { instanceId: instance.id, text });
-  });
+  };
+  for (const evt of session.lifecycle.recentLogs()) forward(evt);
+  session.lifecycle.on('log', forward);
 
   session.metro.on('log', (evt: { line: string }) => {
     appendLog(instance, 'metro', evt.line);

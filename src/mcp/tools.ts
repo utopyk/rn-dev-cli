@@ -43,13 +43,6 @@ export interface McpFlags {
   allowDestructiveTools: boolean;
 }
 
-export interface SessionLogEntry {
-  level: string;
-  message: string;
-  /** ms since epoch — captured when the line landed at the MCP server. */
-  ts: number;
-}
-
 export interface McpContext {
   projectRoot: string;
   profileStore: ProfileStore;
@@ -62,17 +55,14 @@ export interface McpContext {
    * subscribe socket, preserving connectionId for bind-sender +
    * host-call. `null` when MCP starts before a daemon exists or after
    * the daemon connection drops.
+   *
+   * Bug 6 — `session.lifecycle` (the `SessionClient` adapter) is now
+   * the canonical source of recent `session/log` lines for the
+   * `rn-dev/session-logs` tool. No MCP-side ring needed; the adapter
+   * already maintains one (200 entries by default) so a poll-style
+   * tool just reads it on demand.
    */
   session: DaemonSession | null;
-  /**
-   * Bug 6 — bounded ring of recent `session/log` lines, populated by
-   * the SessionClient adapter that `connectToDaemonSession` publishes.
-   * The `rn-dev/session-logs` tool reads this so an agent can observe
-   * the daemon's `bootSessionServices` progress after a `start-session`
-   * call. The array is mutated by the server's adapter listener; tools
-   * read it as a snapshot at call time.
-   */
-  sessionLogRing: SessionLogEntry[];
   /** Optional — older call sites pre-date the flag system; default OFF. */
   flags?: McpFlags;
 }
@@ -307,12 +297,7 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
           limit: {
             type: "number",
             description:
-              "Maximum number of most-recent lines to return. Default: 50. Max: 200 (the server's ring-buffer size).",
-          },
-          sinceTs: {
-            type: "number",
-            description:
-              "Only return lines with `ts >= sinceTs` (ms since epoch). Useful for polling — pass the largest `ts` from the previous response.",
+              "Maximum number of most-recent lines to return. Default: 50. Max: 200 (the SessionClient ring size).",
           },
         },
       },
@@ -321,26 +306,9 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
           typeof args.limit === "number" && args.limit > 0
             ? Math.min(args.limit, 200)
             : 50;
-        const sinceTs =
-          typeof args.sinceTs === "number" ? args.sinceTs : 0;
-
-        const filtered = ctx.sessionLogRing.filter((e) => e.ts >= sinceTs);
-        const lines = filtered.slice(-limit);
-
-        return {
-          structuredContent: {
-            lines,
-            // `latestTs` is the cursor a polling agent should pass back
-            // as `sinceTs` next call. 0 when the ring is empty so the
-            // agent doesn't have to special-case "no logs yet."
-            latestTs:
-              ctx.sessionLogRing.length > 0
-                ? ctx.sessionLogRing[ctx.sessionLogRing.length - 1].ts
-                : 0,
-            droppedFromRing:
-              filtered.length > limit ? filtered.length - limit : 0,
-          },
-        };
+        const all = ctx.session?.lifecycle.recentLogs() ?? [];
+        const lines = all.slice(-limit);
+        return { structuredContent: { lines } };
       },
     },
     // Metro control

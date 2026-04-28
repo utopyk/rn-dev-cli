@@ -78,8 +78,14 @@ export interface DaemonSession {
    * client subscribes to this adapter and surfaces `log` events at its
    * own UI/agent surface (renderer's `instance:log`, MCP's
    * `rn-dev/session-logs` tool, TUI's log pane).
+   *
+   * Named `lifecycle` (not `session`) because `DaemonSession` itself
+   * IS the session — `session.session.recentLogs()` would be tautology.
+   * The events surfaced here are session-lifecycle: state transitions
+   * (`session/status`) and the boot-progress narration that drives
+   * them (`session/log`).
    */
-  session: SessionClient;
+  lifecycle: SessionClient;
   worktreeKey: string;
   /**
    * Phase 13.5 trichotomy of session-end methods:
@@ -159,7 +165,7 @@ export async function connectToDaemonSession(
   const builder = new BuilderClient(channelClient, idGen);
   const watcher = new WatcherClient(channelClient, idGen);
   const modules = new ModuleHostClient(channelClient, client, idGen);
-  const sessionAdapter = new SessionClient();
+  const lifecycle = new SessionClient();
 
   let worktreeKey: string | null = null;
   let resolveRunning!: () => void;
@@ -200,7 +206,7 @@ export async function connectToDaemonSession(
     builder.notifyDisconnected(err);
     watcher.notifyDisconnected(err);
     modules.notifyDisconnected(err);
-    sessionAdapter.notifyDisconnected(err);
+    lifecycle.notifyDisconnected(err);
   };
 
   const onIncomingEvent = (msg: IpcMessage): void => {
@@ -231,7 +237,7 @@ export async function connectToDaemonSession(
       builder,
       watcher,
       modules,
-      session: sessionAdapter,
+      lifecycle,
     });
   };
 
@@ -359,7 +365,7 @@ export async function connectToDaemonSession(
     builder,
     watcher,
     modules,
-    session: sessionAdapter,
+    lifecycle,
     worktreeKey,
     disconnect,
     release,
@@ -454,7 +460,7 @@ function routeEventToAdapters(
     builder: BuilderClient;
     watcher: WatcherClient;
     modules: ModuleHostClient;
-    session: SessionClient;
+    lifecycle: SessionClient;
   },
 ): void {
   switch (kind) {
@@ -485,9 +491,16 @@ function routeEventToAdapters(
       // routed through SessionClient so every client (Electron, MCP,
       // TUI) sees daemon-side `bootSessionServices` progress at its
       // own UI/agent surface.
-      adapters.session.dispatch(kind, data);
+      adapters.lifecycle.dispatch(kind, data);
       return;
     default:
+      // Drift detection — if the daemon adds a sixth event family
+      // later (e.g. `audit/*`) and a developer forgets to add a case
+      // here, this surfaces it cheaply instead of silently dropping.
+      // Architecture P2 on PR #27.
+      if (kind !== undefined) {
+        console.warn(`routeEventToAdapters: unknown kind ${kind}`);
+      }
       return;
   }
 }

@@ -136,15 +136,15 @@ export async function fakeBootSessionServices(
   });
   const moduleEvents = modulesIpc.moduleEvents;
 
-  // Emit a few `session/log` lines so the Bug 6 contract is exercised
-  // under fake-boot too. Production's `bootSessionServices` emits one
-  // line per step (preflight, install, watchman setup, port-kill, ...)
-  // via `opts.emit(line)`; mirroring that here keeps the test fake
-  // faithful to the contract that the MCP-side e2e harness asserts
-  // against. Without these calls, a fake-boot harness can't observe
-  // session/log routing end-to-end.
+  // Emit `session/log` lines so the Bug 6 contract is exercised under
+  // fake-boot too. Production's `bootSessionServices` emits one line
+  // per step (preflight, install, watchman setup, port-kill, ...) via
+  // `opts.emit(line)`; mirroring that here keeps the fake faithful to
+  // the contract that the MCP-side e2e harness asserts against.
+  // Two markers (start + end) document the boot envelope without
+  // duplicating step-level detail that fake-boot has nothing to say
+  // about.
   opts.emit("[fake-boot] session services starting");
-  opts.emit("[fake-boot] preflight skipped (fake mode)");
   opts.emit("[fake-boot] session services ready");
 
   // Emit "starting" on the next macrotask — supervisor wires event
