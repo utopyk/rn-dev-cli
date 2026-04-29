@@ -223,20 +223,83 @@ export async function bootSessionServices(
   emit("\u23f3 Clearing watchman...");
   await spawnWatchmanWatchDel(effectiveRoot, emit);
 
-  // 5. Port check + kill stale.
+  // 5. Port check + ownership-aware kill or fall-back.
+  //
+  // The decision tree when `profile.metroPort` is busy:
+  //   - non-Metro process       \u2192 refuse to kill (could be Jenkins, etc.);
+  //                                 throw with a clear remediation message.
+  //   - Metro on same worktree  \u2192 our own stale Metro from a prior session;
+  //                                 kill it (SIGTERM \u2192 poll \u2192 SIGKILL) and
+  //                                 reuse the port.
+  //   - Metro on different cwd  \u2192 another worktree's Metro; leave it alone
+  //                                 and pick a free port via
+  //                                 `findFreePortInRange`. Persisted to the
+  //                                 worktree's artifact so subsequent boots
+  //                                 land on the same port without re-probing.
+  //
+  // SIGTERM is racy because RN CLI installs a graceful-shutdown handler
+  // that takes 2\u20135s to release the socket. The fixed 1s sleep that used
+  // to live here lost that race and surfaced as EADDRINUSE in Metro's
+  // earlyPortCheck. We now poll-until-free with a 5s grace, then escalate
+  // to SIGKILL with a 3s grace, then throw.
   const metro = new MetroManager(artifactStore);
   const worktreeKey = artifactStore.worktreeHash(profile.worktree);
-  const port = profile.metroPort;
+  let port = profile.metroPort;
   emit(`\u23f3 Checking port ${port}...`);
   const portFree = await metro.isPortFree(port);
+
   if (!portFree) {
-    emit(`\u26a0 Port ${port} is in use. Killing stale process...`);
-    const killed = await metro.killProcessOnPort(port);
-    if (killed) {
-      emit(`  \u2714 Killed process on port ${port}`);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    emit(`\u2139 Port ${port} is busy. Probing for Metro...`);
+    const isMetro = await metro.isMetroOnPort(port);
+
+    if (!isMetro) {
+      emit(
+        `\u2716 Port ${port} is held by a non-Metro process. Change \`metroPort\` in your profile or stop the conflicting service.`,
+      );
+      throw new Error(
+        `Port ${port} is held by a non-Metro process. Change metroPort or stop the conflicting service.`,
+      );
+    }
+
+    // Compare cwd of the holder against our worktree. Same cwd \u2192 ours,
+    // kill it. Different cwd \u2192 another worktree, leave it alone.
+    const holderPid = await metro.findProcessOnPort(port);
+    const holderCwd = holderPid != null ? await metro.getProcessCwd(holderPid) : null;
+    const sameWorktree =
+      holderCwd != null &&
+      // Normalise both paths \u2014 a trailing slash mismatch shouldn't decide
+      // whether we kill the user's neighbour-branch Metro.
+      holderCwd.replace(/\/+$/, "") === effectiveRoot.replace(/\/+$/, "");
+    emit(`  \u2139 holder pid=${holderPid} cwd=${holderCwd ?? "?"} sameWorktree=${sameWorktree}`);
+
+    if (sameWorktree) {
+      emit(`\u26a0 Killing existing Metro on port ${port} (same worktree)...`);
+      await metro.killProcessOnPort(port, "SIGTERM");
+      let freed = await metro.waitForPortFree(port, 5000);
+
+      if (!freed) {
+        emit(`\u26a0 SIGTERM didn't free port within 5s \u2014 escalating to SIGKILL...`);
+        await metro.killProcessOnPort(port, "SIGKILL");
+        freed = await metro.waitForPortFree(port, 3000);
+      }
+
+      if (!freed) {
+        throw new Error(
+          `Port ${port} still busy after SIGTERM + 5s + SIGKILL + 3s. ` +
+            `The previous Metro is wedged \u2014 kill it manually with ` +
+            `\`kill -9 $(lsof -i :${port} -t)\` and retry.`,
+        );
+      }
+      emit(`  \u2714 Port ${port} is free`);
     } else {
-      emit(`  \u2716 Could not kill process on port ${port}. Trying anyway...`);
+      const range = metro.portRangeReadable;
+      const fallback = await metro.findFreePortInRange(range[0], range[1]);
+      emit(
+        `\u2139 Port ${port} belongs to a different worktree (${holderCwd ?? "unknown"}). ` +
+          `Falling back to free port ${fallback}.`,
+      );
+      artifactStore.save(worktreeKey, { metroPort: fallback });
+      port = fallback;
     }
   } else {
     emit(`\u2714 Port ${port} is free`);
@@ -288,7 +351,7 @@ export async function bootSessionServices(
   metro.start({
     worktreeKey,
     projectRoot: effectiveRoot,
-    port: profile.metroPort,
+    port,
     resetCache: profile.mode !== "dirty" && profile.mode !== "quick",
     verbose: true,
     env: profile.env,
