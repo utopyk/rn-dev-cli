@@ -24,6 +24,7 @@ describe("parseAdbDevices", () => {
       name: "emulator-5554",
       type: "android",
       status: "available",
+      isPhysical: false,
     });
 
     expect(devices[1]).toMatchObject({
@@ -31,6 +32,7 @@ describe("parseAdbDevices", () => {
       name: "R58M31YXXXXX",
       type: "android",
       status: "available",
+      isPhysical: true,
     });
 
     expect(devices[2]).toMatchObject({
@@ -38,7 +40,30 @@ describe("parseAdbDevices", () => {
       name: "ZX1G22BXXXXX",
       type: "android",
       status: "unauthorized",
+      isPhysical: true,
     });
+  });
+
+  it("flags emulator-prefixed serials as virtual and bare alphanumeric serials as physical", () => {
+    // Documents the assumption load-bearing for the wizard's UI labels —
+    // adb's only reliable signal for emulator-vs-phone is the `emulator-`
+    // prefix on the serial.
+    const output = [
+      "List of devices attached",
+      "emulator-5554\tdevice",
+      "emulator-5556\tdevice",
+      "R5CX23WBLKE\tdevice",
+      "ZY222ABCDE\tunauthorized",
+    ].join("\n");
+
+    const devices = parseAdbDevices(output);
+
+    expect(devices.map((d) => ({ id: d.id, isPhysical: d.isPhysical }))).toEqual([
+      { id: "emulator-5554", isPhysical: false },
+      { id: "emulator-5556", isPhysical: false },
+      { id: "R5CX23WBLKE", isPhysical: true },
+      { id: "ZY222ABCDE", isPhysical: true },
+    ]);
   });
 
   it("handles empty output (just header line)", () => {
