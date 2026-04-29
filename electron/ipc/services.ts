@@ -35,6 +35,7 @@ import { listDevices } from '../../src/core/device.js';
 import { detectAllPackageManagers, detectPackageManager } from '../../src/core/clean.js';
 import { connectElectronToDaemon } from '../daemon-connect.js';
 import { serviceBus } from '../../src/app/service-bus.js';
+import { triggerBuildsIfNeeded } from '../../src/app/auto-build.js';
 import type { DaemonSession } from '../../src/app/client/session.js';
 import type { Profile } from '../../src/core/types.js';
 import { instances, state, send, appendLog, toSummary, findFreePort, type InstanceState } from './state.js';
@@ -392,5 +393,14 @@ export async function startRealServices(
   const session = await attachDaemonSession(defaultProfile, targetProjectRoot);
 
   wireInstanceEvents(instance, session);
+
+  // Mirror the TUI start-flow's auto-build: dirty/clean/ultra-clean modes
+  // expect a fresh build after Metro is up; quick mode skips it.
+  // Without this call, the Electron GUI would silently never build —
+  // the renderer's `instance:build:*` events would never fire and the
+  // user's app would not get reinstalled on the device after a code
+  // change.
+  triggerBuildsIfNeeded(session, defaultProfile, targetProjectRoot);
+
   return session;
 }

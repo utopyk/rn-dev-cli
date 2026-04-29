@@ -4,6 +4,7 @@ import { ProfileStore } from '../../src/core/profile.js';
 import { getCurrentBranch } from '../../src/core/project.js';
 import { listDevices } from '../../src/core/device.js';
 import { attachDaemonSession, wireInstanceEvents } from './services.js';
+import { triggerBuildsIfNeeded } from '../../src/app/auto-build.js';
 import type { Profile } from '../../src/core/types.js';
 import {
   instances,
@@ -127,6 +128,12 @@ export function registerInstanceHandlers() {
         // renderer's `instance:metro` channel — the user sees "Daemon
         // session attached" and then silence.
         wireInstanceEvents(instance, session);
+        // Auto-build for non-quick modes — same parity with the TUI
+        // start-flow as `startRealServices` enforces. The wizard-path
+        // attach (this branch) hits this when the user creates the
+        // first instance from the wizard; without it, dirty/clean/
+        // ultra-clean profiles silently skip the build.
+        triggerBuildsIfNeeded(session, sessionProfile, state.projectRoot);
         const msg = `Daemon session attached for profile "${profileData.name ?? id}".`;
         appendLog(instance, 'service', msg);
         send('instance:log', { instanceId: id, text: msg });
