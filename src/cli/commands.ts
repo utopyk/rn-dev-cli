@@ -6,6 +6,7 @@ import { createDefaultPreflightEngine } from "../core/preflight.js";
 import { listDevices } from "../core/device.js";
 import { IpcClient } from "../core/ipc.js";
 import { registerModuleCommands } from "./module-commands.js";
+import { registerConfigCommands } from "./config-commands.js";
 import path from "path";
 import gradientString from "gradient-string";
 import type { Platform, RunMode } from "../core/types.js";
@@ -302,6 +303,9 @@ export function createProgram(): Command {
 
   // Module system (install / uninstall / list / enable / disable / restart)
   registerModuleCommands(program);
+
+  // Project config (init / validate) — Phase H0
+  registerConfigCommands(program);
 
   // MCP server
   program
