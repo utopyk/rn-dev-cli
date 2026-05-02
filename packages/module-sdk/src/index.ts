@@ -4,16 +4,28 @@ export {
   defineModule,
   validateManifest,
   enforceToolPrefix,
+  HOOK_FIELDS_HOST_MINIMUM,
   type ManifestError,
   type ValidationResult,
 } from "./define-module.js";
-export { ModuleError, ModuleErrorCode } from "./errors.js";
+export {
+  HookError,
+  HookErrorCode,
+  ModuleError,
+  ModuleErrorCode,
+  type HookConfigInvalidCause,
+  type HookErrorDetails,
+  type HookFailedOutcome,
+} from "./errors.js";
 export type {
   ApiMethodContribution,
   ElectronPanelContribution,
+  ManifestHookEntry,
   McpToolContribution,
+  ModuleConsumes,
   ModuleContributions,
   ModuleManifest,
+  ModuleProvides,
   ModuleSandbox,
   ModuleScope,
   ModuleSignature,
