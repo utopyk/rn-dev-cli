@@ -1,15 +1,12 @@
 /**
  * Vitest global setup — runs once before the test suite starts.
  *
- * Phase 3d: builds `@rn-dev/module-sdk` to its `dist/` before integration
- * tests spawn the echo fixture. The fixture imports the SDK via its npm
- * name, so `packages/module-sdk/package.json#main` (./dist/index.js) must
- * exist for `node` to resolve it. Vitest tests within `src/` go through
- * Vite, which transpiles TS directly — they don't depend on the build.
+ * Builds workspace packages whose `package.json#main` points at a `dist/`
+ * artifact, so vite's import-analysis can resolve them by package name when
+ * the CLI / daemon code dynamically imports them. Each build is idempotent
+ * and finishes in <200ms, so we always run them instead of checking mtimes.
  *
- * The build is idempotent and finishes in <100ms, so we always run it
- * instead of checking mtimes. Developers modifying the SDK see their
- * changes on the next `vitest run` without remembering to rebuild.
+ * Phase 3d added `@rn-dev/module-sdk`. Phase H0 added `@rn-dev/config`.
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -17,14 +14,19 @@ import { dirname, join } from "node:path";
 
 export default async function globalSetup(): Promise<void> {
   const repoRoot = dirname(fileURLToPath(import.meta.url));
-  const sdkBuild = join(repoRoot, "packages/module-sdk/build.ts");
-  const result = spawnSync("bun", ["run", sdkBuild], {
-    stdio: "inherit",
-    cwd: repoRoot,
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `[vitest.global-setup] SDK build exited with code ${result.status}`,
-    );
+  const buildScripts = [
+    join(repoRoot, "packages/module-sdk/build.ts"),
+    join(repoRoot, "packages/config/build.ts"),
+  ];
+  for (const script of buildScripts) {
+    const result = spawnSync("bun", ["run", script], {
+      stdio: "inherit",
+      cwd: repoRoot,
+    });
+    if (result.status !== 0) {
+      throw new Error(
+        `[vitest.global-setup] build of ${script} exited with code ${result.status}`,
+      );
+    }
   }
 }
