@@ -39,19 +39,71 @@ export interface BuildResult {
 }
 
 /**
+ * Discriminator on every Builder event payload distinguishing the
+ * Builder's own emits ("builtin") from events synthesized by an
+ * override hook script ("override"). Override semantics arrive in
+ * Phase H4 — H2 only ever emits "builtin", but the field lands on
+ * the public payloads now so consumers (TUI / Electron renderer / MCP
+ * subscribers) don't have to be updated again when override events
+ * start flowing through `BuildHostCapability` in H4.
+ *
+ * Per architecture-strategist showstopper #5: "build failed" vs
+ * "override hook crashed" must be distinguishable by every consumer
+ * downstream of the Builder.
+ */
+export type BuilderEventSource = "builtin" | "override";
+
+export interface BuilderLineEvent {
+  source: BuilderEventSource;
+  text: string;
+  stream: "stdout" | "stderr";
+  replace?: boolean;
+}
+
+export interface BuilderProgressEvent {
+  source: BuilderEventSource;
+  phase: string;
+}
+
+export interface BuilderDoneEvent {
+  source: BuilderEventSource;
+  success: boolean;
+  errors: BuildError[];
+  platform?: "ios" | "android";
+}
+
+/**
  * Manages app builds. Spawns `react-native run-ios` or `run-android`
  * as a child process and streams output line-by-line via events.
  *
  * Emits:
- *   'line'     — { text: string, stream: 'stdout' | 'stderr', replace?: boolean }
- *   'progress' — { phase: string }
- *   'done'     — { success: boolean, errors: BuildError[] }
+ *   'line'     — `BuilderLineEvent`     (source always "builtin")
+ *   'progress' — `BuilderProgressEvent` (source always "builtin")
+ *   'done'     — `BuilderDoneEvent`     (source always "builtin")
+ *
+ * `source` reads "builtin" because this class IS the built-in builder.
+ * Override-hook events (source: "override") are synthesized by
+ * `BuildHostCapability` in Phase H4; consumers can already discriminate.
  */
 export class Builder extends EventEmitter {
   private process: ChildProcess | null = null;
   private rawOutput = "";
   private xcresultPath: string | null = null;
   private detectedXcresultPath: string | null = null;
+
+  // Stamp `source: "builtin"` on every emit from this class so wrappers
+  // (e.g. `BuildHostCapability` in H4) and downstream consumers can
+  // distinguish builtin events from override-synthesized ones without
+  // re-checking the call site.
+  private emitBuiltin(event: "line", payload: Omit<BuilderLineEvent, "source">): void;
+  private emitBuiltin(event: "progress", payload: Omit<BuilderProgressEvent, "source">): void;
+  private emitBuiltin(event: "done", payload: Omit<BuilderDoneEvent, "source">): void;
+  private emitBuiltin(
+    event: "line" | "progress" | "done",
+    payload: Record<string, unknown>,
+  ): void {
+    this.emit(event, { source: "builtin" as const, ...payload });
+  }
 
   build(options: BuildOptions): void {
     // Concurrency guard: Phase 13.3 Security P1-2 — before this, every
@@ -62,7 +114,7 @@ export class Builder extends EventEmitter {
     // one is live; emit a `done` with a meaningful error so listeners
     // aren't left hanging.
     if (this.process && this.process.exitCode === null) {
-      this.emit("done", {
+      this.emitBuiltin("done", {
         success: false,
         platform: options.platform,
         errors: [
@@ -101,9 +153,9 @@ export class Builder extends EventEmitter {
 
     const [cmd, ...cmdPrefix] = resolveRnBin(projectRoot);
 
-    this.emit("progress", { phase: "Building" });
-    this.emit("line", { text: `Building for ${platform}...`, stream: "stdout" });
-    this.emit("line", { text: `  ${cmd} ${[...cmdPrefix, ...args].join(" ")}`, stream: "stdout" });
+    this.emitBuiltin("progress", { phase: "Building" });
+    this.emitBuiltin("line", { text: `Building for ${platform}...`, stream: "stdout" });
+    this.emitBuiltin("line", { text: `  ${cmd} ${[...cmdPrefix, ...args].join(" ")}`, stream: "stdout" });
 
     this.rawOutput = "";
 
@@ -120,7 +172,7 @@ export class Builder extends EventEmitter {
         env: { ...process.env, ...env },
       });
     } catch (err: any) {
-      this.emit("done", {
+      this.emitBuiltin("done", {
         success: false,
         platform,
         errors: [{
@@ -182,19 +234,19 @@ export class Builder extends EventEmitter {
             trimmed.includes("framework not found");
 
           if (trimmed.includes("Compiling") || trimmed.includes("CompileC")) {
-            this.emit("progress", { phase: "Compiling" });
+            this.emitBuiltin("progress", { phase: "Compiling" });
           } else if (trimmed.includes("Linking") || trimmed.includes("Ld ")) {
-            this.emit("progress", { phase: "Linking" });
+            this.emitBuiltin("progress", { phase: "Linking" });
           } else if (trimmed.startsWith("info Installing")) {
-            this.emit("progress", { phase: "Installing" });
+            this.emitBuiltin("progress", { phase: "Installing" });
           } else if (trimmed.startsWith("info Launching")) {
-            this.emit("progress", { phase: "Launching" });
+            this.emitBuiltin("progress", { phase: "Launching" });
           }
 
           if (isMilestone) {
-            this.emit("line", { text: trimmed, stream: streamName, replace: false });
+            this.emitBuiltin("line", { text: trimmed, stream: streamName, replace: false });
           } else {
-            this.emit("line", { text: `  ${trimmed.slice(0, 100)}`, stream: streamName, replace: true });
+            this.emitBuiltin("line", { text: `  ${trimmed.slice(0, 100)}`, stream: streamName, replace: true });
           }
         }
       });
@@ -215,7 +267,7 @@ export class Builder extends EventEmitter {
           try {
             errors = parseXcresultErrors(xcresult);
             if (errors.length > 0) {
-              this.emit("line", { text: `  📋 Extracted ${errors.length} error(s) from xcresult bundle`, stream: "stdout" });
+              this.emitBuiltin("line", { text: `  📋 Extracted ${errors.length} error(s) from xcresult bundle`, stream: "stdout" });
             }
           } catch {
             // Fall through to regex parsing
@@ -271,7 +323,7 @@ export class Builder extends EventEmitter {
         }
       }
 
-      this.emit("done", { success, errors, platform });
+      this.emitBuiltin("done", { success, errors, platform });
       this.process = null;
     });
   }

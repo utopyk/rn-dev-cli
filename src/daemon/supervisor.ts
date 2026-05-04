@@ -531,21 +531,32 @@ export class DaemonSupervisor extends EventEmitter {
       "failed",
       (p) => ({ kind: "modules/failed", worktreeKey, data: p }),
     );
-    bind<{ text: string; stream: "stdout" | "stderr"; replace?: boolean }>(
+    // Builder events carry a `source: "builtin" | "override"` discriminator
+    // (Phase H2b). Today the source is always "builtin" because the Builder
+    // emits the events; H4's BuildHostCapability wrapper will start
+    // synthesizing "override" events for hook-script-driven builds. Forwarded
+    // verbatim so subscribers can already discriminate at the wire boundary.
+    bind<{
+      source: "builtin" | "override";
+      text: string;
+      stream: "stdout" | "stderr";
+      replace?: boolean;
+    }>(services.builder, "line", (p) => ({
+      kind: "builder/line",
+      worktreeKey,
+      data: { source: p.source, text: p.text, stream: p.stream, replace: p.replace },
+    }));
+    bind<{ source: "builtin" | "override"; phase: string }>(
       services.builder,
-      "line",
+      "progress",
       (p) => ({
-        kind: "builder/line",
+        kind: "builder/progress",
         worktreeKey,
-        data: { text: p.text, stream: p.stream, replace: p.replace },
+        data: { source: p.source, phase: p.phase },
       }),
     );
-    bind<{ phase: string }>(services.builder, "progress", (p) => ({
-      kind: "builder/progress",
-      worktreeKey,
-      data: { phase: p.phase },
-    }));
     bind<{
+      source: "builtin" | "override";
       success: boolean;
       errors: Array<{
         source: "xcodebuild" | "gradle";
@@ -560,6 +571,7 @@ export class DaemonSupervisor extends EventEmitter {
       kind: "builder/done",
       worktreeKey,
       data: {
+        source: p.source,
         success: p.success,
         errors: p.errors.map((e) => ({
           source: e.source,

@@ -9,10 +9,22 @@ import type { BuildOptions } from "../../core/builder.js";
 import type { AdapterSink, BuilderEventKind } from "./adapter-sink.js";
 import type { IpcSender } from "./session.js";
 
+// `source` discriminator on every Builder event (Phase H2b). Today the
+// wire always carries `"builtin"` because the daemon-side Builder is the
+// emitter; H4's BuildHostCapability wrapper flips this to `"override"`
+// when an override hook script synthesizes events, letting consumers
+// distinguish "build failed" from "override hook crashed" without
+// re-checking what the daemon was running underneath.
 export interface BuilderClientEvents {
-  line: (evt: { text: string; stream: "stdout" | "stderr"; replace?: boolean }) => void;
-  progress: (evt: { phase: string }) => void;
+  line: (evt: {
+    source: "builtin" | "override";
+    text: string;
+    stream: "stdout" | "stderr";
+    replace?: boolean;
+  }) => void;
+  progress: (evt: { source: "builtin" | "override"; phase: string }) => void;
   done: (evt: {
+    source: "builtin" | "override";
     success: boolean;
     errors: Array<{
       source: "xcodebuild" | "gradle";
