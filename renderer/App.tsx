@@ -31,6 +31,11 @@ interface ModulePanelListEntry {
   icon?: string;
 }
 
+// Cap on every in-memory log buffer the renderer keeps. The CSS layout
+// fix (eaa3fc6) bounds the visual height; this bound stops the underlying
+// arrays + DOM from growing without limit during long sessions.
+const MAX_LOG_LINES = 1000;
+
 function makeEmptyLogs(): InstanceLogs {
   return { serviceLines: [], metroLines: [], sections: [] };
 }
@@ -172,13 +177,18 @@ export function App() {
     const logs = instanceLogsRef.current.get(instanceId) ?? makeEmptyLogs();
     const arr = type === 'service' ? logs.serviceLines : logs.metroLines;
     arr.push(text);
-    if (arr.length > 1000) arr.splice(0, arr.length - 1000);
+    if (arr.length > MAX_LOG_LINES) arr.splice(0, arr.length - MAX_LOG_LINES);
 
-    // Also route service lines into the currently-running section
+    // Also route service lines into the currently-running section.
+    // Section buffers need the same cap; long Gradle/Metro/Watchman runs can
+    // emit tens of thousands of lines and CollapsibleLog renders all of them.
     if (type === 'service' && logs.sections.length > 0) {
       const activeSection = logs.sections.find(s => s.status === 'running');
       if (activeSection) {
         activeSection.lines.push(text);
+        if (activeSection.lines.length > MAX_LOG_LINES) {
+          activeSection.lines.splice(0, activeSection.lines.length - MAX_LOG_LINES);
+        }
       }
     }
 
