@@ -1,6 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, statSync, unlinkSync } from "node:fs";
-import { join, resolve } from "node:path";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import { IpcClient } from "../core/ipc.js";
 import { DAEMON_VERSION } from "./version.js";
 
@@ -214,6 +222,22 @@ export function spawnDetachedDaemon(
   //   - .tsx → bun (every dev path the project supports)
   //   - .js → process.execPath when it looks like node, else node
   const interpreter = pickDaemonInterpreter(entry);
+
+  // Capture daemon stdout + stderr to ~/.rn-dev/logs/daemon-<wt>-<ts>.log.
+  // Pre-fix: stdio: "ignore" discarded both, leaving a crashed daemon
+  // impossible to diagnose — the only signal upstream got was the
+  // socket dying (e.g. the renderer's "Daemon disconnected (metro):
+  // unknown" surfaces from supervisor.ts:253). With this redirect, a
+  // crash leaves a stack trace on disk that matches the daemon's
+  // wall-clock spawn time. One log file per spawn (no rotation
+  // needed yet); compaction can land later if volume becomes a
+  // concern.
+  const logsDir = join(homedir(), ".rn-dev", "logs");
+  mkdirSync(logsDir, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const logPath = join(logsDir, `daemon-${basename(worktree)}-${ts}.log`);
+  const logFd = openSync(logPath, "a");
+
   const child = spawn(
     interpreter,
     interpreter === "bun"
@@ -221,10 +245,17 @@ export function spawnDetachedDaemon(
       : [entry, "daemon", worktree, "--foreground"],
     {
       detached: true,
-      stdio: "ignore",
+      // stdin: ignore (daemon doesn't read stdin); stdout + stderr
+      // share the same log fd so write order matches what a terminal
+      // would have shown.
+      stdio: ["ignore", logFd, logFd],
       cwd: worktree,
     },
   );
+  // The OS keeps the FD open in the spawned child; the parent's
+  // reference is now superfluous and would prevent process tear-down
+  // from releasing the file handle promptly.
+  closeSync(logFd);
   child.unref();
   return child;
 }
