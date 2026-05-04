@@ -25,6 +25,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "playwright test --config playwright.config.ts",
+    "test:real-e2e": "playwright test --config tests/electron-real-e2e/playwright.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p electron/tsconfig.json && tsc --noEmit -p modules/device-control/tsconfig.json && tsc --noEmit -p modules/devtools-network/tsconfig.json && tsc --noEmit -p modules/metro-logs/tsconfig.json",
     "typecheck:electron": "tsc --noEmit -p electron/tsconfig.json",
     "typecheck:modules": "tsc --noEmit -p modules/device-control/tsconfig.json && tsc --noEmit -p modules/devtools-network/tsconfig.json && tsc --noEmit -p modules/metro-logs/tsconfig.json",
