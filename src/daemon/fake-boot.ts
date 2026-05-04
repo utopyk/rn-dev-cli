@@ -37,7 +37,7 @@ import type {
 } from "../core/session/boot.js";
 import { HookManager } from "../core/hooks/manager.js";
 import { getDefaultAuditLog } from "../core/audit-log.js";
-import { validateProfile } from "./profile-guard.js";
+import { validateProfile, type ValidatedProfile } from "./profile-guard.js";
 import type { MetroManager } from "../core/metro.js";
 import type { DevToolsManager } from "../core/devtools.js";
 import type { Builder, BuildOptions } from "../core/builder.js";
@@ -235,6 +235,13 @@ export async function fakeBootSessionServices(
     capabilities,
     moduleEvents,
     hookManager,
+    // Phase H2g — fakeBoot's re-validated profile. Falls back to a
+    // re-cast of the input profile if validateProfile rejected (the
+    // session/init fire above is similarly conditional). Producing the
+    // brand here keeps fake builder/build hook firings type-correct.
+    validatedProfile: fakeValidated.ok
+      ? fakeValidated.profile
+      : (opts.profile as unknown as ValidatedProfile),
     bootTrace,
     dispose,
   };

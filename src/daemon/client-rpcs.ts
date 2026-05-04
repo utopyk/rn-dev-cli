@@ -130,12 +130,7 @@ async function dispatch(
       return services.devtools.restart(services.worktreeKey);
     }
     case "builder/build": {
-      const parsed = parseBuildOptions(message.payload, supervisor.getWorktree());
-      if (!parsed.ok) {
-        return { code: parsed.code, message: parsed.message };
-      }
-      services.builder.build(parsed.opts);
-      return { ok: true };
+      return await handleBuilderBuild(message, services, supervisor);
     }
     case "watcher/start": {
       if (!services.watcher) {
@@ -160,6 +155,65 @@ async function dispatch(
     default:
       throw new Error(`client-rpcs.dispatch: unknown action ${message.action}`);
   }
+}
+
+/**
+ * Phase H2g — `builder/build` handler. Fires `build/pre` BEFORE the
+ * Builder spawns its subprocess (a hard failure aborts the RPC with
+ * E_HOOK_FAILED so the caller knows the build never started), then
+ * arranges to fire `build/post` once the Builder emits `done`. The
+ * post-fire is detached (no `await`) — clients have already received
+ * `{ ok: true }` and observe the build via `builder/done` events.
+ */
+export async function handleBuilderBuild(
+  message: IpcMessage,
+  services: SessionServices,
+  supervisor: DaemonSupervisor,
+): Promise<unknown> {
+  const parsed = parseBuildOptions(message.payload, supervisor.getWorktree());
+  if (!parsed.ok) {
+    return { code: parsed.code, message: parsed.message };
+  }
+
+  // build/pre: any consumer's onFail:'hard' propagates as a thrown
+  // HookError → the surrounding dispatch surfaces { ok: false,
+  // code: E_HOOK_FAILED, phase: 'build/pre' } to the caller.
+  try {
+    await services.hookManager.fire(
+      "build/pre",
+      { profile: services.validatedProfile, opts: parsed.opts },
+      services.validatedProfile,
+    );
+  } catch (err) {
+    return {
+      ok: false,
+      code: "E_HOOK_FAILED",
+      phase: "build/pre",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  // Arrange the post-fire BEFORE kicking off the Builder so we can't
+  // miss a fast 'done' (e.g. concurrency-guard rejection emits 'done'
+  // synchronously). once() so a long-lived Builder instance doesn't
+  // leak listeners across builds.
+  services.builder.once("done", () => {
+    void services.hookManager
+      .fire(
+        "build/post",
+        { profile: services.validatedProfile },
+        services.validatedProfile,
+      )
+      .catch(() => {
+        // build/post failures (incl. onFail:'hard') are intentionally
+        // swallowed: the build is already done, the RPC has long since
+        // returned, and the failure surfaces via the audit log + the
+        // hooks/fired session event the dispatcher emits regardless.
+      });
+  });
+
+  services.builder.build(parsed.opts);
+  return { ok: true };
 }
 
 /**
@@ -206,6 +260,12 @@ async function handleProfileUpdate(
 
   const profilesDir = path.join(supervisor.getWorktree(), ".rn-dev", "profiles");
   new ProfileStore(profilesDir).save(validated);
+
+  // Phase H2g — refresh SessionServices.validatedProfile so subsequent
+  // builder/build hook fires see the latest config. Refresh AFTER the
+  // session/profile-changed fire + persistence so a hard-failing
+  // consumer leaves both the in-memory and on-disk state untouched.
+  services.validatedProfile = validated;
 
   return { ok: true };
 }

@@ -600,6 +600,27 @@ export class DaemonSupervisor extends EventEmitter {
       }));
     }
 
+    // Phase H2g — fan out HookManager `hooks/fired` over the existing
+    // events/subscribe channel. Lets MCP agents and the renderer answer
+    // "did my hook just run?" without grepping the daemon log. Mirrors
+    // the HookManager's internal emit shape ({ target, outcome }) into
+    // the SessionEvent { ok, fired, skipped, failureCount } summary so
+    // the wire payload is bounded (full failure objects can be large).
+    bind<{
+      target: string;
+      outcome: { ok: boolean; fired: number; skipped: number; failures: unknown[] };
+    }>(services.hookManager, "hooks/fired", (p) => ({
+      kind: "hooks/fired",
+      worktreeKey,
+      data: {
+        target: p.target,
+        ok: p.outcome.ok,
+        fired: p.outcome.fired,
+        skipped: p.outcome.skipped,
+        failureCount: p.outcome.failures.length,
+      },
+    }));
+
     return () => {
       for (const fn of detachers) fn();
     };

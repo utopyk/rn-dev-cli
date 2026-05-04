@@ -77,6 +77,9 @@ function makeFakeBoot(): { boot: SessionBootFn; lastServices: { current: Session
         auditLog: getDefaultAuditLog(),
         daemonPid: process.pid,
       }),
+      // Phase H2g — minimal stub; refcount tests don't fire hooks so the
+      // brand integrity isn't load-bearing here.
+      validatedProfile: opts.profile as never,
       bootTrace: [],
       dispose: async () => {
         /* no-op */

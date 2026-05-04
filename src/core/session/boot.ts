@@ -105,6 +105,15 @@ export interface SessionServices {
    */
   hookManager: HookManager;
   /**
+   * Phase H2g — current ValidatedProfile. Re-minted at boot from the
+   * caller's plain `Profile` and refreshed by the
+   * `session/profile-update` RPC handler so subsequent build/pre and
+   * build/post hook fires receive a brand-bearing instance reflecting
+   * the latest configuration. Mutable on purpose; consumers should not
+   * cache references across `session/profile-update`.
+   */
+  validatedProfile: import("../../daemon/profile-guard.js").ValidatedProfile;
+  /**
    * Boot-trace markers in firing order. Populated as the three-phase
    * boot progresses; `[1, 2, 3]` after a healthy boot. Exposed for
    * vitest assertions that pin the ordering invariant: every built-in
@@ -468,6 +477,10 @@ export async function bootSessionServices(
     capabilities,
     moduleEvents: modulesIpc.moduleEvents,
     hookManager,
+    // Phase H2g — initial validated profile. session/profile-update
+    // mutates this field in place so subsequent build/pre + build/post
+    // hook fires see the latest config.
+    validatedProfile,
     bootTrace,
     dispose,
   };
