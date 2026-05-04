@@ -28,6 +28,7 @@ const PRODUCTION_ALLOWLIST: ReadonlySet<string> = new Set([
   "settings",
   "marketplace",
   "session",
+  "build", // Phase H2e — wraps src/core/builder.ts behind a hook host
 ]);
 
 /**

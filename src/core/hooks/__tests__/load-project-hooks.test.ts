@@ -224,3 +224,80 @@ describe("loadProjectHooks — error handling", () => {
     ).toBe(true);
   });
 });
+
+describe("loadProjectHooks — override-slot opt-in (Phase H2e)", () => {
+  it("rejects a project consumer of <id>/custom without allowModuleOverrides", async () => {
+    writeFileSync(join(tmpRoot, "rn-dev.config.mjs"), "", "utf-8");
+    mkdirSync(join(tmpRoot, "hooks"));
+    writeFileSync(join(tmpRoot, "hooks", "swap.sh"), "#!/bin/bash\n", "utf-8");
+
+    const manager = makeManager();
+    manager.declareProvider("build", ["pre", "post", "custom"]);
+    const lines: string[] = [];
+    const result = await loadProjectHooks({
+      hookManager: manager,
+      projectRoot: tmpRoot,
+      emit: (line) => lines.push(line),
+      loadConfigFn: async () =>
+        ({
+          hooks: { "build/custom": "./hooks/swap.sh" },
+        }) as RnDevConfig,
+    });
+    expect(result.registered).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(
+      lines.some(
+        (l) =>
+          l.includes("Skipping hook build/custom") &&
+          l.includes("allowModuleOverrides"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts a project consumer of <id>/custom WITH allowModuleOverrides", async () => {
+    writeFileSync(join(tmpRoot, "rn-dev.config.mjs"), "", "utf-8");
+    mkdirSync(join(tmpRoot, "hooks"));
+    writeFileSync(join(tmpRoot, "hooks", "swap.sh"), "#!/bin/bash\n", "utf-8");
+
+    const manager = makeManager();
+    manager.declareProvider("build", ["pre", "post", "custom"]);
+    const lines: string[] = [];
+    const result = await loadProjectHooks({
+      hookManager: manager,
+      projectRoot: tmpRoot,
+      emit: (line) => lines.push(line),
+      loadConfigFn: async () =>
+        ({
+          allowModuleOverrides: ["build"],
+          hooks: { "build/custom": "./hooks/swap.sh" },
+        }) as RnDevConfig,
+    });
+    expect(result.registered).toBe(1);
+    expect(result.skipped).toBe(0);
+  });
+
+  it("non-custom slots are unaffected by the opt-in gate", async () => {
+    writeFileSync(join(tmpRoot, "rn-dev.config.mjs"), "", "utf-8");
+    mkdirSync(join(tmpRoot, "hooks"));
+    writeFileSync(join(tmpRoot, "hooks", "pre.sh"), "#!/bin/bash\n", "utf-8");
+
+    const manager = makeManager();
+    manager.declareProvider("build", ["pre", "post", "custom"]);
+    const result = await loadProjectHooks({
+      hookManager: manager,
+      projectRoot: tmpRoot,
+      emit: () => {},
+      loadConfigFn: async () =>
+        ({
+          // No allowModuleOverrides; build/pre and build/post are
+          // regular slots and should land normally.
+          hooks: {
+            "build/pre": "./hooks/pre.sh",
+            "build/post": "./hooks/pre.sh",
+          },
+        }) as RnDevConfig,
+    });
+    expect(result.registered).toBe(2);
+    expect(result.skipped).toBe(0);
+  });
+});

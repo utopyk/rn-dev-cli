@@ -20,12 +20,12 @@ const ROGUE_MANIFEST: ModuleManifest = {
 };
 
 describe("BUILT_IN_MODULE_ALLOWLIST", () => {
-  it("ships with `session` for H1", () => {
+  it("ships with `session` (H1) and `build` (H2)", () => {
     expect(BUILT_IN_MODULE_ALLOWLIST.has("session")).toBe(true);
+    expect(BUILT_IN_MODULE_ALLOWLIST.has("build")).toBe(true);
   });
 
-  it("does NOT include H2/H3 ids that haven't shipped yet", () => {
-    expect(BUILT_IN_MODULE_ALLOWLIST.has("build")).toBe(false);
+  it("does NOT include H3 ids that haven't shipped yet", () => {
     expect(BUILT_IN_MODULE_ALLOWLIST.has("clean")).toBe(false);
     expect(BUILT_IN_MODULE_ALLOWLIST.has("metro")).toBe(false);
     expect(BUILT_IN_MODULE_ALLOWLIST.has("devtools-core")).toBe(false);
@@ -54,7 +54,8 @@ describe("assertBuiltInAllowed", () => {
 describe("isBuiltInAllowed", () => {
   it("returns true for allowed ids and false otherwise", () => {
     expect(isBuiltInAllowed("session")).toBe(true);
-    expect(isBuiltInAllowed("build")).toBe(false);
+    expect(isBuiltInAllowed("build")).toBe(true);
+    expect(isBuiltInAllowed("clean")).toBe(false); // H3 — not yet
     expect(isBuiltInAllowed("")).toBe(false);
   });
 });

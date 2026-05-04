@@ -18,6 +18,7 @@ import type {
   HookRegistrations,
   RnDevConfig,
 } from "@rn-dev/config";
+import { HookError, HookErrorCode } from "@rn-dev/module-sdk";
 import { resolveHookScript } from "./path-resolver.js";
 import type { HookManager } from "./manager.js";
 
@@ -75,12 +76,23 @@ export async function loadProjectHooks(
     return { configFile, registered: 0, skipped: 0 };
   }
 
+  // Phase H2e — gate override-slot consumers behind explicit
+  // `allowModuleOverrides` opt-in. Override semantics formalize in H4
+  // (per-slot replacement) and H5 (3p `consumes.hooks` against
+  // built-in slots); the project-config side of the gate lands HERE so
+  // the build module's `build/custom` placeholder cannot be
+  // accidentally claimed by a project before the broader semantics
+  // exist. `config.allowModuleOverrides: ['<id>']` opts a project in
+  // for that specific module.
+  const allowOverrides = new Set<string>(config.allowModuleOverrides ?? []);
+
   const configDir = path.dirname(configFile);
   let registered = 0;
   let skipped = 0;
   for (const [target, entry] of Object.entries(hooks)) {
     if (entry === undefined) continue;
     try {
+      assertOverrideOptIn(target, allowOverrides);
       await registerProjectHook({
         target: target as HookPhase,
         entry,
@@ -104,6 +116,33 @@ export async function loadProjectHooks(
     );
   }
   return { configFile, registered, skipped };
+}
+
+/**
+ * Phase H2e — reject project-config registrations against `<id>/custom`
+ * override slots unless the project opted in via `allowModuleOverrides`.
+ * Throws a `HookError` mirroring the SDK's E_HOOK_OVERRIDE_NOT_PERMITTED
+ * variant; the surrounding loop turns it into a `skipped` count + warning.
+ */
+function assertOverrideOptIn(
+  target: string,
+  allowed: ReadonlySet<string>,
+): void {
+  const slash = target.indexOf("/");
+  if (slash <= 0) return;
+  const moduleId = target.slice(0, slash);
+  const hookName = target.slice(slash + 1);
+  if (hookName !== "custom") return;
+  if (allowed.has(moduleId)) return;
+  throw new HookError(
+    `project hook "${target}" registers against the override slot but ` +
+      `the project did not opt in via allowModuleOverrides: ['${moduleId}'].`,
+    {
+      code: HookErrorCode.E_HOOK_OVERRIDE_NOT_PERMITTED,
+      moduleId,
+      targetModuleId: moduleId,
+    },
+  );
 }
 
 async function registerProjectHook(input: {

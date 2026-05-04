@@ -63,6 +63,30 @@ export const sessionManifest: ModuleManifest = {
 };
 
 /**
+ * Phase H2e — wraps the in-process Builder (src/core/builder.ts) behind
+ * the `BuildHostCapability` factory. `build/pre` fires BEFORE the
+ * Builder's `build(opts)` call; `build/post` fires AFTER `done`. The
+ * `custom` slot is the override entry point — H2 declares it but
+ * `loadProjectHooks` rejects override consumers without
+ * `allowModuleOverrides: ['build']` opt-in (full override semantics
+ * land in Phase H4).
+ *
+ * No TUI / MCP surface contributions: Builder is driven from the host's
+ * own `builder/build` RPC and the renderer's status bar / shortcuts
+ * (Phase 13.6 PR-C wired this), not through module-system contributions.
+ * The build module exists purely to own the hook contribution-points
+ * namespace + the in-process capability instance.
+ */
+export const buildManifest: ModuleManifest = {
+  id: "build",
+  version: "0.1.0",
+  hostRange: ">=0.1.0",
+  scope: "global",
+  provides: { hooks: ["pre", "post", "custom"] },
+  activationEvents: ["onStartup"],
+};
+
+/**
  * Settings carries the only Phase 5b built-in that exposes user-tweakable
  * preferences via `contributes.config.schema`. Phase 5b ships the schema
  * declaration; actually migrating the renderer Settings view to drive
