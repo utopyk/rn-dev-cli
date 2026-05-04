@@ -58,6 +58,7 @@
     "pacote": "^21.5.0",
     "react": "^19.2.5",
     "semver": "^7.7.4",
+    "split2": "^4.2.0",
     "vscode-jsonrpc": "^8.2.0",
     "ws": "^8.20.0"
   },
@@ -71,6 +72,7 @@
     "@types/picomatch": "^4.0.2",
     "@types/react": "^19.2.14",
     "@types/semver": "^7.7.1",
+    "@types/split2": "^4.2.3",
     "@types/ws": "^8.18.1",
     "concurrently": "^9.2.1",
     "electron": "^35.7.5",
