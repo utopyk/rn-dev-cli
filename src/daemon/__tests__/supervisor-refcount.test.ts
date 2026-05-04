@@ -77,6 +77,7 @@ function makeFakeBoot(): { boot: SessionBootFn; lastServices: { current: Session
         auditLog: getDefaultAuditLog(),
         daemonPid: process.pid,
       }),
+      bootTrace: [],
       dispose: async () => {
         /* no-op */
       },

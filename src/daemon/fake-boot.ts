@@ -36,6 +36,7 @@ import type {
 } from "../core/session/boot.js";
 import { HookManager } from "../core/hooks/manager.js";
 import { getDefaultAuditLog } from "../core/audit-log.js";
+import { validateProfile } from "./profile-guard.js";
 import type { MetroManager } from "../core/metro.js";
 import type { DevToolsManager } from "../core/devtools.js";
 import type { Builder, BuildOptions } from "../core/builder.js";
@@ -163,20 +164,45 @@ export async function fakeBootSessionServices(
     metro.emit("status", { worktreeKey, status: "running" });
   }, 25);
 
-  // Hook system parity with production. Construct a real HookManager
-  // and seed it with every registered built-in's `provides.hooks` so
-  // fake-boot integration tests can exercise the same RPC path
-  // (`session/profile-update`) the real daemon does.
+  // Hook system parity with production three-phase boot. Build the
+  // manager, declare every registered built-in's `provides.hooks`,
+  // skip the project-config walk (fake boots don't load
+  // rn-dev.config.*), then fire `session/init`. Phase markers emitted
+  // on the manager match the production `bootSessionServices` path.
   const hookManager = new HookManager({
     auditLog: getDefaultAuditLog(),
     daemonPid: process.pid,
   });
+  const bootTrace: Array<{ phase: 1 | 2 | 3; ts: number }> = [];
+  hookManager.on("boot/phase", (m: { phase: 1 | 2 | 3; ts: number }) => {
+    bootTrace.push(m);
+  });
+  hookManager.emit("boot/phase", { phase: 1, ts: Date.now() });
   for (const m of moduleRegistry.getAllManifests()) {
     const provides = m.manifest.provides?.hooks;
     if (provides && provides.length > 0) {
       hookManager.declareProvider(m.manifest.id, provides);
     }
   }
+  hookManager.emit("boot/phase", { phase: 2, ts: Date.now() });
+
+  // Re-validate so the session/init fire receives a ValidatedProfile.
+  // Fake-boot's profile already came through the same daemon-boundary
+  // validateProfile as production, but the brand isn't transferable
+  // through the plain `Profile` shape.
+  const fakeValidated = validateProfile(opts.profile);
+  if (fakeValidated.ok) {
+    await hookManager.fire(
+      "session/init",
+      {
+        profile: fakeValidated.profile,
+        worktreeKey,
+        projectRoot: opts.projectRoot,
+      },
+      fakeValidated.profile,
+    );
+  }
+  hookManager.emit("boot/phase", { phase: 3, ts: Date.now() });
 
   const dispose = async (): Promise<void> => {
     modulesIpc.unregister();
@@ -195,6 +221,7 @@ export async function fakeBootSessionServices(
     capabilities,
     moduleEvents,
     hookManager,
+    bootTrace,
     dispose,
   };
 }

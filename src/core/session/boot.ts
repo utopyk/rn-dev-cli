@@ -43,6 +43,8 @@ import type { Builder } from "../builder.js";
 import type { Profile } from "../types.js";
 import { HookManager } from "../hooks/manager.js";
 import { getDefaultAuditLog } from "../audit-log.js";
+import { loadProjectHooks } from "../hooks/load-project-hooks.js";
+import { validateProfile } from "../../daemon/profile-guard.js";
 
 export interface BootSessionServicesOptions {
   profile: Profile;
@@ -102,6 +104,14 @@ export interface SessionServices {
    * `session/profile-update` RPC.
    */
   hookManager: HookManager;
+  /**
+   * Boot-trace markers in firing order. Populated as the three-phase
+   * boot progresses; `[1, 2, 3]` after a healthy boot. Exposed for
+   * vitest assertions that pin the ordering invariant: every built-in
+   * provider is declared (Phase 2) before `session/init` fires
+   * (Phase 3). Production callers should ignore.
+   */
+  bootTrace: ReadonlyArray<{ phase: 1 | 2 | 3; ts: number }>;
   /** Release resources. Daemon calls this on session/stop. */
   dispose: () => Promise<void>;
 }
@@ -348,23 +358,60 @@ export async function bootSessionServices(
     subscribeRegistry: opts.subscribeRegistry,
   });
 
-  // 13. Hook system. Construct after module-registry loading so
-  //     declareProvider sees every built-in's `provides.hooks`.
-  //     Three-phase boot in step (i) will move this construction site
-  //     into a structured Phase 2 and walk the project's
-  //     consumes.hooks here too; for now wire just the host-side
-  //     contribution-point declaration so the manager is observable
-  //     from RPC handlers.
+  // 13. Hook system three-phase boot.
+  //
+  //     Phase 1 (capabilities + built-ins registered) — completed by the
+  //     `createModuleSystem` + `loadUserGlobalModules` calls above. NO
+  //     hook fires here; NO HookManager constructed. The contract for
+  //     Phase 1 is just "the module graph is in place."
+  //
+  //     Phase 2 (HookManager + provider declarations + project config
+  //     walk) — construct the manager, declare every built-in's
+  //     `provides.hooks`, then load the project's `rn-dev.config.*` if
+  //     present and add its registrations. Orphans (registrations
+  //     against a slot whose provider hasn't declared the hook yet)
+  //     are flagged and surfaced via the `hooks/orphaned` event.
+  //
+  //     Phase 3 (session/init fire) — first hook fire of the session.
+  //     Consumers registered against `session/init` run here; a hard
+  //     failure aborts boot.
   const hookManager = new HookManager({
     auditLog: getDefaultAuditLog(),
     daemonPid: process.pid,
   });
+  const bootTrace: Array<{ phase: 1 | 2 | 3; ts: number }> = [];
+  hookManager.on("boot/phase", (m: { phase: 1 | 2 | 3; ts: number }) => {
+    bootTrace.push(m);
+  });
+  hookManager.emit("boot/phase", { phase: 1, ts: Date.now() });
+
   for (const m of moduleRegistry.getAllManifests()) {
     const provides = m.manifest.provides?.hooks;
     if (provides && provides.length > 0) {
       hookManager.declareProvider(m.manifest.id, provides);
     }
   }
+  await loadProjectHooks({ hookManager, projectRoot, emit });
+  hookManager.emit("boot/phase", { phase: 2, ts: Date.now() });
+
+  // Re-validate the profile at the boot boundary. The daemon's
+  // session/start handler already validated upstream, but the
+  // ValidatedProfile brand is non-transferable through the plain
+  // `Profile` shape that flows into this factory. Re-mint here so the
+  // first hook fire receives a brand-bearing instance.
+  const validatedResult = validateProfile(profile);
+  if (!validatedResult.ok) {
+    throw new Error(
+      `bootSessionServices: profile re-validation failed (${validatedResult.code}): ${validatedResult.message}`,
+    );
+  }
+  const validatedProfile = validatedResult.profile;
+  await hookManager.fire(
+    "session/init",
+    { profile: validatedProfile, worktreeKey, projectRoot },
+    validatedProfile,
+  );
+  hookManager.emit("boot/phase", { phase: 3, ts: Date.now() });
 
   emit("\u2714 All services started");
   emit("");
@@ -404,6 +451,7 @@ export async function bootSessionServices(
     capabilities,
     moduleEvents: modulesIpc.moduleEvents,
     hookManager,
+    bootTrace,
     dispose,
   };
 }
