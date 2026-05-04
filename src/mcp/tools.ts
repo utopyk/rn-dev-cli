@@ -11,6 +11,7 @@ import type { Platform } from "../core/types.js";
 import { listDevices, bootDevice } from "../core/device.js";
 import { getWorktrees } from "../core/project.js";
 import { CleanManager } from "../core/clean.js";
+import { buildHooksTools } from "./tools-hooks.js";
 
 // ---------------------------------------------------------------------------
 // McpContext
@@ -185,6 +186,7 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
 
   return [
     ...buildModulesLifecycleTools(ctx),
+    ...buildHooksTools(),
     // Session management
     {
       name: "rn-dev/start-session",
