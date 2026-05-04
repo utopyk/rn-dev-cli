@@ -31,6 +31,7 @@ import {
 import { checkEnv, type ValidatedProfile } from "../../daemon/profile-guard.js";
 import type { HookRecord } from "@rn-dev/config";
 import { checkFingerprint } from "./path-resolver.js";
+import { unlinkHookLockfile, writeHookLockfile } from "./lockfile.js";
 import type { Registration } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -51,6 +52,8 @@ export interface HookSubprocessRunInput {
   spawnFn?: typeof defaultSpawn;
   /** Test seam — override `Date.now()`. */
   now?: () => number;
+  /** Test seam — override `~/.rn-dev/hooks/` lockfile root. */
+  lockfileRootOverride?: string;
 }
 
 export type HookSubprocessOutcome =
@@ -157,6 +160,27 @@ export async function runHookSubprocess(
     );
   }
 
+  // Write the orphan-sweep sentinel lockfile synchronously, before any
+  // async work, so a daemon SIGKILL between spawn and lockfile-write
+  // can't strand a hook subprocess invisible to the next daemon's sweep.
+  // Best-effort: lockfile-write failure (e.g. ENOSPC) does NOT abort
+  // the fire — the hook can still complete; the fallout is just that a
+  // crash before completion would leak the subprocess.
+  let lockfilePath: string | null = null;
+  if (typeof child.pid === "number" && process.platform !== "win32") {
+    try {
+      lockfilePath = writeHookLockfile({
+        pgid: child.pid,
+        daemonPid: input.daemonPid,
+        target: input.registration.target,
+        rootOverride: input.lockfileRootOverride,
+        now,
+      });
+    } catch {
+      lockfilePath = null;
+    }
+  }
+
   return collectFromChild({
     child,
     payload: input.payload,
@@ -166,6 +190,7 @@ export async function runHookSubprocess(
     start,
     now,
     records,
+    lockfilePath,
   });
 }
 
@@ -238,6 +263,8 @@ interface CollectInput {
   start: number;
   now: () => number;
   records: HookRecord[];
+  /** Path to the orphan-sweep sentinel; unlinked on every terminal path. */
+  lockfilePath: string | null;
 }
 
 function collectFromChild(input: CollectInput): Promise<HookSubprocessRunResult> {
@@ -260,6 +287,12 @@ function collectFromChild(input: CollectInput): Promise<HookSubprocessRunResult>
         input.child.kill("SIGTERM");
       } catch {
         /* already exited */
+      }
+      // Always unlink the orphan-sweep sentinel — the hook is no longer
+      // ours to track. If the unlink fails (e.g. swept by a fresh
+      // daemon), it's a no-op.
+      if (input.lockfilePath !== null) {
+        unlinkHookLockfile(input.lockfilePath);
       }
       resolve(result);
     };
