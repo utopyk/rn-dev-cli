@@ -12,6 +12,7 @@ import {
 } from "@rn-dev/module-sdk";
 import type { RnDevModule } from "../core/types.js";
 import { isDisabled as isModuleDisabled } from "./disabled-flag.js";
+import { assertBuiltInAllowed } from "./built-in-allowlist.js";
 import { warnIfUnknownPermission } from "../core/module-host/capabilities.js";
 
 // ---------------------------------------------------------------------------
@@ -197,6 +198,9 @@ export class ModuleRegistry {
         { errors: validation.errors },
       );
     }
+    // Allowlist check happens AFTER schema validation so `manifest.id`
+    // is known well-formed before we read it.
+    assertBuiltInAllowed(validation.manifest.id);
     enforceToolPrefix(validation.manifest, { isBuiltIn: true });
 
     const scopeUnit =

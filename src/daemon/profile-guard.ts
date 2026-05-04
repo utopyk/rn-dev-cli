@@ -14,8 +14,24 @@
 
 import type { Profile, Platform, RunMode } from "../core/types.js";
 
+/**
+ * Branded `Profile` minted only by `validateProfile`. The brand is a
+ * phantom (zero runtime cost) but the type system refuses to let an
+ * unvalidated `Profile` flow into APIs that accept `ValidatedProfile`.
+ *
+ * Required by the H1 hook system: every entry point that fires a hook
+ * (RPC handler, MCP tool, in-process call) re-runs `validateProfile`
+ * to mint a `ValidatedProfile`, so the hook spawn boundary cannot be
+ * reached with attacker-controlled fields like `LD_PRELOAD` smuggled in
+ * via a fresh `Profile` object literal.
+ */
+declare const ValidatedProfileBrand: unique symbol;
+export type ValidatedProfile = Profile & {
+  readonly [ValidatedProfileBrand]: true;
+};
+
 export type ValidateProfileResult =
-  | { ok: true; profile: Profile }
+  | { ok: true; profile: ValidatedProfile }
   | { ok: false; code: string; message: string };
 
 /**
@@ -132,8 +148,9 @@ export function validateProfile(input: unknown): ValidateProfileResult {
   const projectRootCheck = checkAbsolutePath(p.projectRoot, "profile.projectRoot");
   if (!projectRootCheck.ok) return projectRootCheck;
 
-  // Input is now shape-safe; narrow to Profile for the caller.
-  return { ok: true, profile: input as Profile };
+  // Input is now shape-safe; mint the branded type so downstream APIs
+  // that require a validated profile (e.g. HookManager.fire) accept it.
+  return { ok: true, profile: input as ValidatedProfile };
 }
 
 function checkOptionalPath(

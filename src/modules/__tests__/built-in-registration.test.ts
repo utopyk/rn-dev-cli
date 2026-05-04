@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ModuleRegistry,
   builtInModulePath,
@@ -8,7 +8,20 @@ import {
   lintTestManifest,
   settingsManifest,
 } from "../built-in/manifests.js";
+import {
+  __addBuiltInAllowedForTests,
+  __resetBuiltInAllowlistForTests,
+} from "../built-in-allowlist.js";
 import type { ModuleManifest } from "@rn-dev/module-sdk";
+
+beforeEach(() => {
+  // Synthetic fixture id used by the tool-prefix-waiver test below.
+  __addBuiltInAllowedForTests("privileged-tools");
+});
+
+afterEach(() => {
+  __resetBuiltInAllowlistForTests();
+});
 
 describe("registerBuiltIn — stamps kind + sentinel path + isBuiltIn", () => {
   it("stamps kind='built-in-privileged', isBuiltIn=true, state='active'", () => {
