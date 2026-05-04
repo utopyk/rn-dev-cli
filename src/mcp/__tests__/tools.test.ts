@@ -74,9 +74,9 @@ function makeMockSession(
 // ---------------------------------------------------------------------------
 
 describe("createToolDefinitions()", () => {
-  it("returns 31 tool definitions (22 legacy + 5 modules/* lifecycle + 2 modules/config/* + modules-available + session-logs; Phase 11 retired legacy `rn-dev/metro-logs`)", () => {
+  it("returns 33 tool definitions (22 legacy + 5 modules/* lifecycle + 2 modules/config/* + modules-available + session-logs + 2 hooks/* added in Phase H2j+H2k; Phase 11 retired legacy `rn-dev/metro-logs`)", () => {
     const tools = createToolDefinitions(makeMockContext());
-    expect(tools).toHaveLength(31);
+    expect(tools).toHaveLength(33);
   });
 
   it("each tool has name, description, inputSchema, and handler", () => {
