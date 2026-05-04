@@ -235,11 +235,14 @@ export function parseXctraceDevices(output: string): Device[] {
 
 /**
  * Boot an iOS simulator. Returns true on success, false on failure.
- * Currently only iOS simulators are supported.
+ * Physical devices are a no-op: they connect via USB/network and have nothing to boot.
  */
 export async function bootDevice(device: Device): Promise<boolean> {
   if (device.type !== "ios") {
     return false;
+  }
+  if (device.isPhysical) {
+    return true;
   }
 
   try {

@@ -242,16 +242,18 @@ export async function bootSessionServices(
     emit(`\u2714 Port ${port} is free`);
   }
 
-  // 6. Simulator boot (iOS only).
+  // 6. iOS device check (simulator boot if needed; physical devices are USB-attached).
   if (profile.platform === "ios" || profile.platform === "both") {
     const deviceId = profile.devices?.ios;
     if (deviceId) {
-      emit("\u23f3 Checking simulator status...");
+      emit("\u23f3 Checking iOS device status...");
       try {
         const { listDevices: listDev, bootDevice } = await import("../device.js");
         const devices = await listDev("ios");
         const device = devices.find((d) => d.id === deviceId);
-        if (device && device.status === "shutdown") {
+        if (device?.isPhysical) {
+          emit(`  \u2714 Physical device ${device.name} (connects via USB)`);
+        } else if (device && device.status === "shutdown") {
           emit(`\u23f3 Booting simulator ${device.name}...`);
           const booted = await bootDevice(device);
           emit(
@@ -262,11 +264,11 @@ export async function bootSessionServices(
         } else if (device && device.status === "booted") {
           emit(`  \u2714 Simulator ${device.name} already booted`);
         } else {
-          emit(`  \u26a0 Device ${deviceId} not found in simulator list`);
+          emit(`  \u26a0 Device ${deviceId} not found in iOS device list`);
         }
       } catch (err) {
         emit(
-          `  \u26a0 Simulator check failed: ${
+          `  \u26a0 iOS device check failed: ${
             err instanceof Error ? err.message.slice(0, 80) : String(err).slice(0, 80)
           }`,
         );
