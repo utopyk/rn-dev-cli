@@ -239,6 +239,58 @@ describe("loadConfig", () => {
       }
     });
   });
+
+  // -------------------------------------------------------------------------
+  // projectRoot containment check — H1 security showstopper
+  // -------------------------------------------------------------------------
+
+  it("loads cleanly when the config sits under the projectRoot", async () => {
+    await withTmp(async (dir) => {
+      const file = join(dir, "rn-dev.config.mjs");
+      writeFileSync(file, `export default { hooks: {} };\n`);
+      const cfg = await loadConfig(pathToFileURL(file).href, {
+        projectRoot: dir,
+      });
+      expect(cfg).toEqual({ hooks: {} });
+    });
+  });
+
+  it("rejects when the config resolves outside the projectRoot", async () => {
+    await withTmp(async (rootDir) => {
+      await withTmp(async (otherDir) => {
+        const file = join(otherDir, "rogue.config.mjs");
+        writeFileSync(file, `export default { hooks: {} };\n`);
+        await expect(
+          loadConfig(pathToFileURL(file).href, { projectRoot: rootDir }),
+        ).rejects.toMatchObject({
+          code: HookErrorCode.E_HOOK_CONFIG_INVALID,
+          details: { cause: "path-outside-project" },
+        });
+      });
+    });
+  });
+
+  it("does not match a sibling whose path is a string-prefix of projectRoot", async () => {
+    // /tmp/foo vs /tmp/foobar — without the trailing-separator guard,
+    // a config inside `foobar` would falsely satisfy a `foo` prefix check.
+    await withTmp(async (dir) => {
+      // Create a sibling with a name that prefixes the rootDir name.
+      const outerTmp = join(dir, "..");
+      const outerEntries = mkdtempSync(join(outerTmp, "rn-dev-prefix-"));
+      try {
+        const file = join(outerEntries, "rn-dev.config.mjs");
+        writeFileSync(file, `export default { hooks: {} };\n`);
+        await expect(
+          loadConfig(pathToFileURL(file).href, { projectRoot: dir }),
+        ).rejects.toMatchObject({
+          code: HookErrorCode.E_HOOK_CONFIG_INVALID,
+          details: { cause: "path-outside-project" },
+        });
+      } finally {
+        rmSync(outerEntries, { recursive: true, force: true });
+      }
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

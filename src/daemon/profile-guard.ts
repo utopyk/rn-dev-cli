@@ -89,6 +89,16 @@ export function validateProfile(input: unknown): ValidateProfileResult {
   if (typeof name !== "string" || name.length === 0 || name.length > 256) {
     return fail("E_PROFILE_NAME", "profile.name must be a non-empty string ≤256 chars");
   }
+  // Reject \n and \r in name — parity with `checkAbsolutePath`. Required
+  // because name flows into `RN_DEV_PROFILE_JSON` env var; embedded
+  // newlines desync the JSON-line parser on the receiving end (H1 hook
+  // subprocess runner).
+  if (name.includes("\n") || name.includes("\r")) {
+    return fail(
+      "E_PROFILE_NAME_NEWLINE",
+      "profile.name must not contain newline characters",
+    );
+  }
 
   if (typeof p.isDefault !== "boolean") {
     return fail("E_PROFILE_IS_DEFAULT", "profile.isDefault must be boolean");

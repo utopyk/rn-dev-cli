@@ -70,7 +70,8 @@ export type HookConfigInvalidCause =
   | "threw"
   | "shape-invalid"
   | "config-load-timeout"
-  | "version-mismatch";
+  | "version-mismatch"
+  | "path-outside-project";
 
 /** Discriminator for `E_HOOK_FAILED`. */
 export type HookFailedOutcome =

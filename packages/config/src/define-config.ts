@@ -2,6 +2,9 @@ import AjvDefault, {
   type ErrorObject,
   type ValidateFunction,
 } from "ajv/dist/2020.js";
+import { realpathSync } from "node:fs";
+import { sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { HookError, HookErrorCode } from "@rn-dev/module-sdk";
 import schema from "../config.schema.json" with { type: "json" };
 import type {
@@ -120,6 +123,16 @@ function formatError(err: ErrorObject): ConfigValidationError {
 export interface LoadConfigOptions {
   /** Wall-clock cap on the dynamic import. Defaults to 5 seconds. */
   timeoutMs?: number;
+  /**
+   * Absolute path of the project root the config must resolve under.
+   * When provided, `loadConfig` resolves the symlink-real path of both
+   * `filePath` and `projectRoot` and rejects if the config is outside
+   * the project tree — closes a path-traversal pivot where a symlink
+   * inside `node_modules/` could redirect the daemon to import an
+   * attacker-controlled file. Optional for backward compatibility;
+   * the daemon and `rn-dev config validate` always pass it.
+   */
+  projectRoot?: string;
 }
 
 export async function loadConfig(
@@ -127,6 +140,10 @@ export async function loadConfig(
   options: LoadConfigOptions = {},
 ): Promise<RnDevConfig> {
   const timeoutMs = options.timeoutMs ?? 5_000;
+
+  if (options.projectRoot !== undefined) {
+    assertConfigUnderProjectRoot(filePath, options.projectRoot);
+  }
 
   let module_: { default?: unknown };
   try {
@@ -187,6 +204,48 @@ export async function loadConfig(
     );
   }
   return result.config;
+}
+
+/**
+ * Throw `E_HOOK_CONFIG_INVALID { cause: "path-outside-project" }` if the
+ * config file's `realpath` is not strictly under the project root's
+ * `realpath`. Resolving both sides against the symlink-real path closes
+ * the TOCTOU window where a writable directory inside `node_modules/`
+ * symlinks the daemon at attacker-controlled JS during `import()`.
+ */
+function assertConfigUnderProjectRoot(filePath: string, projectRoot: string): void {
+  // `loadConfig` accepts both file URL strings (test usage) and plain
+  // absolute paths (daemon usage). Normalize before realpath.
+  const fsPath = filePath.startsWith("file://") ? fileURLToPath(filePath) : filePath;
+
+  let realFile: string;
+  let realRoot: string;
+  try {
+    realFile = realpathSync(fsPath);
+    realRoot = realpathSync(projectRoot);
+  } catch (err) {
+    throw new HookError(
+      `Failed to resolve real path for config-root containment check: ${(err as Error).message ?? String(err)}`,
+      {
+        code: HookErrorCode.E_HOOK_CONFIG_INVALID,
+        cause: "path-outside-project",
+        configPath: filePath,
+      },
+    );
+  }
+  // `realRoot + sep` requires a trailing separator so `/proj/foo` does
+  // not match `/proj/foobar` as a prefix.
+  const rootWithSep = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
+  if (realFile !== realRoot && !realFile.startsWith(rootWithSep)) {
+    throw new HookError(
+      `Config at ${realFile} resolves outside project root ${realRoot}.`,
+      {
+        code: HookErrorCode.E_HOOK_CONFIG_INVALID,
+        cause: "path-outside-project",
+        configPath: filePath,
+      },
+    );
+  }
 }
 
 function isParseError(err: unknown): boolean {

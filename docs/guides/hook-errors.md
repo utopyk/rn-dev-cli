@@ -74,6 +74,7 @@ Discriminator for `E_HOOK_CONFIG_INVALID`.
 - `shape-invalid`
 - `config-load-timeout`
 - `version-mismatch`
+- `path-outside-project`
 
 ### `HookFailedOutcome`
 

@@ -65,3 +65,37 @@ describe("validateProfile — devices", () => {
     }
   });
 });
+
+describe("validateProfile — name newline rejection (H1)", () => {
+  it("rejects profile.name containing \\n", () => {
+    const result = validateProfile({ ...baseProfile, name: "good\nbad" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("E_PROFILE_NAME_NEWLINE");
+    }
+  });
+
+  it("rejects profile.name containing \\r", () => {
+    const result = validateProfile({ ...baseProfile, name: "good\rbad" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("E_PROFILE_NAME_NEWLINE");
+    }
+  });
+
+  it("rejects \\r\\n CRLF sequences too", () => {
+    const result = validateProfile({ ...baseProfile, name: "a\r\nb" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("E_PROFILE_NAME_NEWLINE");
+    }
+  });
+
+  it("accepts spaces, tabs, and other non-newline whitespace", () => {
+    const result = validateProfile({
+      ...baseProfile,
+      name: "fine name\twith tab",
+    });
+    expect(result.ok).toBe(true);
+  });
+});
