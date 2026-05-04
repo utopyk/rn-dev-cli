@@ -493,6 +493,14 @@ function routeEventToAdapters(
       // own UI/agent surface.
       adapters.lifecycle.dispatch(kind, data);
       return;
+    case "hooks/fired":
+      // Phase H2g — hook completion summary { target, ok, fired,
+      // skipped, failureCount }. No client adapter consumes them yet
+      // (the renderer has no hooks panel; the MCP hooks-diagnose tool
+      // reads the audit log directly). Explicit case here so the
+      // drift-detection warn doesn't fire; promote to a real adapter
+      // when the first consumer lands (H7 docs / hooks UI work).
+      return;
     default:
       // Drift detection — if the daemon adds a sixth event family
       // later (e.g. `audit/*`) and a developer forgets to add a case

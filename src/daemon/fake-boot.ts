@@ -36,6 +36,7 @@ import type {
   SessionServices,
 } from "../core/session/boot.js";
 import { HookManager } from "../core/hooks/manager.js";
+import { loadProjectHooks } from "../core/hooks/load-project-hooks.js";
 import { getDefaultAuditLog } from "../core/audit-log.js";
 import { validateProfile, type ValidatedProfile } from "./profile-guard.js";
 import type { MetroManager } from "../core/metro.js";
@@ -193,6 +194,19 @@ export async function fakeBootSessionServices(
       hookManager.declareProvider(m.manifest.id, provides);
     }
   }
+  // Phase H2h — load project hooks under fake-boot too. Pre-H2 the fake
+  // path skipped this on purpose ("fake boots don't run real services
+  // anyway"), but H2 makes builder/build fire real hook subprocesses
+  // through the HookManager even when the fake Builder doesn't actually
+  // spawn xcodebuild — the smoke-rn-with-hooks fixture's build/pre +
+  // build/post need the project config walked here for the integration
+  // test to be meaningful. loadProjectHooks gracefully no-ops when no
+  // rn-dev.config.* exists, so existing fake-boot tests aren't affected.
+  await loadProjectHooks({
+    hookManager,
+    projectRoot: opts.projectRoot,
+    emit: opts.emit,
+  });
   hookManager.emit("boot/phase", { phase: 2, ts: Date.now() });
 
   // Re-validate so the session/init fire receives a ValidatedProfile.
