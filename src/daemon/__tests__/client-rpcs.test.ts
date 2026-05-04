@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   makeTestWorktree,
   spawnTestDaemon,
@@ -310,6 +312,97 @@ describe("daemon client RPCs (integration)", () => {
         id: "w-running",
       });
       expect((running.payload as { running: boolean }).running).toBe(false);
+    } finally {
+      subClose();
+    }
+  }, 10_000);
+
+  it("session/profile-update validates, persists to disk, and returns ok", async () => {
+    const { daemon, subClose, worktree } = await bootRunningSession();
+    try {
+      const updated = {
+        name: "test",
+        isDefault: true,
+        worktree: null,
+        branch: "main",
+        platform: "ios",
+        mode: "quick",
+        metroPort: 8082,
+        devices: {},
+        buildVariant: "debug",
+        preflight: { checks: [], frequency: "once" },
+        onSave: [],
+        env: { CUSTOM_VAR: "1" },
+        projectRoot: worktree,
+      };
+      const resp = await daemon.client.send({
+        type: "command",
+        action: "session/profile-update",
+        id: "pu-1",
+        payload: { profile: updated },
+      });
+      expect((resp.payload as { ok: boolean }).ok).toBe(true);
+
+      const profilePath = join(worktree, ".rn-dev", "profiles", "test.json");
+      expect(existsSync(profilePath)).toBe(true);
+      const written = JSON.parse(readFileSync(profilePath, "utf-8")) as {
+        metroPort: number;
+        env: Record<string, string>;
+      };
+      expect(written.metroPort).toBe(8082);
+      expect(written.env.CUSTOM_VAR).toBe("1");
+    } finally {
+      subClose();
+    }
+  }, 10_000);
+
+  it("session/profile-update rejects a missing profile field", async () => {
+    const { daemon, subClose } = await bootRunningSession();
+    try {
+      const resp = await daemon.client.send({
+        type: "command",
+        action: "session/profile-update",
+        id: "pu-2",
+        payload: {},
+      });
+      const p = resp.payload as { ok: boolean; code?: string };
+      expect(p.ok).toBe(false);
+      expect(p.code).toBe("E_RPC_INVALID_PAYLOAD");
+    } finally {
+      subClose();
+    }
+  }, 10_000);
+
+  it("session/profile-update rejects a denylisted env key", async () => {
+    const { daemon, subClose, worktree } = await bootRunningSession();
+    try {
+      const tainted = {
+        name: "test",
+        isDefault: true,
+        worktree: null,
+        branch: "main",
+        platform: "ios",
+        mode: "quick",
+        metroPort: 8081,
+        devices: {},
+        buildVariant: "debug",
+        preflight: { checks: [], frequency: "once" },
+        onSave: [],
+        env: { LD_PRELOAD: "/tmp/evil.so" },
+        projectRoot: worktree,
+      };
+      const resp = await daemon.client.send({
+        type: "command",
+        action: "session/profile-update",
+        id: "pu-3",
+        payload: { profile: tainted },
+      });
+      const p = resp.payload as { ok: boolean; code?: string };
+      expect(p.ok).toBe(false);
+      // validateProfile surfaces a denylist code from checkEnv; the
+      // exact code is policy on profile-guard, but it MUST start with
+      // E_PROFILE_ENV (not a generic catch-all) so callers can branch.
+      expect(p.code).toMatch(/^E_PROFILE_ENV/);
     } finally {
       subClose();
     }

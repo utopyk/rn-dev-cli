@@ -34,6 +34,8 @@ import type {
   BootSessionServicesOptions,
   SessionServices,
 } from "../core/session/boot.js";
+import { HookManager } from "../core/hooks/manager.js";
+import { getDefaultAuditLog } from "../core/audit-log.js";
 import type { MetroManager } from "../core/metro.js";
 import type { DevToolsManager } from "../core/devtools.js";
 import type { Builder, BuildOptions } from "../core/builder.js";
@@ -161,6 +163,21 @@ export async function fakeBootSessionServices(
     metro.emit("status", { worktreeKey, status: "running" });
   }, 25);
 
+  // Hook system parity with production. Construct a real HookManager
+  // and seed it with every registered built-in's `provides.hooks` so
+  // fake-boot integration tests can exercise the same RPC path
+  // (`session/profile-update`) the real daemon does.
+  const hookManager = new HookManager({
+    auditLog: getDefaultAuditLog(),
+    daemonPid: process.pid,
+  });
+  for (const m of moduleRegistry.getAllManifests()) {
+    const provides = m.manifest.provides?.hooks;
+    if (provides && provides.length > 0) {
+      hookManager.declareProvider(m.manifest.id, provides);
+    }
+  }
+
   const dispose = async (): Promise<void> => {
     modulesIpc.unregister();
     metro.emit("status", { worktreeKey, status: "stopped" });
@@ -177,6 +194,7 @@ export async function fakeBootSessionServices(
     metroLogsStore,
     capabilities,
     moduleEvents,
+    hookManager,
     dispose,
   };
 }

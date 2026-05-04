@@ -41,6 +41,8 @@ import {
 } from "../../modules/create-module-system.js";
 import type { Builder } from "../builder.js";
 import type { Profile } from "../types.js";
+import { HookManager } from "../hooks/manager.js";
+import { getDefaultAuditLog } from "../audit-log.js";
 
 export interface BootSessionServicesOptions {
   profile: Profile;
@@ -92,6 +94,14 @@ export interface SessionServices {
    * daemon-side event subscribers can attach without re-wiring IPC.
    */
   moduleEvents: ReturnType<typeof import("../../app/modules-ipc.js").registerModulesIpc>["moduleEvents"];
+  /**
+   * Phase H1 — hook system facade. Built-ins call `declareProvider`
+   * during boot; the project's `rn-dev.config.ts` registrations land
+   * via `addRegistration`; the daemon fires `session/init` at the end
+   * of boot and `session/profile-changed` from the
+   * `session/profile-update` RPC.
+   */
+  hookManager: HookManager;
   /** Release resources. Daemon calls this on session/stop. */
   dispose: () => Promise<void>;
 }
@@ -338,6 +348,24 @@ export async function bootSessionServices(
     subscribeRegistry: opts.subscribeRegistry,
   });
 
+  // 13. Hook system. Construct after module-registry loading so
+  //     declareProvider sees every built-in's `provides.hooks`.
+  //     Three-phase boot in step (i) will move this construction site
+  //     into a structured Phase 2 and walk the project's
+  //     consumes.hooks here too; for now wire just the host-side
+  //     contribution-point declaration so the manager is observable
+  //     from RPC handlers.
+  const hookManager = new HookManager({
+    auditLog: getDefaultAuditLog(),
+    daemonPid: process.pid,
+  });
+  for (const m of moduleRegistry.getAllManifests()) {
+    const provides = m.manifest.provides?.hooks;
+    if (provides && provides.length > 0) {
+      hookManager.declareProvider(m.manifest.id, provides);
+    }
+  }
+
   emit("\u2714 All services started");
   emit("");
 
@@ -375,6 +403,7 @@ export async function bootSessionServices(
     metroLogsStore,
     capabilities,
     moduleEvents: modulesIpc.moduleEvents,
+    hookManager,
     dispose,
   };
 }

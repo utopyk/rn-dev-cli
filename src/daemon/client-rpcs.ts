@@ -15,7 +15,8 @@ import type { IpcMessage, IpcMessageEvent } from "../core/ipc.js";
 import type { DaemonSupervisor } from "./supervisor.js";
 import type { SessionServices } from "../core/session/boot.js";
 import type { BuildOptions } from "../core/builder.js";
-import { checkAbsolutePath, checkEnv } from "./profile-guard.js";
+import { checkAbsolutePath, checkEnv, validateProfile } from "./profile-guard.js";
+import { ProfileStore } from "../core/profile.js";
 
 const CLIENT_RPC_ACTIONS = new Set<string>([
   "metro/reload",
@@ -30,6 +31,7 @@ const CLIENT_RPC_ACTIONS = new Set<string>([
   "watcher/start",
   "watcher/stop",
   "watcher/isRunning",
+  "session/profile-update",
 ]);
 
 export function isClientRpcAction(action: string): boolean {
@@ -152,9 +154,60 @@ async function dispatch(
     case "watcher/isRunning": {
       return { running: services.watcher?.isRunning() ?? false };
     }
+    case "session/profile-update": {
+      return await handleProfileUpdate(message, services, supervisor);
+    }
     default:
       throw new Error(`client-rpcs.dispatch: unknown action ${message.action}`);
   }
+}
+
+/**
+ * `session/profile-update` — re-validate the supplied profile, fire
+ * `session/profile-changed` so consumers (`consumes.hooks` against
+ * the `session` built-in) react, and persist the new profile to
+ * `<worktree>/.rn-dev/profiles/<name>.json` so the next session
+ * boot picks it up.
+ *
+ * Mid-session reconfiguration of services (Metro port changes,
+ * env-mutation, etc.) is intentionally NOT done here — the hook is
+ * the extension point modules use to react. A profile change that
+ * needs a restart is the caller's responsibility (issue
+ * `session/stop` + re-attach with the new profile).
+ */
+async function handleProfileUpdate(
+  message: IpcMessage,
+  services: SessionServices,
+  supervisor: DaemonSupervisor,
+): Promise<unknown> {
+  const profileInput = readObjectField(message.payload, "profile");
+  if (profileInput === undefined) {
+    return {
+      ok: false,
+      code: "E_RPC_INVALID_PAYLOAD",
+      message: "session/profile-update: payload.profile is required",
+    };
+  }
+  const result = validateProfile(profileInput);
+  if (!result.ok) {
+    return { ok: false, code: result.code, message: result.message };
+  }
+  const validated = result.profile;
+
+  // Fire the hook BEFORE persistence so a hard-failing consumer
+  // can abort the change. `fire` throws on `onFail: "hard"`; let it
+  // propagate so the dispatch's catch returns E_RPC_FAILED with the
+  // hook's message attached.
+  await services.hookManager.fire(
+    "session/profile-changed",
+    { profile: validated },
+    validated,
+  );
+
+  const profilesDir = path.join(supervisor.getWorktree(), ".rn-dev", "profiles");
+  new ProfileStore(profilesDir).save(validated);
+
+  return { ok: true };
 }
 
 function readStringField(
