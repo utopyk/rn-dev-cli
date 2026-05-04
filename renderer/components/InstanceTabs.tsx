@@ -37,8 +37,15 @@ function statusDotClass(status: string): string {
 export function InstanceTabs({ instances, activeId, onSelect, onClose, onAdd }: InstanceTabsProps) {
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
 
-  const handleClose = (e: React.MouseEvent, id: string, port: number) => {
+  const handleClose = (e: React.MouseEvent, id: string, _port: number) => {
     e.stopPropagation();
+    // Shift-click: skip confirmation. Documented in the close button's
+    // `title` attribute so power users can discover it on hover.
+    if (e.shiftKey) {
+      onClose(id);
+      setConfirmClose(null);
+      return;
+    }
     if (confirmClose === id) {
       // Second click = confirmed
       onClose(id);
@@ -59,7 +66,7 @@ export function InstanceTabs({ instances, activeId, onSelect, onClose, onAdd }: 
           return (
             <div
               key={inst.id}
-              className={`instance-tab${isActive ? ' active' : ''}`}
+              className={`instance-tab${isActive ? ' active' : ''}${isConfirming ? ' confirming' : ''}`}
               onClick={() => onSelect(inst.id)}
             >
               <span className="instance-tab-icon">{inst.deviceIcon}</span>
@@ -73,13 +80,16 @@ export function InstanceTabs({ instances, activeId, onSelect, onClose, onAdd }: 
               <button
                 className={`instance-tab-close${isConfirming ? ' confirming' : ''}`}
                 onClick={(e) => handleClose(e, inst.id, inst.port)}
-                title={isConfirming ? `Stop Metro on :${inst.port}?` : 'Close instance'}
+                aria-label={isConfirming ? `Click again to close instance on port ${inst.port}` : 'Close instance'}
+                title={isConfirming
+                  ? `Click again to close (Shift-click to skip confirm)`
+                  : 'Close instance (Shift-click to skip confirm)'}
               >
-                {isConfirming ? '?' : '\u00d7'}
+                {isConfirming ? '\u2713' : '\u00d7'}
               </button>
               {isConfirming && (
-                <div className="instance-tab-confirm">
-                  Stop Metro on :{inst.port}?
+                <div className="instance-tab-confirm" role="status">
+                  Click again to close :{inst.port}
                 </div>
               )}
             </div>
