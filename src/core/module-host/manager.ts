@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
-import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { RegisteredModule } from "../../modules/registry.js";
 import { ModuleConfigStore } from "../../modules/config-store.js";
+import { buildSpawnCommand, wrapChild, type SpawnHandle } from "../spawn-utils.js";
 import { CapabilityRegistry } from "./capabilities.js";
 import { attachHostRpc } from "./host-rpc.js";
 import { ModuleInstance, type ModuleInstanceState } from "./instance.js";
@@ -14,20 +15,13 @@ import {
 } from "./rpc.js";
 import { Supervisor } from "./supervisor.js";
 
+// Re-exported so existing callers keep importing `SpawnHandle` from this
+// module — the canonical declaration now lives in `../spawn-utils.ts`.
+export type { SpawnHandle };
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-export interface SpawnHandle {
-  pid: number;
-  stdin: NodeJS.WritableStream;
-  stdout: NodeJS.ReadableStream;
-  stderr: NodeJS.ReadableStream;
-  kill(signal?: NodeJS.Signals): boolean;
-  onExit(
-    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
-  ): void;
-}
 
 export interface ModuleSpawner {
   spawn(manifest: RegisteredModule["manifest"], modulePath: string): SpawnHandle;
@@ -73,15 +67,13 @@ export class NodeSpawner implements ModuleSpawner {
     _manifest: RegisteredModule["manifest"],
     modulePath: string,
   ): SpawnHandle {
-    // On Linux with util-linux's `setpriv` available, prepend
-    // `setpriv --pdeathsig SIGKILL --` so the kernel kills the module
-    // the instant the daemon dies — closes the orphan window before
-    // the next daemon's startup-sweep runs. setpriv is standard on
-    // modern distros but not guaranteed; absent → we fall back to the
-    // startup sweep (see src/daemon/orphan-sweep.ts). macOS has no
-    // PDEATHSIG equivalent; practical impact bounded since dev
-    // machines restart daemons far more than servers do.
-    const { command, args } = buildSpawnCommand(modulePath);
+    // setpriv-on-Linux + process-group kill on POSIX live in
+    // `../spawn-utils.ts` — both the module-host and the H1 hook
+    // subprocess runner share that contract.
+    const { command, args } = buildSpawnCommand({
+      command: "node",
+      args: [modulePath],
+    });
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
       // POSIX: start a new process group so we can kill the whole group and
@@ -92,60 +84,6 @@ export class NodeSpawner implements ModuleSpawner {
     });
     return wrapChild(child);
   }
-}
-
-function buildSpawnCommand(modulePath: string): { command: string; args: string[] } {
-  if (process.platform === "linux" && hasSetpriv()) {
-    return {
-      command: "setpriv",
-      args: ["--pdeathsig", "SIGKILL", "--", "node", modulePath],
-    };
-  }
-  return { command: "node", args: [modulePath] };
-}
-
-let setprivCached: boolean | null = null;
-function hasSetpriv(): boolean {
-  if (setprivCached !== null) return setprivCached;
-  try {
-    // `which setpriv` returns 0 iff the binary is in PATH. stdio is
-    // ignored so this is silent; `execSync` throws on non-zero exit.
-    execSync("which setpriv", { stdio: "ignore" });
-    setprivCached = true;
-  } catch {
-    setprivCached = false;
-  }
-  return setprivCached;
-}
-
-function wrapChild(child: ChildProcess): SpawnHandle {
-  if (!child.pid || !child.stdin || !child.stdout || !child.stderr) {
-    throw new Error(
-      `[ModuleHostManager] spawn returned an incomplete ChildProcess (pid=${child.pid}).`,
-    );
-  }
-  const pid = child.pid;
-  return {
-    pid,
-    stdin: child.stdin,
-    stdout: child.stdout,
-    stderr: child.stderr,
-    kill(signal?: NodeJS.Signals): boolean {
-      try {
-        if (process.platform === "win32") {
-          return child.kill(signal);
-        }
-        // Negative pid = process group.
-        process.kill(-pid, signal ?? "SIGTERM");
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    onExit(listener) {
-      child.on("exit", listener);
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------
