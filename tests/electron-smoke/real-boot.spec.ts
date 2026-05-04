@@ -27,7 +27,15 @@ const REAL_BOOT_ENABLED = process.env.REAL_BOOT_SMOKE === "1";
 // Path is the same hardcoded fallback electron/main.ts:92 uses. The smoke
 // targets it directly so nothing about the dev:gui run differs from Martin's
 // observed reproducer.
-const PROJECT_ROOT = "/Users/martincouso/Documents/Projects/movie-nights-club";
+//
+// Override via `RN_DEV_REAL_BOOT_TARGET` so different machines can point
+// at their own RN fixture without editing this file. The default is the
+// historical movie-nights-club path; if the override is unset and that
+// path doesn't exist, the test surfaces a clear E_NO_REAL_BOOT_TARGET
+// error in `beforeEach` rather than a confusing missing-package one.
+const PROJECT_ROOT =
+  process.env.RN_DEV_REAL_BOOT_TARGET ??
+  "/Users/martincouso/Documents/Projects/movie-nights-club";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -76,10 +84,19 @@ function writeSmokeProfile(branch: string): string {
         mode: "quick",
         // Pin the package manager so settlePackageManager (electron/ipc/services.ts:50)
         // short-circuits instead of firing the interactive `instance:prompt`.
-        // movie-nights-club has multiple lockfiles; without this pin the smoke
-        // hangs on a "Multiple package managers detected" modal that needs
-        // user input, BEFORE connectElectronToDaemon ever runs.
-        packageManager: "npm",
+        // The target may be a multi-lockfile project (movie-nights-club has
+        // npm + bun lockfiles; kimoby-mobile-app uses pnpm); without this
+        // pin the smoke hangs on a "Multiple package managers detected"
+        // modal that needs user input BEFORE connectElectronToDaemon ever
+        // runs. Override via `RN_DEV_REAL_BOOT_PACKAGE_MANAGER` for the
+        // current target.
+        packageManager:
+          (process.env.RN_DEV_REAL_BOOT_PACKAGE_MANAGER as
+            | "npm"
+            | "pnpm"
+            | "yarn"
+            | "bun"
+            | undefined) ?? "npm",
         // 8099 deliberately differs from the default 8081 so a Metro
         // already running for normal dev:gui doesn't conflict with the
         // smoke's daemon-spawned Metro.
