@@ -26,6 +26,7 @@ import { ModuleConfigStore } from "../modules/config-store.js";
 import {
   devSpaceManifest,
   lintTestManifest,
+  sessionManifest,
   settingsManifest,
 } from "../modules/built-in/manifests.js";
 import { registerMarketplaceBuiltIn } from "../modules/built-in/marketplace.js";
@@ -120,6 +121,7 @@ export async function fakeBootSessionServices(
   moduleRegistry.registerBuiltIn(devSpaceManifest);
   moduleRegistry.registerBuiltIn(lintTestManifest);
   moduleRegistry.registerBuiltIn(settingsManifest);
+  moduleRegistry.registerBuiltIn(sessionManifest);
   registerMarketplaceBuiltIn({ moduleRegistry, capabilities });
 
   // Phase 13.4.1 — register the modules IPC dispatcher on the daemon's

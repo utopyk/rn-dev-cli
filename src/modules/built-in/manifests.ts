@@ -40,6 +40,29 @@ export const lintTestManifest: ModuleManifest = {
 };
 
 /**
+ * Phase H1 — `session` is a synthetic built-in that owns the daemon's
+ * session lifecycle hooks. Modules `consumes.hooks` against
+ * `session/init` to run code once the daemon has booted, and against
+ * `session/profile-changed` to react to a profile-update RPC.
+ *
+ * The manifest contributes no TUI/MCP surface — it exists purely as
+ * the host-end of the hook contribution-points namespace. The
+ * `kind: "built-in-privileged"` stamp comes from `registerBuiltIn`,
+ * which is gated on `BUILT_IN_MODULE_ALLOWLIST` (see
+ * `src/modules/built-in-allowlist.ts`). `session/shutdown` is
+ * deliberately deferred until a consumer asks for it; we don't want
+ * to ship a contribution point that has no use case yet.
+ */
+export const sessionManifest: ModuleManifest = {
+  id: "session",
+  version: "0.1.0",
+  hostRange: ">=0.1.0",
+  scope: "global",
+  provides: { hooks: ["init", "profile-changed"] },
+  activationEvents: ["onStartup"],
+};
+
+/**
  * Settings carries the only Phase 5b built-in that exposes user-tweakable
  * preferences via `contributes.config.schema`. Phase 5b ships the schema
  * declaration; actually migrating the renderer Settings view to drive
