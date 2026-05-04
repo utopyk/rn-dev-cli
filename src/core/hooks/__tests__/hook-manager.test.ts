@@ -77,7 +77,15 @@ describe("HookManager — empty-registry fast path", () => {
     const outcome = await mgr.fire("build/pre", {}, validated);
     expect(outcome).toEqual({ ok: true, fired: 0, skipped: 0, failures: [] });
     expect(auditSpy).not.toHaveBeenCalled();
-    expect(firedSpy).not.toHaveBeenCalled();
+    // Phase H2g follow-up — hooks/fired DOES emit on the empty-
+    // registry path so subscribers can answer "did my slot fire?
+    // how many consumers?" instead of seeing silence on no-consumers.
+    // Audit stays silent (audit policy: no entry for success).
+    expect(firedSpy).toHaveBeenCalledTimes(1);
+    expect(firedSpy).toHaveBeenCalledWith({
+      target: "build/pre",
+      outcome: { ok: true, fired: 0, skipped: 0, failures: [] },
+    });
   });
 });
 

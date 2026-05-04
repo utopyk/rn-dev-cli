@@ -125,7 +125,17 @@ export class HookManager extends EventEmitter {
     profile: ValidatedProfile,
   ): Promise<FireOutcome> {
     if (!this.registry.hasAnyRegistration(target)) {
-      return { ok: true, fired: 0, skipped: 0, failures: [] };
+      // Phase H2g follow-up — emit `hooks/fired` even on the empty-
+      // registry fast path. The plan calls for "Daemon emits
+      // hooks/fired on every hook completion (success and fail)";
+      // subscribers (MCP agents, future hooks UI) need to see
+      // "fired with 0 consumers" to answer "did my build/pre slot
+      // run? how many consumers picked it up?". The dispatcher path
+      // emits below; this guarantees the same emit on the fast path
+      // so the wire event is always present per fire().
+      const empty: FireOutcome = { ok: true, fired: 0, skipped: 0, failures: [] };
+      this.emit("hooks/fired", { target, outcome: empty });
+      return empty;
     }
     const outcome = await this.dispatcher.fire({ target, payload, profile });
     this.emit("hooks/fired", { target, outcome });
