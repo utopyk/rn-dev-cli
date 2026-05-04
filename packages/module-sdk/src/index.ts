@@ -60,3 +60,9 @@ export {
   type RunHookInProcessOutcome,
   type RunHookInProcessResult,
 } from "./test-helpers.js";
+export type {
+  HookFireFailure,
+  HookFireFailureReason,
+  HookFireOutcome,
+  HookHostCapability,
+} from "./hook-host-capability.js";
