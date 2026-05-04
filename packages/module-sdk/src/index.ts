@@ -52,3 +52,11 @@ export {
   strArr,
   type Args,
 } from "./args.js";
+export {
+  MockHookRuntime,
+  runHookInProcess,
+  type MockHookFire,
+  type RunHookInProcessInput,
+  type RunHookInProcessOutcome,
+  type RunHookInProcessResult,
+} from "./test-helpers.js";
