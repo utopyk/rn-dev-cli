@@ -8,7 +8,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildHooksTools, readHookAuditTail } from "../tools-hooks.js";
+import {
+  buildHooksTools,
+  readHookAuditTail,
+  validateHookConfig,
+} from "../tools-hooks.js";
 
 let tmpRoot = "";
 let auditLogPath = "";
@@ -92,11 +96,13 @@ describe("readHookAuditTail (H2j)", () => {
   });
 });
 
-describe("buildHooksTools (H2j)", () => {
-  it("registers exactly one tool: rn-dev/hooks-diagnose", () => {
+describe("buildHooksTools (H2j + H2k)", () => {
+  it("registers two tools: hooks-diagnose + hooks-config-validate", () => {
     const tools = buildHooksTools();
-    expect(tools).toHaveLength(1);
-    expect(tools[0].name).toBe("rn-dev/hooks-diagnose");
+    expect(tools.map((t) => t.name)).toEqual([
+      "rn-dev/hooks-diagnose",
+      "rn-dev/hooks-config-validate",
+    ]);
   });
 
   it("describes target + limit on the input schema", () => {
@@ -108,7 +114,10 @@ describe("buildHooksTools (H2j)", () => {
   });
 
   it("hooks-diagnose handler returns advice text when no entries are found", async () => {
-    const tool = buildHooksTools()[0];
+    const tool = buildHooksTools().find(
+      (t) => t.name === "rn-dev/hooks-diagnose",
+    );
+    if (!tool) throw new Error("hooks-diagnose tool missing");
     // The handler reads from ~/.rn-dev/audit.log by default; on a fresh
     // CI box this either doesn't exist or has no kind:'hook' entries.
     // Pass an explicit non-existent log path via the underlying reader
@@ -124,5 +133,105 @@ describe("buildHooksTools (H2j)", () => {
     };
     expect(out.structuredContent.entries).toEqual([]);
     expect(out.structuredContent.advice).toMatch(/No audit entries/);
+  });
+});
+
+describe("validateHookConfig (H2k)", () => {
+  let projectRoot = "";
+
+  beforeEach(() => {
+    projectRoot = mkdtempSync(join(tmpdir(), "h2k-validate-"));
+  });
+
+  afterEach(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
+  it("returns valid:true with no errors when no rn-dev.config.* exists", async () => {
+    const out = await validateHookConfig({ projectRoot });
+    expect(out.configFile).toBeNull();
+    expect(out.valid).toBe(true);
+    expect(out.errors).toEqual([]);
+  });
+
+  it("knownSlots includes the H1 + H2 built-in slots", async () => {
+    const out = await validateHookConfig({ projectRoot });
+    expect(out.knownSlots).toEqual(
+      expect.arrayContaining([
+        "build/pre",
+        "build/post",
+        "build/custom",
+        "session/init",
+        "session/profile-changed",
+      ]),
+    );
+  });
+
+  it("flags an unknown slot with a did-you-mean suggestion", async () => {
+    writeFileSync(
+      join(projectRoot, "rn-dev.config.mjs"),
+      `export default { hooks: { "build/before": "./x.sh" } };`,
+    );
+    const out = await validateHookConfig({ projectRoot });
+    expect(out.valid).toBe(false);
+    expect(out.errors).toHaveLength(1);
+    expect(out.errors[0]).toMatchObject({
+      key: "build/before",
+      reason: "unknown-slot",
+    });
+    // Most-shared-prefix nearest-neighbour: "build/before" → "build/post"
+    // (build/post and build/pre both share "build/" but "build/post"
+    // shares one more char with "build/before"). The suggest function is
+    // documented as best-effort; we only assert that *some* build/* slot
+    // is suggested.
+    expect(out.errors[0].suggestion).toMatch(/^build\//);
+  });
+
+  it("flags an unknown module id (typed-but-not-installed 3p)", async () => {
+    writeFileSync(
+      join(projectRoot, "rn-dev.config.mjs"),
+      `export default { hooks: { "totally-fake-module/whatever": "./x.sh" } };`,
+    );
+    const out = await validateHookConfig({ projectRoot });
+    expect(out.valid).toBe(false);
+    expect(out.errors[0]).toMatchObject({
+      key: "totally-fake-module/whatever",
+      reason: "unknown-module",
+    });
+  });
+
+  it("malformed keys (no slash) are caught by loadConfig's schema before reaching the runtime check", async () => {
+    writeFileSync(
+      join(projectRoot, "rn-dev.config.mjs"),
+      `export default { hooks: { "no-slash-here": "./x.sh" } };`,
+    );
+    const out = await validateHookConfig({ projectRoot });
+    expect(out.valid).toBe(false);
+    // loadConfig's HookPhase pattern rejects this first — that's the
+    // CONFIG-LEVEL gate. The defensive malformed-key branch in
+    // validateHookConfig is unreachable for keys that load successfully,
+    // which is fine: it's belt-and-suspenders for a future loadConfig
+    // change that relaxes the pattern.
+    expect(out.errors[0].reason).toBe("config-load-failed");
+  });
+
+  it("returns valid:true on a config with only known slots", async () => {
+    writeFileSync(
+      join(projectRoot, "rn-dev.config.mjs"),
+      `export default { hooks: { "build/pre": "./x.sh", "session/init": "./y.sh" } };`,
+    );
+    const out = await validateHookConfig({ projectRoot });
+    expect(out.valid).toBe(true);
+    expect(out.errors).toEqual([]);
+  });
+
+  it("surfaces config-load failures (e.g. import threw) as a config-load-failed error", async () => {
+    writeFileSync(
+      join(projectRoot, "rn-dev.config.mjs"),
+      `throw new Error("intentional config-load failure");`,
+    );
+    const out = await validateHookConfig({ projectRoot });
+    expect(out.valid).toBe(false);
+    expect(out.errors[0].reason).toBe("config-load-failed");
   });
 });
