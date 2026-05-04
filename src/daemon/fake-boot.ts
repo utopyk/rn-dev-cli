@@ -24,6 +24,7 @@ import { CapabilityRegistry } from "../core/module-host/capabilities.js";
 import { registerModulesIpc } from "../app/modules-ipc.js";
 import { ModuleConfigStore } from "../modules/config-store.js";
 import {
+  buildManifest,
   devSpaceManifest,
   lintTestManifest,
   sessionManifest,
@@ -125,6 +126,14 @@ export async function fakeBootSessionServices(
   moduleRegistry.registerBuiltIn(lintTestManifest);
   moduleRegistry.registerBuiltIn(settingsManifest);
   moduleRegistry.registerBuiltIn(sessionManifest);
+  // Phase H2f — register `build` with the FakeBuilderSurface as the
+  // in-process instance so SessionServices.builder's lazy getter
+  // (production: ModuleRegistry.getBuiltIn<Builder>('build')) resolves
+  // to the same fake under fake-boot. Production bootSessionServices
+  // does the equivalent registration with the real Builder.
+  moduleRegistry.registerBuiltIn(buildManifest, {
+    instance: builder as FakeBuilderSurface as unknown as Builder,
+  });
   registerMarketplaceBuiltIn({ moduleRegistry, capabilities });
 
   // Phase 13.4.1 — register the modules IPC dispatcher on the daemon's
@@ -213,7 +222,12 @@ export async function fakeBootSessionServices(
     metro: metro as FakeMetroSurface as unknown as MetroManager,
     devtools: devtools as FakeDevtoolsSurface as unknown as DevToolsManager,
     watcher: null as FileWatcher | null,
-    builder: builder as FakeBuilderSurface as unknown as Builder,
+    // Phase H2f — same getter pattern as production bootSessionServices.
+    // Resolves through ModuleRegistry.getBuiltIn so the build built-in
+    // module is the single source of truth even under fake boot.
+    get builder(): Builder {
+      return moduleRegistry.getBuiltIn<Builder>("build");
+    },
     moduleHost: moduleHost as FakeModuleHostSurface as unknown as ModuleHostManager,
     moduleRegistry,
     worktreeKey,

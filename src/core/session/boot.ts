@@ -325,6 +325,17 @@ export async function bootSessionServices(
     logger: createScopedLogger(emit),
   });
 
+  // Phase H2f — register the build built-in module with the live
+  // Builder instance attached. SessionServices.builder is a getter
+  // (see return below) that resolves through
+  // moduleRegistry.getBuiltIn('build'), so the built-in module is the
+  // single source of truth — no second instance lives on
+  // SessionServices. Registered here (NOT in createModuleSystem)
+  // because the Builder construction is environment-specific
+  // (production: real Builder; fake-boot: FakeBuilderSurface).
+  const { buildManifest } = await import("../../modules/built-in/manifests.js");
+  moduleRegistry.registerBuiltIn(buildManifest, { instance: builder });
+
   const loadResult = moduleRegistry.loadUserGlobalModules({
     hostVersion,
     scopeUnit: worktreeKey,
@@ -443,7 +454,13 @@ export async function bootSessionServices(
     metro,
     devtools,
     watcher,
-    builder,
+    // Phase H2f — getter resolves through ModuleRegistry.getBuiltIn so
+    // the build built-in module is the single source of truth.
+    // Compatible with the typed `builder: Builder` interface (TS treats
+    // a getter the same as a property at the type level).
+    get builder(): Builder {
+      return moduleRegistry.getBuiltIn<Builder>("build");
+    },
     moduleHost,
     moduleRegistry,
     worktreeKey,
