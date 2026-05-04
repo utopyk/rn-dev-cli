@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -198,14 +198,62 @@ async function launchWithoutProfile(tmpRoot: string): Promise<ElectronHandle> {
 }
 
 async function teardownElectron(handle: ElectronHandle): Promise<void> {
+  // Pre-fix: `app.close()` left the daemon (a detached process group
+  // leader, not Electron's child) running forever. Each smoke run
+  // accumulated ~10 leaked `bun … daemon /var/folders/.../rn-dev-smoke-*`
+  // processes. Same class as Bug F. Read the pid BEFORE app.close +
+  // rmSync so the SIGKILL fallback has something to target.
+  const pid = readDaemonPidFromWorktree(handle.tmpdir);
   await handle.app.close().catch(() => {
-    // Electron sometimes refuses to close cleanly under test harnesses;
-    // tmpdir cleanup is the more important half.
+    /* Electron sometimes refuses clean close under harness */
   });
+  if (pid !== null) await terminateDaemonPid(pid);
   try {
     rmSync(handle.tmpdir, { recursive: true, force: true });
   } catch {
     /* best-effort */
+  }
+}
+
+function readDaemonPidFromWorktree(worktree: string): number | null {
+  const pidPath = join(worktree, ".rn-dev", "pid");
+  if (!existsSync(pidPath)) return null;
+  try {
+    const raw = readFileSync(pidPath, "utf8");
+    const parsed = JSON.parse(raw) as { pid?: unknown };
+    return typeof parsed.pid === "number" ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function terminateDaemonPid(pid: number): Promise<void> {
+  if (!processIsAlive(pid)) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    /* best-effort */
+  }
+  const deadline = Date.now() + 1_500;
+  while (Date.now() < deadline) {
+    if (!processIsAlive(pid)) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  if (processIsAlive(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* best-effort */
+    }
   }
 }
 

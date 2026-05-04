@@ -1,5 +1,5 @@
 import { _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,13 +138,71 @@ export async function launchRealE2e(opts: LaunchOptions = {}): Promise<RealE2eHa
 }
 
 export async function teardownRealE2e(handle: RealE2eHandle): Promise<void> {
+  // Pre-fix `app.close()` left the spawned daemon (a detached process
+  // group leader, not Electron's child) running forever — every
+  // `npm run test:real-e2e` accumulated 2 leaked
+  // `bun … daemon /var/folders/.../rn-dev-real-e2e-*` processes.
+  // Same class as Bug F. Read the pid BEFORE app.close + rmSync so
+  // the SIGKILL fallback has something to target.
+  const pid = readDaemonPidFromWorktree(handle.tmpdir);
   await handle.app.close().catch(() => {
-    // Electron sometimes refuses to close cleanly under test harnesses;
-    // tmpdir cleanup is the more important half.
+    /* Electron sometimes refuses clean close under harness */
   });
+  if (pid !== null) {
+    await terminateDaemonPid(pid);
+  }
   try {
     rmSync(handle.tmpdir, { recursive: true, force: true });
   } catch {
     /* best-effort */
+  }
+}
+
+/**
+ * Read the pid recorded by the daemon's lockfile at
+ * `<worktree>/.rn-dev/pid`. Returns null if missing/unparseable —
+ * either the daemon never started, or it crashed before writing.
+ * Pid file format set by `ModuleLockfile.acquire`.
+ */
+function readDaemonPidFromWorktree(worktree: string): number | null {
+  const pidPath = join(worktree, ".rn-dev", "pid");
+  if (!existsSync(pidPath)) return null;
+  try {
+    const raw = readFileSync(pidPath, "utf8");
+    const parsed = JSON.parse(raw) as { pid?: unknown };
+    return typeof parsed.pid === "number" ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function terminateDaemonPid(pid: number): Promise<void> {
+  if (!processIsAlive(pid)) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    /* best-effort */
+  }
+  // Poll up to 1.5s for graceful exit before SIGKILL.
+  const deadline = Date.now() + 1_500;
+  while (Date.now() < deadline) {
+    if (!processIsAlive(pid)) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  if (processIsAlive(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* best-effort */
+    }
   }
 }
