@@ -11,13 +11,13 @@ import { fileURLToPath } from "node:url";
 // `session/status: running` through the multiplexed events/subscribe channel.
 //
 // Bug 1 (handoff: docs/plans/2026-04-26-handoff-phase-13-6-pr-c-and-test-gap.md)
-// is the regression this guards: `npm run dev:gui` against movie-nights-club
+// is the regression this guards: `npm run dev:gui` against kimoby-mobile-app
 // times out after 30s with "connectToDaemonSession: session did not reach
 // 'running' within 30000ms". Reviewer subagents (Kieran TS + Architecture +
 // Security + Simplicity) didn't catch it because they read code, not behavior.
 //
 // Skipped unless `REAL_BOOT_SMOKE=1` — the spec spawns a real daemon, real
-// Metro, and writes a profile into the developer's actual movie-nights-club
+// Metro, and writes a profile into the developer's actual kimoby-mobile-app
 // project. Run locally before any PR that touches the daemon boot path or the
 // wire protocol; do NOT enable on CI without first arranging an isolated RN
 // fixture with node_modules pre-populated.
@@ -30,12 +30,12 @@ const REAL_BOOT_ENABLED = process.env.REAL_BOOT_SMOKE === "1";
 //
 // Override via `RN_DEV_REAL_BOOT_TARGET` so different machines can point
 // at their own RN fixture without editing this file. The default is the
-// historical movie-nights-club path; if the override is unset and that
+// historical kimoby-mobile-app path; if the override is unset and that
 // path doesn't exist, the test surfaces a clear E_NO_REAL_BOOT_TARGET
 // error in `beforeEach` rather than a confusing missing-package one.
 const PROJECT_ROOT =
   process.env.RN_DEV_REAL_BOOT_TARGET ??
-  "/Users/martincouso/Documents/Projects/movie-nights-club";
+  "/Users/martincouso/Documents/GitHub/kimoby-mobile-app";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -84,7 +84,7 @@ function writeSmokeProfile(branch: string): string {
         mode: "quick",
         // Pin the package manager so settlePackageManager (electron/ipc/services.ts:50)
         // short-circuits instead of firing the interactive `instance:prompt`.
-        // The target may be a multi-lockfile project (movie-nights-club has
+        // The target may be a multi-lockfile project (kimoby-mobile-app has
         // npm + bun lockfiles; kimoby-mobile-app uses pnpm); without this
         // pin the smoke hangs on a "Multiple package managers detected"
         // modal that needs user input BEFORE connectElectronToDaemon ever
@@ -189,7 +189,7 @@ async function teardownElectron(handle: ElectronHandle): Promise<void> {
 test.describe("Electron real-boot smoke", () => {
   test.skip(
     !REAL_BOOT_ENABLED,
-    "Set REAL_BOOT_SMOKE=1 to run; spawns real Metro against movie-nights-club.",
+    "Set REAL_BOOT_SMOKE=1 to run; spawns real Metro against kimoby-mobile-app.",
   );
 
   // Real-boot is slow — bump the per-test timeout above the suite default.
@@ -201,7 +201,7 @@ test.describe("Electron real-boot smoke", () => {
   test.beforeEach(() => {
     if (!existsSync(PROJECT_ROOT)) {
       throw new Error(
-        `Real-boot smoke requires the movie-nights-club project at ${PROJECT_ROOT}. ` +
+        `Real-boot smoke requires the kimoby-mobile-app project at ${PROJECT_ROOT}. ` +
           `Either clone it there or override the smoke target.`,
       );
     }
