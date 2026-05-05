@@ -38,7 +38,16 @@ export async function connectToDaemon(
   worktree: string,
   opts: ConnectToDaemonOptions = {},
 ): Promise<IpcClient> {
-  const { spawnTimeoutMs = 5_000, pollMs = 100, daemonEntry } = opts;
+  // 5s was tight even on hot-cache machines — a cold tsx compile on
+  // first daemon spawn against a fresh worktree easily takes 8-12s,
+  // which surfaced as `connectToDaemon: timed out after 5000ms` against
+  // kimoby on this machine. Bump the default to 30s; the daemon does
+  // not get spawned often enough for a wider window to bother anyone,
+  // and a 30s budget also covers slower machines (CI, throttled CPUs).
+  // The corresponding `connectToDaemonSession` watchdog is independent
+  // and progress-based, so this raise doesn't affect attach behaviour
+  // post-spawn.
+  const { spawnTimeoutMs = 30_000, pollMs = 100, daemonEntry } = opts;
 
   // Escape hatch for CI/tests and for the MCP-debug workflow where the
   // daemon was started out-of-band. Matches the `RN_DEV_DAEMON_SOCK` hook
