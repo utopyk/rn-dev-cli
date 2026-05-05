@@ -55,15 +55,10 @@ test.describe("Probe — real build against kimoby + iPhone 15", () => {
           platform: "ios",
           mode: "dirty",
           metroPort: 8099,
-          // Use a booted simulator so the build doesn't depend on the
-          // physical-iPhone iOS version vs Xcode platform-support
-          // installed combo — that's an environmental knob, not what
-          // this probe verifies. The probe verifies our code path
-          // (daemon spawn → triggerBuildsIfNeeded → run-ios with the
-          // right scheme/mode args) gets through xcodebuild.
-          // 2E1962FB-5EBC-458E-994C-9D84A8D93CA3 is a booted iPhone 16 Pro
-          // simulator on iOS 18.5 per `xcrun simctl list devices booted`.
-          devices: { ios: "2E1962FB-5EBC-458E-994C-9D84A8D93CA3", android: null },
+          // Real iPhone 15 (UDID matches the user's actual profile).
+          // Now that the Xcode iOS platform-support gap was resolved,
+          // the build should complete and install on the device.
+          devices: { ios: "00008130-001A653A3E11001C", android: null },
           buildVariant: "debug",
           scheme: "Kimoby",
           configuration: "Debug",
@@ -139,18 +134,29 @@ test.describe("Probe — real build against kimoby + iPhone 15", () => {
     await page.waitForTimeout(3_000);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "01-after-boot.png") });
 
-    // Skip the codesign prompt — Skip is now the safe default. We do
-    // NOT want to flip kimoby's pbxproj from Manual to Automatic.
-    const skipSigning = page
-      .getByRole("button", { name: /Keep Manual signing/i })
-      .first();
-    if (await skipSigning.count()) {
-      console.log("Code-signing prompt visible — clicking 'Keep Manual signing' (the safe default).");
-      await skipSigning.click();
-      await page.waitForTimeout(1_000);
-      await page.screenshot({ path: join(SCREENSHOT_DIR, "02-codesign-skipped.png") });
-    } else {
-      console.log("No code-signing prompt visible — proceeding.");
+    // The codesign prompt may surface either pre-handshake (immediate)
+    // OR after the daemon's preflight runs (a few seconds in). Poll
+    // for it for up to 30s so a delayed appearance gets clicked too.
+    // "Keep Manual signing" is the safe default — never flip kimoby's
+    // pbxproj from Manual to Automatic (that breaks their cert chain).
+    const codesignDeadline = Date.now() + 30_000;
+    let codesignClicked = false;
+    while (Date.now() < codesignDeadline && !codesignClicked) {
+      const skipSigning = page
+        .getByRole("button", { name: /Keep Manual signing/i })
+        .first();
+      if (await skipSigning.count()) {
+        console.log("Code-signing prompt surfaced — clicking 'Keep Manual signing'.");
+        await skipSigning.click();
+        await page.waitForTimeout(1_000);
+        await page.screenshot({ path: join(SCREENSHOT_DIR, "02-codesign-skipped.png") });
+        codesignClicked = true;
+        break;
+      }
+      await page.waitForTimeout(2_000);
+    }
+    if (!codesignClicked) {
+      console.log("No code-signing prompt within 30s — assuming Automatic signing already, proceeding.");
     }
 
     // Periodically screenshot + sample renderer text to track what's
