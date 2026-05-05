@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveBunBinary } from "../../test/helpers/bun-binary.js";
 
 // The generator is also a freshness check: if errors.ts changes but
 // hook-errors.md isn't regenerated, this test catches the drift.
@@ -18,7 +19,7 @@ describe("gen-hook-errors-doc", () => {
     // Render to a tmp path and diff. The generator writes to the canonical
     // path; we capture-restore to avoid mutating the worktree.
     const before = onDisk;
-    const result = spawnSync("bun", ["run", generator], {
+    const result = spawnSync(resolveBunBinary(), ["run", generator], {
       cwd: repoRoot,
       encoding: "utf8",
     });
