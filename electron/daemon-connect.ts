@@ -95,37 +95,19 @@ export interface ConnectElectronToDaemonOptions {
  * deliberately — keeping the two sites symmetrical means a second
  * reviewer can A/B them without squinting at two different patterns.
  */
-/**
- * Scale the session-ready timeout by profile.mode. The 30s default in
- * connectToDaemonSession is fine for `quick` (no clean, no install)
- * and `dirty` (no clean, may auto-install if node_modules is missing).
- * `clean`/`ultra-clean` legitimately run `pnpm install` + `pod install`
- * + watchman + Gradle cache wipe BEFORE Metro can transition to
- * `running`, which routinely exceeds 30s and ALWAYS surfaced to the
- * user as `Failed to attach daemon session: connectToDaemonSession:
- * session did not reach "running" within 30000ms` — the bug the user
- * reported on a 2nd-tab clean attach.
- */
-export function timeoutForMode(mode: string): number {
-  switch (mode) {
-    case "ultra-clean":
-      return 20 * 60_000; // 20min — full reinstall + clean build
-    case "clean":
-      return 10 * 60_000; // 10min — install + pods, no full clean rebuild
-    case "dirty":
-      return 2 * 60_000; // 2min — auto-install if node_modules missing
-    case "quick":
-    default:
-      return 30_000;
-  }
-}
-
 export async function connectElectronToDaemon(
   opts: ConnectElectronToDaemonOptions,
 ): Promise<DaemonSession> {
+  // No mode-based timeout. `connectToDaemonSession` uses an idle
+  // watchdog — it fires only when the daemon goes silent (no events at
+  // all) for `sessionReadyIdleTimeoutMs` (default 90s). A clean boot
+  // that legitimately spends 5 minutes in `pnpm install` keeps petting
+  // the watchdog through pnpm's per-package log lines; a 20-minute
+  // xcodebuild keeps petting it through xcodebuild's per-file lines.
+  // Slow machine + heavy build is no longer a kill criterion. Only a
+  // truly stuck daemon — no progress events whatsoever — fails fast.
   const session = await connectToDaemonSession(opts.projectRoot, opts.profile, {
     daemonEntry: opts.daemonEntry ?? resolveDaemonEntry(),
-    sessionReadyTimeoutMs: timeoutForMode(opts.profile.mode),
   });
 
   serviceBus.setMetro(session.metro);

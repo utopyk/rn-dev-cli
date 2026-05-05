@@ -4,7 +4,7 @@ import {
   spawnTestDaemon,
   type TestDaemonHandle,
 } from "../../test/helpers/spawnTestDaemon.js";
-import { connectElectronToDaemon, timeoutForMode } from "../daemon-connect.js";
+import { connectElectronToDaemon } from "../daemon-connect.js";
 import { serviceBus } from "../../src/app/service-bus.js";
 import type { Profile } from "../../src/core/types.js";
 import { fileURLToPath } from "node:url";
@@ -106,34 +106,3 @@ describe("connectElectronToDaemon", () => {
   }, 15_000);
 });
 
-// Unit guard for the user-reported "Failed to attach daemon session:
-// session did not reach 'running' within 30000ms" — the 30s default
-// in connectToDaemonSession is too short for `clean`/`ultra-clean`
-// modes which legitimately spend 1-3min on `pnpm install` +
-// `pod install` + watchman wipe before Metro transitions to `running`.
-// Reproduced live against kimoby. timeoutForMode is the load-bearing
-// scaling fn; this test pins the mode → timeout mapping so a future
-// tweak can't silently regress it back to 30s.
-describe("timeoutForMode (Bug — 'session did not reach running within 30000ms')", () => {
-  it("scales clean-mode attach timeout above the default 30s", () => {
-    expect(timeoutForMode("clean")).toBeGreaterThan(30_000);
-    expect(timeoutForMode("clean")).toBeGreaterThanOrEqual(5 * 60_000);
-  });
-
-  it("gives ultra-clean even more headroom than clean", () => {
-    expect(timeoutForMode("ultra-clean")).toBeGreaterThan(timeoutForMode("clean"));
-  });
-
-  it("dirty mode gets a moderate bump (auto-install path can exceed 30s)", () => {
-    expect(timeoutForMode("dirty")).toBeGreaterThan(30_000);
-    expect(timeoutForMode("dirty")).toBeLessThan(timeoutForMode("clean"));
-  });
-
-  it("quick mode keeps the existing 30s default (no clean, no install)", () => {
-    expect(timeoutForMode("quick")).toBe(30_000);
-  });
-
-  it("unknown mode falls back to the 30s default", () => {
-    expect(timeoutForMode("???")).toBe(30_000);
-  });
-});
