@@ -339,12 +339,32 @@ function augmentedPath(): string {
 
 /**
  * Resolve the interpreter's absolute path so `spawn()` doesn't have
- * to depend on the inherited PATH. Tries process.env.PATH first
- * (with our augmentation), then falls back to a hardcoded list of
- * well-known install locations. Returns the bare name as a final
- * fallback so the existing ENOENT path is preserved if nothing matches
- * (the resulting error is now louder because the spawn path is also
- * augmented).
+ * to depend on the inherited PATH or per-cwd version-manager state.
+ *
+ * Pre-fix this only checked the shim dirs (e.g. `~/.nodenv/shims/`),
+ * which routes through the version manager AT RUNTIME using
+ * `.node-version` lookup from the spawned cwd. That bit us hard:
+ * kimoby's `.node-version` is 24.10.0, bun is installed for 20.18.0 +
+ * 22.17.0 only, and the daemon spawn cwd is kimoby — so the shim
+ * resolved 24.10.0 and emitted `nodenv: bun: command not found` to
+ * the daemon log file (then the renderer hung on
+ * `connectToDaemon: timed out`).
+ *
+ * Fix: prefer the actual VERSION-SPECIFIC binary path
+ * (`~/.nodenv/versions/<v>/bin/<name>`) over the shim. We pick the
+ * highest-version dir that has the binary so a user with multiple
+ * Node versions installed gets a current toolchain.
+ *
+ * Order of preference:
+ *   1. Absolute path passed in (override / execPath).
+ *   2. Version-specific paths under `~/.nodenv/versions/<v>/bin/`,
+ *      `~/.nvm/versions/node/<v>/bin/`, `~/.fnm/node-versions/<v>/bin/`.
+ *      Highest semver wins.
+ *   3. The static well-known dirs from `userShellPathExtras()` —
+ *      `~/.bun/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, etc.
+ *   4. Bare name — final fallback so spawn's ENOENT surfaces
+ *      diagnostically (and against our augmented env.PATH which is
+ *      better than the inherited Electron one).
  */
 function resolveInterpreterAbsolute(name: string): string {
   // If the caller passed an absolute path (RN_DEV_DAEMON_INTERPRETER
@@ -360,13 +380,69 @@ function resolveInterpreterAbsolute(name: string): string {
       "electron" in (process.versions as Record<string, unknown>);
     if (!isElectron && exe.endsWith("/node")) return exe;
   }
+  // 1) Version-specific binaries (skip the shim — see comment above).
+  const versioned = findVersionedBinary(name);
+  if (versioned) return versioned;
+  // 2) Static well-known dirs (note: `userShellPathExtras` includes
+  //    the nodenv SHIMS path; we still want it as a last resort
+  //    because the user may have a single-version setup where the
+  //    shim resolves fine).
   const candidates = userShellPathExtras().map((dir) => join(dir, name));
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;
   }
-  // Final fallback — let spawn fail with ENOENT against the augmented
-  // env.PATH so the error message is at least diagnostic.
+  // 3) Final fallback — let spawn fail with ENOENT against the
+  //    augmented env.PATH so the error message is at least diagnostic.
   return name;
+}
+
+/**
+ * Walk the per-version dirs of common Node version managers and
+ * return the path to `<name>` from the highest version that has it.
+ * Returns null if no version has the binary.
+ */
+function findVersionedBinary(name: string): string | null {
+  const home = homedir();
+  const versionsRoots: Array<{ root: string; binSubpath: string[] }> = [
+    { root: join(home, ".nodenv", "versions"), binSubpath: ["bin"] },
+    { root: join(home, ".nvm", "versions", "node"), binSubpath: ["bin"] },
+    { root: join(home, ".fnm", "node-versions"), binSubpath: ["installation", "bin"] },
+  ];
+  let bestPath: string | null = null;
+  let bestVer: number[] | null = null;
+  for (const { root, binSubpath } of versionsRoots) {
+    if (!existsSync(root)) continue;
+    let entries: string[];
+    try {
+      // Use require here to avoid the dynamic-import dance — this is a
+      // sync helper called from spawn().
+      entries = (require("node:fs") as typeof import("node:fs"))
+        .readdirSync(root);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const candidate = join(root, entry, ...binSubpath, name);
+      if (!existsSync(candidate)) continue;
+      const parts = entry.replace(/^v/, "").split(".").map((s) => Number(s));
+      if (parts.some((p) => Number.isNaN(p))) continue;
+      if (!bestVer || compareSemver(parts, bestVer) > 0) {
+        bestVer = parts;
+        bestPath = candidate;
+      }
+    }
+  }
+  return bestPath;
+}
+
+function compareSemver(a: number[], b: number[]): number {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av !== bv) return av - bv;
+  }
+  return 0;
 }
 
 export async function waitForSocket(
