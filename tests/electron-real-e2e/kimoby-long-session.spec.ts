@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { launchRealE2e, teardownRealE2e, type RealE2eHandle } from "./launch.js";
 
 // Real-project long-session suite. Unlike the synthetic-fixture suite, this
@@ -114,6 +115,73 @@ test.describe("Real-kimoby long session", () => {
       pageErrors,
       `Renderer pageerrors during real-kimoby session:\n${pageErrors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("DevTools tab survives a deliberate daemon SIGKILL without crashing the renderer (Bug B)", async () => {
+    handle = await launchRealE2e({
+      realProjectRoot: PROJECT_ROOT,
+      realProjectPackageManager: PACKAGE_MANAGER,
+      metroPort: 8099,
+    });
+
+    const consoleErrors: string[] = [];
+    const pageErrors: string[] = [];
+    handle.page.on("pageerror", (err) => pageErrors.push(err.message));
+    handle.page.on("console", (msg) => {
+      if (msg.type() === "error") consoleErrors.push(msg.text());
+    });
+
+    await expect(handle.page.locator(".sidebar")).toBeVisible({ timeout: 60_000 });
+    await handle.page.getByRole("button", { name: /devtools/i }).click();
+    await handle.page.waitForTimeout(3_000);
+
+    // Read the daemon's pid from the lockfile and SIGKILL it. This is the
+    // exact failure mode Bug B was reported under: the daemon dies, the
+    // electron-side cached client (electron/ipc/devtools.ts) keeps
+    // pointing at the dead adapter, and every subsequent IPC throws
+    // "subscribe.send: connection already closed". Pre-fix the renderer
+    // surfaced "Cannot restart DevTools proxy for Metro on port N"
+    // forever; post-fix the cached ref is nulled so Retry returns a
+    // clean error instead of dragging a corpse through every press.
+    const pidPath = join(PROJECT_ROOT, ".rn-dev", "pid");
+    expect(existsSync(pidPath), "Daemon pid file should exist after boot").toBe(true);
+    const pidRaw = JSON.parse(readFileSync(pidPath, "utf8")) as { pid?: unknown };
+    expect(typeof pidRaw.pid).toBe("number");
+    const daemonPid = pidRaw.pid as number;
+    process.kill(daemonPid, "SIGKILL");
+
+    // Give the renderer a few seconds to surface the disconnect.
+    await handle.page.waitForTimeout(4_000);
+
+    // Click Retry — pre-fix this would crash the iframe / surface the
+    // cryptic "subscribe.send" error on every press. Post-fix the
+    // cached client is null so the renderer settles on a clean error
+    // state without a renderer crash.
+    const retryBtn = handle.page.getByRole("button", { name: /retry/i }).first();
+    if (await retryBtn.count()) {
+      await retryBtn.click().catch(() => undefined);
+      await handle.page.waitForTimeout(2_000);
+      await retryBtn.click().catch(() => undefined);
+      await handle.page.waitForTimeout(2_000);
+    }
+
+    // Hard guards — the renderer must not have hit a JS exception and
+    // the page must still be navigable.
+    expect(
+      pageErrors,
+      `Renderer pageerror after deliberate daemon SIGKILL:\n${pageErrors.join("\n")}`,
+    ).toEqual([]);
+    // The sidebar must still be visible — pre-fix's worst case was a
+    // blank-screen renderer crash from a propagated RPC rejection.
+    await expect(handle.page.locator(".sidebar")).toBeVisible();
+    // Confirming the daemon was actually killed (sanity check on the test).
+    let stillAlive = true;
+    try {
+      process.kill(daemonPid, 0);
+    } catch {
+      stillAlive = false;
+    }
+    expect(stillAlive, "Daemon should be dead after SIGKILL").toBe(false);
   });
 
   test("Boot log shows 'Physical device' for the real iPhone profile (Bug D)", async () => {
