@@ -174,23 +174,38 @@ test.describe("Probe — real build against kimoby + iPhone 15", () => {
         });
         lastScreenshot = Date.now();
       }
-      // Sample what's in the Tool Output panel so the test log shows
-      // ongoing progress without spamming a screenshot every second.
-      const text = await page
-        .locator(".dev-space, .panel-content")
-        .first()
-        .innerText()
-        .catch(() => "");
+      // Sample what's in any of the renderer panels so the test log
+      // shows ongoing progress. `.dev-space, .panel-content` only
+      // matched the FIRST panel-content (typically the Tool Output);
+      // build lines route through the SAME panel but the read often
+      // raced and captured Metro Output's banner instead. Concatenate
+      // ALL panel-content sources so build text always shows up.
+      const allPanels = await page.locator(".panel-content").allInnerTexts().catch(() => [] as string[]);
+      const text = allPanels.join("\n");
       if (text !== lastText) {
-        const tail = text.slice(-300);
+        const tail = text.slice(-400);
         console.log(`\n--- panel sample [t+${Math.round((Date.now() - (observeUntil - 12 * 60_000)) / 1000)}s] ---`);
-        console.log(tail.slice(-300));
+        console.log(tail);
         lastText = text;
+        // Detect build trigger by scanning concatenated panel text.
+        // (allLogs captures stdout/stderr from Electron — those don't
+        // include the daemon's instance:log fan-out, so DOM read is
+        // authoritative for what the user actually sees.)
+        if (
+          buildEvents.length === 0 &&
+          /Building for ios|info Building \(using|Building "Kimoby"|info Installing|Successfully launched/i.test(text)
+        ) {
+          buildEvents.push(`renderer-dom: ${(text.match(/Building for ios|info Building \(using|info Installing|Successfully launched/i) ?? ["?"])[0]}`);
+          console.log(`  ✅ Build trigger detected via renderer DOM`);
+        }
       }
 
-      // Exit early if we see definitive signals.
-      if (allLogs.some((l) => /Successfully installed/i.test(l))) {
-        console.log("✅ EARLY EXIT — 'Successfully installed' detected.");
+      // Exit early on definitive completion signals (either captured
+      // log streams OR what the user can read in any panel).
+      const successInLogs = allLogs.some((l) => /Successfully installed|Successfully launched/i.test(l));
+      const successInDom = /Successfully installed|Successfully launched/i.test(text);
+      if (successInLogs || successInDom) {
+        console.log("✅ EARLY EXIT — install/launch success detected.");
         break;
       }
       if (errorEvents.length > 5) {
