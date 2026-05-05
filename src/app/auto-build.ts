@@ -42,6 +42,15 @@ export function triggerBuildsIfNeeded(
         port: profile.metroPort,
         variant: profile.buildVariant,
         env: profile.env,
+        // iOS scheme + configuration are profile-driven for projects
+        // with multiple schemes (e.g. kimoby's Kimoby vs Kimoby-beta).
+        // Only forward on iOS — Android uses Gradle variants instead.
+        ...(plat === "ios"
+          ? {
+              ...(profile.scheme ? { scheme: profile.scheme } : {}),
+              ...(profile.configuration ? { configuration: profile.configuration } : {}),
+            }
+          : {}),
       });
     }
   }, 200);

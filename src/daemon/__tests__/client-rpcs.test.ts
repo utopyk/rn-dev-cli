@@ -287,6 +287,71 @@ describe("daemon client RPCs (integration)", () => {
     }
   }, 10_000);
 
+  it("builder/build accepts optional scheme + configuration; rejects empty strings", async () => {
+    // The user-reported bug: kimoby has both `Kimoby` and `Kimoby-beta`
+    // schemes. Without an explicit scheme, RN CLI's default heuristic
+    // picks the workspace name (Kimoby) — works for kimoby today, but
+    // breaks for any project where the workspace name doesn't match
+    // the right scheme. Profile.scheme + Profile.configuration close
+    // that gap and round-trip through the daemon's builder/build RPC.
+    const { daemon, subClose, worktree } = await bootRunningSession();
+    try {
+      // Happy path: scheme + configuration accepted.
+      const okResp = await daemon.client.send({
+        type: "command",
+        action: "builder/build",
+        id: "build-scheme-ok",
+        payload: {
+          projectRoot: worktree,
+          platform: "ios",
+          port: 8081,
+          variant: "debug",
+          scheme: "Kimoby",
+          configuration: "Debug",
+        },
+      });
+      expect((okResp.payload as { ok: boolean }).ok).toBe(true);
+
+      // Empty scheme rejected — silent fall-through to RN CLI's
+      // default-scheme heuristic is exactly the ambiguity we're
+      // closing.
+      const emptyScheme = await daemon.client.send({
+        type: "command",
+        action: "builder/build",
+        id: "build-scheme-empty",
+        payload: {
+          projectRoot: worktree,
+          platform: "ios",
+          port: 8081,
+          variant: "debug",
+          scheme: "",
+        },
+      });
+      expect((emptyScheme.payload as { code?: string }).code).toBe(
+        "E_RPC_INVALID_PAYLOAD",
+      );
+
+      // Empty configuration rejected for the same reason.
+      const emptyConfig = await daemon.client.send({
+        type: "command",
+        action: "builder/build",
+        id: "build-config-empty",
+        payload: {
+          projectRoot: worktree,
+          platform: "ios",
+          port: 8081,
+          variant: "debug",
+          configuration: "",
+        },
+      });
+      expect((emptyConfig.payload as { code?: string }).code).toBe(
+        "E_RPC_INVALID_PAYLOAD",
+      );
+    } finally {
+      subClose();
+    }
+  }, 10_000);
+
   it("watcher/* RPCs report E_NO_WATCHER_CONFIGURED when profile.onSave is empty", async () => {
     const { daemon, subClose } = await bootRunningSession();
     try {

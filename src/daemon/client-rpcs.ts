@@ -375,9 +375,33 @@ function parseBuildOptions(
       ? (p.env as Record<string, string>)
       : undefined;
 
+  // Optional iOS scheme/configuration. Mirror profile-guard's rule:
+  // present-but-empty is rejected so an empty payload field doesn't
+  // silently fall back to RN CLI's default-scheme heuristic.
+  let scheme: string | undefined;
+  if (p.scheme !== undefined) {
+    if (typeof p.scheme !== "string" || p.scheme.length === 0) {
+      return fail(
+        "E_RPC_INVALID_PAYLOAD",
+        "builder/build.scheme must be a non-empty string when present",
+      );
+    }
+    scheme = p.scheme;
+  }
+  let configuration: string | undefined;
+  if (p.configuration !== undefined) {
+    if (typeof p.configuration !== "string" || p.configuration.length === 0) {
+      return fail(
+        "E_RPC_INVALID_PAYLOAD",
+        "builder/build.configuration must be a non-empty string when present",
+      );
+    }
+    configuration = p.configuration;
+  }
+
   return {
     ok: true,
-    opts: { projectRoot, platform, port, variant, deviceId, env },
+    opts: { projectRoot, platform, port, variant, deviceId, env, scheme, configuration },
   };
 }
 

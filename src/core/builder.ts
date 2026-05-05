@@ -30,6 +30,29 @@ export interface BuildOptions {
   port: number;
   variant: "debug" | "release";
   env?: Record<string, string>;
+  /**
+   * iOS scheme to build. Optional — if not provided, react-native CLI
+   * defaults to `<workspace-name>` (e.g. `Kimoby` for Kimoby.xcworkspace).
+   * Passed through as `--scheme <name>` when set, mirroring
+   * `npx react-native run-ios --scheme X`.
+   *
+   * The user-reported case: kimoby has both `Kimoby` and `Kimoby-beta`
+   * schemes, with code-signing wired only for `Kimoby`. Without an
+   * explicit scheme the CLI default works, but the moment the workspace
+   * filename ever differs from the right scheme name the build fails
+   * silently with a different scheme. Making this explicit closes that
+   * ambiguity.
+   */
+  scheme?: string;
+  /**
+   * iOS configuration to build (Debug/Release/etc.). Optional; defaults
+   * via the variant field (`release` → "Release", `debug` → unset so
+   * RN CLI picks Debug). When set explicitly, passed as
+   * `--configuration <name>` and overrides the variant default. Useful
+   * for projects with custom configurations like "DebugQA" or
+   * "ReleaseStaging".
+   */
+  configuration?: string;
 }
 
 export interface BuildResult {
@@ -129,7 +152,7 @@ export class Builder extends EventEmitter {
       return;
     }
 
-    const { projectRoot, platform, deviceId, port, variant, env } = options;
+    const { projectRoot, platform, deviceId, port, variant, env, scheme, configuration } = options;
 
     const args = [`run-${platform}`, "--port", String(port), "--verbose"];
 
@@ -139,7 +162,15 @@ export class Builder extends EventEmitter {
       if (deviceId) {
         args.push("--udid", deviceId);
       }
-      if (variant === "release") {
+      // Scheme + configuration (iOS only). Profile-driven so projects
+      // with multiple schemes (kimoby has Kimoby + Kimoby-beta) can
+      // pin the right one without relying on RN CLI's default heuristic.
+      if (scheme) {
+        args.push("--scheme", scheme);
+      }
+      if (configuration) {
+        args.push("--configuration", configuration);
+      } else if (variant === "release") {
         args.push("--configuration", "Release");
       }
     } else {

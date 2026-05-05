@@ -158,6 +158,27 @@ export function validateProfile(input: unknown): ValidateProfileResult {
   const projectRootCheck = checkAbsolutePath(p.projectRoot, "profile.projectRoot");
   if (!projectRootCheck.ok) return projectRootCheck;
 
+  // scheme + configuration are optional; if present, reject empty
+  // strings so the build doesn't silently swallow a malformed profile
+  // (an empty scheme would build whatever RN CLI's default heuristic
+  // picks, which is the bug we're trying to escape).
+  if (p.scheme !== undefined) {
+    if (typeof p.scheme !== "string" || p.scheme.length === 0) {
+      return fail(
+        "E_PROFILE_SCHEME",
+        "profile.scheme must be a non-empty string when present",
+      );
+    }
+  }
+  if (p.configuration !== undefined) {
+    if (typeof p.configuration !== "string" || p.configuration.length === 0) {
+      return fail(
+        "E_PROFILE_CONFIGURATION",
+        "profile.configuration must be a non-empty string when present",
+      );
+    }
+  }
+
   // Input is now shape-safe; mint the branded type so downstream APIs
   // that require a validated profile (e.g. HookManager.fire) accept it.
   return { ok: true, profile: input as ValidatedProfile };
