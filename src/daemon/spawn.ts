@@ -247,8 +247,17 @@ export function spawnDetachedDaemon(
   const logPath = join(logsDir, `daemon-${basename(worktree)}-${ts}.log`);
   const logFd = openSync(logPath, "a");
 
+  // Electron launched outside a shell context (Finder, dock, packaged
+  // app, even Playwright on some CI runners) inherits a barebones PATH
+  // that doesn't include `~/.bun/bin`, `/opt/homebrew/bin`, or the
+  // user's nodenv/nvm shims. The result is `Error: spawn bun ENOENT`
+  // — the daemon never starts, the renderer hangs on
+  // `connectToDaemon: timed out` until the watchdog fires. Resolve
+  // the interpreter to an absolute path BEFORE spawning so PATH gaps
+  // can't kill us.
+  const interpreterAbsPath = resolveInterpreterAbsolute(interpreter);
   const child = spawn(
-    interpreter,
+    interpreterAbsPath,
     interpreter === "bun"
       ? ["run", entry, "daemon", worktree, "--foreground"]
       : [entry, "daemon", worktree, "--foreground"],
@@ -259,6 +268,10 @@ export function spawnDetachedDaemon(
       // would have shown.
       stdio: ["ignore", logFd, logFd],
       cwd: worktree,
+      // Augment PATH with the typical user-shell locations so anything
+      // the daemon itself spawns (pnpm, pod, xcodebuild, watchman) can
+      // also find its tools regardless of how Electron was launched.
+      env: { ...process.env, PATH: augmentedPath() },
     },
   );
   // The OS keeps the FD open in the spawned child; the parent's
@@ -281,6 +294,79 @@ function pickDaemonInterpreter(entry: string): string {
     "electron" in (process.versions as Record<string, unknown>);
   if (isElectron) return "node";
   return process.execPath;
+}
+
+/**
+ * The list of directories any user-installed dev tool tends to live
+ * in. Order matters — first hit wins so /opt/homebrew shadows the
+ * less-common /usr/local on Apple Silicon, and ~/.bun/bin shadows
+ * homebrew's `bun` (which is sometimes outdated).
+ */
+function userShellPathExtras(): string[] {
+  const home = homedir();
+  return [
+    join(home, ".bun", "bin"),
+    join(home, ".local", "bin"),
+    join(home, ".nodenv", "shims"),
+    join(home, ".nvm", "versions", "node", "current", "bin"),
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ];
+}
+
+function augmentedPath(): string {
+  const extras = userShellPathExtras().filter((p) => existsSync(p));
+  const current = process.env.PATH ?? "";
+  // De-dup but preserve order: extras first (so they shadow anything
+  // Electron's anaemic PATH might have brought), then the inherited
+  // PATH for anything we didn't explicitly enumerate.
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const dir of [...extras, ...current.split(":")]) {
+    if (!dir) continue;
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    merged.push(dir);
+  }
+  return merged.join(":");
+}
+
+/**
+ * Resolve the interpreter's absolute path so `spawn()` doesn't have
+ * to depend on the inherited PATH. Tries process.env.PATH first
+ * (with our augmentation), then falls back to a hardcoded list of
+ * well-known install locations. Returns the bare name as a final
+ * fallback so the existing ENOENT path is preserved if nothing matches
+ * (the resulting error is now louder because the spawn path is also
+ * augmented).
+ */
+function resolveInterpreterAbsolute(name: string): string {
+  // If the caller passed an absolute path (RN_DEV_DAEMON_INTERPRETER
+  // override, or process.execPath as fallback), use it verbatim.
+  if (name.startsWith("/")) return name;
+  // Standard node binary in a Node-running parent — use its execPath.
+  if (name === "node") {
+    const exe = process.execPath;
+    // Electron's execPath is the electron binary; reject and fall
+    // through to PATH search.
+    const isElectron =
+      typeof process.versions === "object" &&
+      "electron" in (process.versions as Record<string, unknown>);
+    if (!isElectron && exe.endsWith("/node")) return exe;
+  }
+  const candidates = userShellPathExtras().map((dir) => join(dir, name));
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  // Final fallback — let spawn fail with ENOENT against the augmented
+  // env.PATH so the error message is at least diagnostic.
+  return name;
 }
 
 export async function waitForSocket(
