@@ -165,13 +165,21 @@ export class Builder extends EventEmitter {
       // Scheme + configuration (iOS only). Profile-driven so projects
       // with multiple schemes (kimoby has Kimoby + Kimoby-beta) can
       // pin the right one without relying on RN CLI's default heuristic.
+      //
+      // `react-native run-ios` calls the configuration flag `--mode`
+      // (not `--configuration`); pre-existing code passed
+      // `--configuration Release` for release builds, which the CLI
+      // rejected with `error: unknown option '--configuration'`. The
+      // `BuildOptions` field stays semantically-named `configuration`
+      // because that's the Xcode term users recognise; we map to
+      // `--mode` at the CLI boundary.
       if (scheme) {
         args.push("--scheme", scheme);
       }
       if (configuration) {
-        args.push("--configuration", configuration);
+        args.push("--mode", configuration);
       } else if (variant === "release") {
-        args.push("--configuration", "Release");
+        args.push("--mode", "Release");
       }
     } else {
       if (deviceId) {
