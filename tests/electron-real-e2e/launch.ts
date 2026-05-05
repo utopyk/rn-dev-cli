@@ -1,4 +1,5 @@
 import { _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
+import { execSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -22,6 +23,10 @@ export interface RealE2eHandle {
   getStderr: () => string;
   /** Captured stdout. */
   getStdout: () => string;
+  /** True if this handle points at a user's real project (NOT a tmp fixture).
+   * Teardown handles the two cases differently — real-project teardown
+   * preserves the project tree and only removes the smoke artifacts. */
+  realMode: boolean;
 }
 
 export interface LaunchOptions {
@@ -33,16 +38,42 @@ export interface LaunchOptions {
     metroPort: number;
     branch?: string;
   }>;
+  /**
+   * Point Electron at an existing real RN project (e.g. kimoby-mobile-app)
+   * instead of the synthetic fixture. Skips fixture copy + fake-boot —
+   * the daemon spawns real Metro against the real project. Use sparingly:
+   * each test mutates `<projectRoot>/.rn-dev/` and writes a profile to
+   * the user's actual project tree.
+   */
+  realProjectRoot?: string;
+  /** Required when realProjectRoot is set. */
+  realProjectPackageManager?: "npm" | "pnpm" | "yarn" | "bun";
 }
 
 export async function launchRealE2e(opts: LaunchOptions = {}): Promise<RealE2eHandle> {
-  const tmpRoot = mkdtempSync(join(tmpdir(), "rn-dev-real-e2e-"));
-  cpSync(SMOKE_FIXTURE_SRC, tmpRoot, { recursive: true });
+  // Decide between synthetic fixture and a real project root. Real-project
+  // mode is opt-in (`realProjectRoot` set); the test owns all clean-up of
+  // the profile we write into the real `.rn-dev/profiles/` dir.
+  const realMode = typeof opts.realProjectRoot === "string";
+  const tmpRoot = realMode
+    ? opts.realProjectRoot!
+    : mkdtempSync(join(tmpdir(), "rn-dev-real-e2e-"));
+  if (!realMode) {
+    cpSync(SMOKE_FIXTURE_SRC, tmpRoot, { recursive: true });
+  }
 
   const profilesDir = join(tmpRoot, ".rn-dev", "profiles");
   mkdirSync(profilesDir, { recursive: true });
 
   const metroPort = opts.metroPort ?? 8099;
+  // In real-project mode the smoke profile has to match the project's
+  // ACTUAL git branch (else `findDefault(null, branch)` returns null
+  // and main.ts falls back to the wizard, bypassing the daemon flip).
+  const branchForProfile = realMode
+    ? execSync("git rev-parse --abbrev-ref HEAD", { cwd: tmpRoot })
+        .toString()
+        .trim()
+    : "main";
   writeFileSync(
     join(profilesDir, "default.json"),
     JSON.stringify(
@@ -50,7 +81,7 @@ export async function launchRealE2e(opts: LaunchOptions = {}): Promise<RealE2eHa
         name: "default",
         isDefault: true,
         worktree: null,
-        branch: "main",
+        branch: branchForProfile,
         platform: "ios",
         mode: "quick",
         metroPort,
@@ -60,6 +91,9 @@ export async function launchRealE2e(opts: LaunchOptions = {}): Promise<RealE2eHa
         onSave: [],
         env: {},
         projectRoot: tmpRoot,
+        ...(realMode && opts.realProjectPackageManager
+          ? { packageManager: opts.realProjectPackageManager }
+          : {}),
       },
       null,
       2,
@@ -104,10 +138,11 @@ export async function launchRealE2e(opts: LaunchOptions = {}): Promise<RealE2eHa
     stdout: "pipe",
     env: {
       ...process.env,
-      // Fake-boot keeps Metro/Builder/Watcher stubbed; the daemon process
-      // itself is real, which is what we need to exercise daemon-survival
-      // assertions.
-      RN_DEV_DAEMON_BOOT_MODE: "fake",
+      // Fake-boot keeps Metro/Builder/Watcher stubbed in synthetic-fixture
+      // mode; in real-project mode we drop the override so the daemon spawns
+      // real Metro against the user's actual project. Real-project mode is
+      // strictly opt-in via `realProjectRoot`.
+      ...(realMode ? {} : { RN_DEV_DAEMON_BOOT_MODE: "fake" }),
       RN_DEV_PROJECT_ROOT: tmpRoot,
       RN_DEV_SMOKE: "1",
     },
@@ -134,6 +169,7 @@ export async function launchRealE2e(opts: LaunchOptions = {}): Promise<RealE2eHa
     tmpdir: tmpRoot,
     getStderr: () => stderr,
     getStdout: () => stdout,
+    realMode,
   };
 }
 
@@ -150,6 +186,25 @@ export async function teardownRealE2e(handle: RealE2eHandle): Promise<void> {
   });
   if (pid !== null) {
     await terminateDaemonPid(pid);
+  }
+  if (handle.realMode) {
+    // DO NOT rmSync the user's real project tree. Only remove the
+    // artifacts this harness wrote: the smoke profile + the local
+    // userDataDir + the daemon's sock/pid lockfile.
+    try {
+      rmSync(join(handle.tmpdir, ".rn-dev", "profiles", "default.json"), {
+        force: true,
+      });
+      rmSync(join(handle.tmpdir, ".rn-dev", "sock"), { force: true });
+      rmSync(join(handle.tmpdir, ".rn-dev", "pid"), { force: true });
+      rmSync(join(handle.tmpdir, ".electron-user-data"), {
+        recursive: true,
+        force: true,
+      });
+    } catch {
+      /* best-effort */
+    }
+    return;
   }
   try {
     rmSync(handle.tmpdir, { recursive: true, force: true });
