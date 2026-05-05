@@ -6,3 +6,4 @@ dist-renderer/
 .claude/
 renderer/node_modules/
 test-results/
+renderer/bun.lock
