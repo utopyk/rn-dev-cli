@@ -285,6 +285,102 @@ describe("Probe — real build via MCP against kimoby + iPhone", () => {
         "rn-dev/build-status returned zero events — builder/* is not flowing through MCP.",
       ).toBeGreaterThan(0);
 
+      // After the build completes, give the iPhone app a chance to
+      // launch and emit traffic + Metro logs, then poll the
+      // devtools-network and metro-logs modules through MCP. This is
+      // the M2d coverage layer — proves real captured data flows
+      // back to agents, not just module subprocesses being alive.
+      // Skipped when the build never finished (`done` undefined) —
+      // there's no app to observe.
+      if (done && done.data.success) {
+        console.log("\n--- M2d: polling devtools-network + metro-logs ---");
+        // The iPhone app needs ~30-60s after react-native run-ios
+        // returns to actually finish launching + connect its CDP
+        // bridge to the proxy. Poll for up to 120s; print whatever
+        // arrives so the test log surfaces the agent-visible data.
+        const m2dDeadline = Date.now() + 120_000;
+        let captureSeen = false;
+        let metroLineSeen = false;
+        let targetSelected = false;
+        while (Date.now() < m2dDeadline) {
+          await new Promise((res) => setTimeout(res, 5_000));
+
+          const dn = await mcp.client.callTool({
+            name: "devtools-network__status",
+            arguments: {},
+          });
+          const dnPayload = parseToolJson<{
+            meta?: { proxyStatus?: string };
+            targets?: Array<{ id?: string; title?: string }>;
+            proxyPort?: number;
+            rnVersion?: string | null;
+          }>(dn);
+          console.log(
+            `devtools-network__status: proxy=${dnPayload.meta?.proxyStatus} ` +
+              `port=${dnPayload.proxyPort} targets=${dnPayload.targets?.length ?? 0} ` +
+              `selected=${targetSelected}`,
+          );
+
+          // Once targets surface, select the first one — without this
+          // proxyStatus stays "no-target" and no traffic gets captured.
+          // This mirrors what an agent would do: see targets in
+          // __status, pick one, then start polling __list.
+          const targets = dnPayload.targets ?? [];
+          if (!targetSelected && targets.length > 0 && targets[0]?.id) {
+            const targetId = targets[0].id;
+            const selectResp = await mcp.client.callTool({
+              name: "devtools-network__select-target",
+              arguments: { targetId },
+            });
+            const selectPayload = parseToolJson<Record<string, unknown>>(selectResp);
+            console.log(
+              `devtools-network__select-target("${targetId}") -> ${JSON.stringify(selectPayload).slice(0, 200)}`,
+            );
+            targetSelected = true;
+          }
+
+          if (targetSelected) {
+            const dnList = await mcp.client.callTool({
+              name: "devtools-network__list",
+              arguments: { limit: 20 },
+            });
+            const dnListPayload = parseToolJson<{
+              entries?: Array<{ url?: string; method?: string; status?: number }>;
+            }>(dnList);
+            const entries = dnListPayload.entries ?? [];
+            console.log(`devtools-network__list: ${entries.length} captured entries`);
+            for (const e of entries.slice(0, 5)) {
+              console.log(`  ${e.method} ${e.status} ${(e.url ?? "").slice(0, 120)}`);
+            }
+            if (entries.length > 0) captureSeen = true;
+          }
+
+          const ml = await mcp.client.callTool({
+            name: "metro-logs__list",
+            arguments: { limit: 20 },
+          });
+          const mlPayload = parseToolJson<{
+            entries?: Array<{ stream?: string; line?: string }>;
+          }>(ml);
+          const mlEntries = mlPayload.entries ?? [];
+          if (mlEntries.length > 0 && !metroLineSeen) {
+            console.log(`metro-logs__list: ${mlEntries.length} lines (showing first 5):`);
+            for (const e of mlEntries.slice(0, 5)) {
+              console.log(`  [${e.stream}] ${(e.line ?? "").slice(0, 200)}`);
+            }
+            metroLineSeen = true;
+          }
+
+          if (captureSeen && metroLineSeen) break;
+        }
+
+        console.log(
+          `\nM2d coverage — devtools captures: ${captureSeen ? "YES" : "no"}, ` +
+            `metro logs: ${metroLineSeen ? "YES" : "no"}, ` +
+            `target selected: ${targetSelected ? "YES" : "no"}`,
+        );
+      }
+
       // If the build actually finished, surface the result. Don't
       // hard-fail on success===false — diagnostics are the point of the
       // probe, and a cert-related failure is informative.
