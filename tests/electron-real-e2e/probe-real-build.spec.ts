@@ -226,10 +226,63 @@ test.describe("Probe — real build against kimoby + iPhone 15", () => {
 
     await app.close().catch(() => undefined);
 
+    // Kill the daemon Electron spawned. The daemon is detached
+    // (per src/core/module-host/), so app.close() doesn't propagate
+    // teardown — without an explicit signal, the daemon survives the
+    // probe and sits on its socket / port until manually killed,
+    // breaking subsequent runs (port already in use, stale pid file
+    // confuses the next session). Read the pid BEFORE rmSync removes
+    // the file, then SIGTERM with a SIGKILL fallback after a short
+    // grace window. ESRCH means the daemon already exited cleanly,
+    // which is the happy case.
+    const pidPath = join(KIMOBY, ".rn-dev", "pid");
+    let daemonPid: number | null = null;
+    try {
+      const raw = readFileSync(pidPath, "utf8").trim();
+      const parsed = Number.parseInt(raw, 10);
+      if (Number.isFinite(parsed) && parsed > 0) daemonPid = parsed;
+    } catch {
+      // pid file already gone — daemon either never started or
+      // exited cleanly during app.close().
+    }
+    if (daemonPid !== null) {
+      try {
+        process.kill(daemonPid, "SIGTERM");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+          console.warn(`SIGTERM to daemon pid ${daemonPid} failed:`, err);
+        }
+      }
+      // Give the daemon up to 5s to exit on SIGTERM. The teardown
+      // path includes hook unloads + module-host shutdown so a few
+      // seconds is realistic; SIGKILL as a backstop ensures the
+      // probe can't leak even if a hook hangs.
+      const killDeadline = Date.now() + 5_000;
+      while (Date.now() < killDeadline) {
+        try {
+          process.kill(daemonPid, 0);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ESRCH") {
+            daemonPid = null;
+            break;
+          }
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      if (daemonPid !== null) {
+        try {
+          process.kill(daemonPid, "SIGKILL");
+          console.warn(`Daemon pid ${daemonPid} did not exit on SIGTERM within 5s; SIGKILLed.`);
+        } catch {
+          // Already gone — fine.
+        }
+      }
+    }
+
     try {
       rmSync(profilePath, { force: true });
       rmSync(join(KIMOBY, ".rn-dev", "sock"), { force: true });
-      rmSync(join(KIMOBY, ".rn-dev", "pid"), { force: true });
+      rmSync(pidPath, { force: true });
       rmSync(userDataDir, { recursive: true, force: true });
     } catch {}
 
