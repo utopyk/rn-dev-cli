@@ -26,7 +26,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { execSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   spawnMcpServer,
@@ -81,6 +81,45 @@ describe("Probe — real build via MCP against kimoby + iPhone", () => {
       const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: KIMOBY }).toString().trim();
       const profileDir = join(KIMOBY, ".rn-dev", "profiles");
       mkdirSync(profileDir, { recursive: true });
+
+      // The fixture may have an existing isDefault:true profile (the
+      // user's actual default). MCP's auto-pick uses
+      // `profiles.find((p) => p.isDefault)` against readdirSync's
+      // FS-determined order, which is NOT guaranteed alphabetical.
+      // Flip every existing default to non-default for the duration
+      // of the probe so our probe profile is the only one returned.
+      // Restore on cleanup so the user's environment isn't left
+      // mutated.
+      const flippedProfiles: Array<{ path: string; original: string }> = [];
+      try {
+        const existing = readdirSync(profileDir).filter((f) => f.endsWith(".json"));
+        for (const file of existing) {
+          const fp = join(profileDir, file);
+          const original = readFileSync(fp, "utf-8");
+          try {
+            const parsed = JSON.parse(original) as { isDefault?: boolean };
+            if (parsed.isDefault === true) {
+              parsed.isDefault = false;
+              writeFileSync(fp, JSON.stringify(parsed, null, 2));
+              flippedProfiles.push({ path: fp, original });
+            }
+          } catch {
+            // Malformed profile — skip.
+          }
+        }
+      } catch {
+        // No existing profiles dir contents — fine.
+      }
+      cleanups.push(() => {
+        for (const { path, original } of flippedProfiles) {
+          try {
+            writeFileSync(path, original);
+          } catch {
+            // best-effort
+          }
+        }
+      });
+
       const profileName = "rn-dev-probe-real-build-mcp";
       const profilePath = join(profileDir, `${profileName}.json`);
       writeFileSync(
