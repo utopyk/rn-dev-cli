@@ -7,6 +7,10 @@
   "required": ["id", "version", "hostRange", "scope"],
   "additionalProperties": false,
   "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema URI — declared for editor autocomplete (VSCode, etc.). Ignored by the validator at runtime; permitted here only so a schema-pointed manifest doesn't fail additionalProperties:false."
+    },
     "id": {
       "type": "string",
       "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",

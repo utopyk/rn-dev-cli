@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
+import { readFileSync, realpathSync } from "node:fs";
+import { join, resolve as pathResolve } from "node:path";
 import type { RegisteredModule } from "../../modules/registry.js";
 import { ModuleConfigStore } from "../../modules/config-store.js";
 import { buildSpawnCommand, wrapChild, type SpawnHandle } from "../spawn-utils.js";
@@ -67,15 +69,23 @@ export class NodeSpawner implements ModuleSpawner {
     _manifest: RegisteredModule["manifest"],
     modulePath: string,
   ): SpawnHandle {
-    // setpriv-on-Linux + process-group kill on POSIX live in
-    // `../spawn-utils.ts` — both the module-host and the H1 hook
-    // subprocess runner share that contract.
+    // Resolve modulePath (a directory) to its entry script via
+    // package.json#main. Without this Node still finds and runs the
+    // entry, but `process.argv[1]` carries the directory path — which
+    // breaks the conventional `import.meta.url === pathToFileURL(argv[1])`
+    // entry check that modules use to gate `runModule()`. Symptom of
+    // the bug: subprocess starts, opens stdio, never responds to
+    // `initialize`, MODULE_ACTIVATION_TIMEOUT after 3s. Resolving
+    // here means argv[1] always matches the file `import.meta.url`
+    // points at.
+    const entry = resolveModuleEntry(modulePath);
     const { command, args } = buildSpawnCommand({
       command: "node",
-      args: [modulePath],
+      args: [entry],
     });
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
+      cwd: modulePath,
       // POSIX: start a new process group so we can kill the whole group and
       // reap stray grandchildren spawned by the module.
       // Windows: detached creates a new process group too, but we don't rely
@@ -83,6 +93,45 @@ export class NodeSpawner implements ModuleSpawner {
       detached: process.platform !== "win32",
     });
     return wrapChild(child);
+  }
+}
+
+/**
+ * Resolve the module subprocess entry from `<modulePath>/package.json#main`.
+ * Falls back to `dist/index.js` (the convention every shipped module
+ * follows) when package.json is missing or unreadable — keeps the
+ * spawner working for modules that ship pre-built tarballs without a
+ * full package.json.
+ */
+function resolveModuleEntry(modulePath: string): string {
+  const fallback = join(modulePath, "dist", "index.js");
+  let entry: string;
+  try {
+    const pkgPath = join(modulePath, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { main?: string };
+    entry =
+      typeof pkg.main === "string" && pkg.main.length > 0
+        ? pathResolve(modulePath, pkg.main)
+        : fallback;
+  } catch {
+    entry = fallback;
+  }
+
+  // Realpath the entry so the spawn-time `argv[1]` matches the
+  // `import.meta.url` Node sets after symlink resolution. Without this,
+  // dev installs that symlink ~/.rn-dev/modules/<id> → workspace path
+  // (or any setup with /private/var, ~/Library, iCloud Drive symlinks)
+  // hit the entry-detection bug where the module's own
+  // `import.meta.url === pathToFileURL(process.argv[1]).href` check
+  // fails — argv[1] is the symlink, import.meta.url is the realpath —
+  // so `runModule()` never runs and host-call times out with
+  // MODULE_ACTIVATION_TIMEOUT after 3s. realpathSync.native throws on
+  // missing entries; fall back so the existing path still surfaces a
+  // useful error downstream.
+  try {
+    return realpathSync.native(entry);
+  } catch {
+    return entry;
   }
 }
 
