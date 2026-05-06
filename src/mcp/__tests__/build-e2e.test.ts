@@ -139,4 +139,54 @@ describe("MCP rn-dev/build wire e2e (M2a)", () => {
     },
     20_000,
   );
+
+  it(
+    "rn-dev/build-status surfaces fake-builder line/progress/done events to the agent",
+    async () => {
+      const { path: worktree, cleanup } = makeTestWorktree();
+      cleanups.push(cleanup);
+      writeProfile(worktree);
+
+      const daemon = await spawnTestDaemon(worktree, {
+        env: { RN_DEV_DAEMON_BOOT_MODE: "fake" },
+      });
+      liveDaemons.push(daemon);
+
+      const mcp = await spawnMcpServer({ cwd: worktree });
+      liveMcp.push(mcp);
+
+      // Kick off the (fake) build.
+      await mcp.client.callTool({
+        name: "rn-dev/build",
+        arguments: { platform: "ios" },
+      });
+
+      // Fake builder emits line → progress → done synchronously
+      // (separate ticks). Poll up to ~5s for all three to arrive in
+      // the BuilderClient ring on the MCP side.
+      type Event = { kind: "line" | "progress" | "done"; data: unknown };
+      let events: Event[] = [];
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const r = await mcp.client.callTool({
+          name: "rn-dev/build-status",
+          arguments: { limit: 100 },
+        });
+        const payload = parseToolJson<{ events?: Event[] }>(r);
+        events = payload.events ?? [];
+        if (events.some((e) => e.kind === "done")) break;
+        await new Promise((res) => setTimeout(res, 100));
+      }
+
+      const kinds = events.map((e) => e.kind);
+      expect(
+        kinds,
+        `Expected line + progress + done from fake builder.\nMCP stderr:\n${mcp.getStderr()}\nDaemon stderr:\n${daemon.getStderr()}`,
+      ).toEqual(expect.arrayContaining(["line", "progress", "done"]));
+
+      const done = events.find((e) => e.kind === "done");
+      expect((done?.data as { success?: boolean })?.success).toBe(true);
+    },
+    20_000,
+  );
 });

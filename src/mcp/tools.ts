@@ -419,6 +419,30 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
       },
     },
     {
+      name: "rn-dev/build-status",
+      description:
+        "Return recent builder events (line/progress/done) buffered since the daemon last booted. Pair with rn-dev/build to observe progress: kick off the build, then poll this tool every 1-2s and look for a `done` event whose `success` field tells you whether the build passed. Build progress also surfaces here as line events whose `stream` is 'stdout' (xcodebuild/gradle output) or 'stderr' (build warnings/errors).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description:
+              "Maximum number of most-recent events to return. Default: 100. Max: 500 (matches the BuilderClient ring size).",
+          },
+        },
+      },
+      handler: async (args) => {
+        const limit =
+          typeof args.limit === "number" && args.limit > 0
+            ? Math.min(args.limit, 500)
+            : 100;
+        const all = ctx.session?.builder.recentEvents() ?? [];
+        const events = all.slice(-limit);
+        return { structuredContent: { events } };
+      },
+    },
+    {
       name: "rn-dev/build",
       description:
         "Trigger a build via the daemon's builder/build RPC. Returns immediately; observe progress + completion via rn-dev/session-logs (the daemon emits builder/line, builder/progress, and builder/done events as session/log lines). Defaults pull from MCP's loaded profile when `platform`, `variant`, etc. are omitted.",
