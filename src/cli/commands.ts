@@ -308,9 +308,24 @@ export function createProgram(): Command {
   registerConfigCommands(program);
 
   // MCP server
+  //
+  // `--allow-destructive-tools` is declared so commander accepts it
+  // instead of erroring "too many arguments for mcp" and exiting
+  // before stdio is wired up — that exit was masking a real bug (any
+  // spawn with the flag would die with "Connection closed" before
+  // handling a single MCP call). The actual flag value is re-read by
+  // startMcpServer via parseFlags(process.argv) — commander's parse
+  // result is ignored.
+  //
+  // `--enable-module:<id>` and `--disable-module:<id>` use a
+  // colon-separator form that commander can't model as a normal
+  // option, so we set `allowUnknownOption()` to let them pass
+  // through to parseFlags untouched.
   program
     .command("mcp")
     .description("Start MCP server (stdio transport)")
+    .option("--allow-destructive-tools", "Bypass per-call consent for tools marked destructiveHint:true.")
+    .allowUnknownOption()
     .action(async () => {
       const { startMcpServer } = await import("../mcp/index.js");
       await startMcpServer();
