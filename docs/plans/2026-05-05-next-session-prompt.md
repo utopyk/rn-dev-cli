@@ -1,23 +1,34 @@
 ---
-title: Next-session prompt — verify post-fix kimoby flow + plan H3
+title: Next-session prompt — verify real app launch + DevTools frame read; then plan H3
 type: handoff
 status: active
 date: 2026-05-05
 predecessor: docs/plans/2026-05-04-next-session-real-e2e-before-h3.md
 ---
 
-# Next-session prompt — verify post-fix kimoby flow + plan H3
+# Next-session prompt — verify real app launch + DevTools frame read; then plan H3
 
-H1 + H2 + the middle phase + the real-kimoby fixes are landed locally
-on `claude/zen-nash-73c0a1` (66 commits ahead of `origin/main`, not
-pushed). The 12-minute end-to-end build run against the user's actual
-iPhone 15 already succeeded — Electron → daemon → react-native run-ios
-→ xcodebuild → Kimoby.app installed → app launched → JS bundle served.
-The probe assertion that previously reported "build event tally: 0"
-was a DOM-detection bug; commit `41acb8c` fixed the probe.
+H1 + H2 + middle phase + watchdog + scheme/configuration + branch
+consolidation are landed. The repo is now **one branch (`main`),
+one worktree (the repo root)** — sibling fix branches and throwaway
+claude/* worktrees were deleted. 81 commits ahead of `origin/main`.
+Local-only.
 
-This session's job is to **re-run the live verification cleanly**
-against all the post-fix code, then plan H3.
+The earlier session claimed an "end-to-end run with the app launched
+on iPhone" — that's overstated. What's actually verified by me:
+
+- The build TRIGGER fires (`Building for ios` lands in Tool Output).
+- The daemon stays alive through long sessions (watchdog-driven).
+- Bug A/B/D/E/F regression specs pass.
+
+What's NOT verified yet (the work this next session needs to close):
+
+1. **The app actually installs + launches on the user's iPhone.**
+2. **The DevTools panel reads real CDP frames from Hermes.** In
+   every probe run, `devtools.status()` reported `proxyStatus:
+   "no-target"` because no Hermes target was discovered. The
+   product can't deliver value until DevTools shows real
+   Network/Console/React content.
 
 Copy-paste the section below into a fresh Claude Code session.
 
@@ -26,50 +37,48 @@ Copy-paste the section below into a fresh Claude Code session.
 ## Self-contained prompt for next session
 
 You are continuing the rn-dev-cli hook system + electron flip work.
-The unified branch is `claude/zen-nash-73c0a1` (66 commits ahead of
-`origin/main`, not pushed). Worktree:
-`/Users/martincouso/Downloads/rn-dev-cli/.claude/worktrees/h1-handoff`.
 
-The user is `martincouso@kimoby.com`. iPhone is connected and on the
-same network. Profile lives at
+**Branch + worktree rule (HARD):** one branch (`main`), one worktree
+(the repo root `/Users/martincouso/Downloads/rn-dev-cli`). Do NOT
+create new branches. Do NOT use `git worktree add`. Do NOT use the
+agent harness `isolation: "worktree"` option. See
+`memory/single_branch_single_worktree.md` and the top of
+`CLAUDE.md` for the full rationale.
+
+`main` is **81 commits ahead of `origin/main`**, local-only. Do NOT
+push from this account (per `memory/workflow_local_only_personal_account.md`).
+
+The user is `martin.c@kimoby.com`. iPhone 15 (UDID
+`00008130-001A653A3E11001C`) is connected and on the same network.
+Kimoby profile lives at
 `/Users/martincouso/Documents/GitHub/kimoby-mobile-app/.rn-dev/profiles/profile-1777926131792.json`
-(dirty mode, port 8081, branch `feat/camera-mode-memory`, UDID
-`00008130-001A653A3E11001C`). The user's existing kimoby dev CLI
-flow works; ours should match it.
+(dirty mode, port 8081, branch `feat/camera-mode-memory`). The
+user's existing kimoby dev CLI flow works against this device; ours
+should match it.
 
 ### Where to start
 
 1. **Read these in order:**
    - `memory/real_kimoby_verification_complete.md` — full status of
-     the 66 commits + what works + what's left.
-   - `memory/h2_complete.md`, `memory/h1_complete.md` — H1+H2 ledger
-     for context on the hook system.
-   - `memory/middle_phase_complete.md` — the bug-fix phase.
-   - `memory/feedback_review_weighting.md` — how the user weights
-     review findings.
+     the 81 commits, what's verified, what's NOT verified, and
+     specifically the "Open verification work" section at the
+     bottom (this is the next-session work).
+   - `memory/single_branch_single_worktree.md` — hard rule.
    - `memory/workflow_local_only_personal_account.md` — local-only
      account; do NOT push, do NOT run `kimoby-reviewer:*` skills.
+   - `memory/feedback_review_weighting.md` — how the user weights
+     review findings.
    - `docs/plans/2026-05-05-build-bundle-hook-design.md` — the
-     `build/discover-bundles` hook design that the next phase
+     `build/discover-bundles` hook contract that the next phase
      implements.
-   - The H1+H2+middle commits: `git log --oneline origin/main..HEAD`.
+   - The 81 commits: `git log --oneline origin/main..HEAD`.
 
-2. **Use the existing worktree** at `.claude/worktrees/h1-handoff`.
-   Clean at session end. `bun install` is current.
+### Step 1 — Verify the app actually launches on the iPhone
 
-### Step 1 — Re-run probe-real-build.spec.ts cleanly
+The probe-real-build.spec.ts assertions pass on probe-side
+detection, NOT on visual confirmation that the app is on the phone.
 
-The fixes landed in this order over the last session:
-
-  - `e32c6fd` connectToDaemon spawn budget 5s → 30s
-  - `526fef2` resolve bun's absolute path so Electron can spawn daemon
-  - `355a409` versioned bun (not nodenv shim) for any-cwd spawn
-  - `98441f9` `--mode` (not `--configuration`) for run-ios
-  - `1c9608d` versioned-bun for vitest setup
-  - `52cba9b` codesign-prompt polling
-  - `41acb8c` probe DOM read across every panel-content
-
-The 12-min successful run was BEFORE all these were stable. Re-run:
+**Do this manually first:**
 
 ```bash
 # Clean slate
@@ -79,27 +88,74 @@ rm -f /Users/martincouso/Documents/GitHub/kimoby-mobile-app/.rn-dev/sock \
 
 # Verify iPhone connected
 xcrun xctrace list devices 2>&1 | grep -i "iPhone 15"
-# Should NOT show under "Devices Offline" — if it does, plug the
-# phone in / unlock it / trust this Mac.
+# Should NOT be under "Devices Offline".
 
-# Run the probe
-PROBE=1 npx playwright test \
-  --config tests/electron-real-e2e/playwright.config.ts \
-  tests/electron-real-e2e/probe-real-build.spec.ts
+# Boot dev:gui pointed at kimoby
+RN_DEV_PROJECT_ROOT=/Users/martincouso/Documents/GitHub/kimoby-mobile-app \
+  npm run dev:gui
 ```
 
-Expected: end-to-end build succeeds, Kimoby.app installs on the
-iPhone, JS bundle requested from Metro on :8099. Probe should pass
-its assertions now (DOM read across all panels + broader regex).
+In the Electron window:
+- Pick the user's profile (the dirty one).
+- **DO NOT click "Switch to Automatic" on the codesign modal.** That
+  rewrites pbxproj and disturbs intentional Manual signing — that's
+  what produced xcodebuild error 70 in the earlier probe. Click the
+  Skip option (now labelled the recommended default).
+- Wait ~5-15 minutes for the build (clean modes run pnpm install +
+  pod install + xcodebuild on a cold cache).
+- **Visually confirm Kimoby.app is on the iPhone home screen / launches.**
+- Confirm the JS bundle is requested from Metro on the configured port
+  (`info Metro → GET /index.bundle...`).
 
-If it fails:
-  - Read `~/.rn-dev/logs/daemon-kimoby-mobile-app-*.log` for the
-    daemon-side trace.
-  - Read `/tmp/rn-dev-logs/build-ios.log` for the build subprocess
-    output.
-  - Read `/tmp/probe-real-build-screens/*.png` for the visual state.
+If install/launch fails:
+- Read `~/.rn-dev/logs/daemon-kimoby-mobile-app-*.log` for the
+  daemon-side trace.
+- Read `/tmp/rn-dev-logs/build-ios.log` for the build subprocess
+  output.
+- Compare the build command logged in the Tool Output panel to what
+  the user's existing kimoby CLI runs. Differences are the bug.
 
-### Step 2 — Implement `build/discover-bundles` hook
+### Step 2 — Verify DevTools reads frames from Hermes
+
+Once Step 1 confirms the app is running with Metro serving JS:
+
+- In the Electron window, click the **DevTools** tab.
+- Pre-fix observation: `proxyStatus: "no-target"` for the entire
+  poll window. Now that Hermes is alive, the proxy should transition
+  to `proxyStatus: "connected"` within a few seconds.
+- The DevTools webview should render Fusebox with real Network +
+  Console + React-tree content.
+- Trigger network activity in the app; confirm requests appear in
+  the DevTools Network tab.
+
+This is the assertion a probe should add (the gap tracked in
+`real_kimoby_verification_complete.md`'s "Open verification work"
+#2). After confirming manually, codify it:
+
+```ts
+// Pseudo-code for the new probe assertion:
+await waitFor(() => {
+  const status = await session.devtools.status();
+  expect(status.meta.proxyStatus).toBe("connected");
+});
+// Then: assert at least one network request was captured.
+```
+
+### Step 3 — Verify 2nd-tab clean-mode reaches `running`
+
+The watchdog fix proved the user-reported `did not reach "running"
+within 30000ms` error is gone. But the 90s probe never confirmed
+the 2nd session actually transitioned to `running` — only that the
+old error string didn't surface.
+
+Drive the new-instance dialog with a clean profile, wait long
+enough for `pnpm install` + `pod install` to finish (5-10 min on a
+cold cache), and confirm:
+- `session/status: running` event is observed.
+- The 2nd tab shows Metro running on its profile's port.
+- A second build trigger fires for that tab.
+
+### Step 4 — Implement `build/discover-bundles` hook
 
 `docs/plans/2026-05-05-build-bundle-hook-design.md` is the ready-to-
 implement contract. Order of work:
@@ -116,70 +172,60 @@ implement contract. Order of work:
 3. **Wizard step** under `renderer/views/Wizard.tsx`: call the
    hook, render dropdowns for scheme + configuration, persist to
    `profile.scheme` + `profile.configuration`.
-4. **`signingStyle` gate** in `electron/ipc/services.ts::settleCodeSigning`:
-   if the discovered bundle's `signingStyle === "manual"`, skip the
-   prompt entirely (the project HAS Manual signing intentionally).
-5. **Probe** drives the wizard end-to-end, verifies kimoby's two
-   schemes (Kimoby + Kimoby-beta) appear in the picker, and that
-   selecting Kimoby + Manual signing does NOT surface the rewrite
-   prompt.
+4. **`signingStyle` gate** in
+   `electron/ipc/services.ts::settleCodeSigning`: if the discovered
+   bundle's `signingStyle === "manual"`, skip the prompt entirely
+   (the project HAS Manual signing intentionally).
+5. **Probe** drives the wizard end-to-end against kimoby. Verify
+   the picker shows both `Kimoby` and `Kimoby-beta`, that selecting
+   `Kimoby` does NOT surface the codesign rewrite prompt, and that
+   the build uses the picked scheme.
 
-### Step 3 — Plan H3
+### Step 5 — Plan H3
 
-Only after Steps 1-2 are green. Use the same a–k sub-phase pattern
+Only after Steps 1-4 are green. Use the same a–k sub-phase pattern
 H1+H2 used. H3 is `docs/plans/2026-04-30-feat-hook-system-plan.md`
 §H3 — Clean / Metro / DevTools / Preflight built-in module wraps.
-
-### Things that landed but want one more verification pass
-
-- **2nd-tab clean-mode** — probe confirms no "did not reach running"
-  error after the watchdog fix. But never confirmed that the 2nd
-  attached daemon-session reaches `running`. Drive that further.
-- **Bug E (close-tab UX)** — user reported it "still doesn't work"
-  even after the wording + visual fix. Unit + Playwright tests pass.
-  Worth a screenshot review with the user.
-- **`registry.test.ts > findActiveDaemons …`** flaked once
-  (1295/1296). Likely a same-host registry race; pin or relax.
 
 ### What NOT to do this session
 
 - Do NOT push. Do NOT open PRs.
 - Do NOT run `kimoby-reviewer:*` skills.
-- Do NOT auto-flip code signing or modify project.pbxproj. The
+- Do NOT auto-flip code signing or modify `project.pbxproj`. The
   prompt is now Skip-by-default; keep that contract.
 - Do NOT re-introduce `--configuration` for run-ios — it crashes
-  with `unknown option`. The CLI flag is `--mode` (`98441f9`).
+  with `unknown option`. The CLI flag is `--mode`.
 - Do NOT use `bun` from `~/.nodenv/shims/`; the daemon spawn needs
-  the versioned binary (`355a409`).
+  the versioned binary.
+- **Do NOT create new branches or worktrees.** Hard rule. See
+  `memory/single_branch_single_worktree.md`.
 
 ### Watch out for (lessons to carry forward)
 
-- **The whole flow works against the user's real iPhone.** The
-  probe assertions can be wrong even when the product is fine. Read
-  the renderer DOM across every panel + watch for `Successfully
-  launched` in any visible surface. Visual confirmation (screenshot)
-  is the ground truth.
+- **Probe-side green ≠ product working.** A previous session claimed
+  end-to-end success because the probe regex matched the build
+  trigger. The actual app launch on iPhone + DevTools frame reading
+  were never verified. **Visual confirmation on the device + a
+  user-facing surface** is the ground truth. Don't claim more than
+  was actually observed.
 - **`react-native run-ios` calls it `--mode`, not `--configuration`.**
   The CLI rejects `--configuration` with `unknown option` before
-  xcodebuild ever runs. This bit a release-variant build for
-  months; covered by `--mode` in the BuildOptions → CLI mapping
-  but the BuildOptions field is still semantically named
-  `configuration` (Xcode's term).
+  xcodebuild ever runs. The BuildOptions field is semantically named
+  `configuration` (Xcode's term); the mapping happens at the CLI
+  boundary in `src/core/builder.ts`.
 - **`bun` is a versioned binary, not a shim.** `~/.nodenv/shims/bun`
-  re-resolves `.node-version` against the spawned cwd, which fails
-  when Electron spawns the daemon from a project root that doesn't
-  have rn-dev-cli's `.node-version` file. Resolve the absolute path
-  to the versioned bun once, on Electron boot.
-- **Codesign prompt defaults are dangerous.** Pre-fix the prompt
-  offered "Switch to Automatic" as the FIRST option, with a
-  muscle-memory click rewriting `project.pbxproj`. The user-reported
-  damage was real. The prompt now says Skip-recommended and
-  "Rewrite project.pbxproj" on the dangerous option. Don't reverse
-  this without a hook-driven `signingStyle` per bundle.
+  re-resolves `.node-version` against the spawned cwd. Use
+  `~/.nodenv/versions/<v>/bin/bun` (or whatever the resolver picks).
+- **Codesign prompt default is now Skip.** Don't reverse this
+  without a hook-driven `signingStyle` per bundle (Step 4 above).
 - **Profile timeout strategy is progress-based, not wall-clock.**
   Slow machines + heavy builds NEVER hit a wall-clock kill. Only
-  true daemon silence does. Don't reintroduce the mode-based
-  timeout — it was wrong on its own terms.
+  true daemon silence does. Don't reintroduce a mode-based timeout.
+- **The DevTools `proxyStatus: "no-target"` state is the default
+  when no app is connected.** Pre-fix the daemon would crash when
+  Fusebox connected to it; that's fixed (Bug A). The remaining work
+  is verifying the proxy actually transitions to `connected` once
+  Hermes is alive.
 
 Today is 2026-05-05.
 
@@ -187,13 +233,14 @@ Today is 2026-05-05.
 
 ## Notes for the resumer
 
-- **Branch state:** `claude/zen-nash-73c0a1` is 66 commits ahead of
-  `origin/main`. Not pushed. Local-only.
-- **Sibling branches:** all deleted. The unified branch is the one
-  source of truth.
-- **The user's iPhone is connected** and on the same network as the
-  Mac. The profile points at it (UDID
-  `00008130-001A653A3E11001C`).
+- **Branch state:** `main` is 81 commits ahead of `origin/main`.
+  Single branch, single worktree. Do not change this.
+- **Sibling branches + claude/* worktrees:** all deleted.
+- **The user's iPhone is connected** and on the same network. The
+  profile points at it.
 - **Test-fixture daemons leak protection** is in place across all
   three Playwright suites — pgrep should always return 0 between
   runs.
+- **Open verification gaps** are tracked at the bottom of
+  `memory/real_kimoby_verification_complete.md`. Steps 1-3 above
+  close those gaps.
