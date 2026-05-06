@@ -1,7 +1,8 @@
 # TUI + MCP real-process test parity
 
-**Status:** scoped, not started
+**Status:** M1 + M2 landed (MCP at parity); T1 (TUI) next.
 **Date:** 2026-05-06
+**Updated:** 2026-05-06 (post-M2)
 **Predecessor:** the discussion that produced this doc — Electron has three test layers (vitest + tsc + playwright real-e2e), MCP has *one* real-process test, TUI has *zero*. The H2-followup memory entry exists because the green test pipeline missed bugs that manual kimoby verification surfaced. Same risk applies to MCP and TUI today.
 
 ## What "real-process parity" means
@@ -117,3 +118,32 @@ Run with `REAL_BOOT_TUI=1` against the kimoby fixture. Assert build progress lin
 - Snapshot testing of TUI screen buffers. Brittle, hides intent. Prefer assertion-based tests.
 - Replacing the existing `mcp-as-daemon-client.test.ts` integration test. It's faster and covers complementary territory (multi-client coexistence inside a single vitest process). Both layers stay.
 - Cross-platform CI runners (Windows/Linux). Out of scope until somebody actually runs CI there.
+
+---
+
+## Post-landing notes — what M1 + M2 actually shipped (2026-05-06)
+
+### M1 (closed)
+
+| Sub-phase | What landed | Bugs surfaced + fixed |
+|---|---|---|
+| M1a | Tool-listing real-process gate | — |
+| M1b | Read-tool round-trip (list-profiles/get-profile/list-worktrees) | Missing `await` on `getWorktrees`/`listDevices`/`bootDevice`/`getCurrentBranch` in 8+ MCP and CLI handlers; unbound `flags` reference in `buildModulesLifecycleTools` |
+| M1c | modules-list daemon-RPC round-trip | Lifecycle naming-mismatch identified (resolved in M2-prereq) |
+| M1d | Unknown-tool error path survives without tearing transport | — |
+| M1e | Consent gate + `--allow-destructive-tools` flag | Commander rejected MCP flags as "too many arguments" — `--allow-destructive-tools` and `--enable-module:*` were unusable in practice |
+
+### M2 (closed)
+
+| Sub-phase | What landed | Bugs surfaced + fixed |
+|---|---|---|
+| M2-prereq | Session lifecycle (`start-session`/`stop-session`/`list-sessions`) wired to actual daemon RPCs (`session/start`/`session/stop`/`session/status`) | Hyphen-vs-slash RPC name mismatch; agents could not start/stop sessions through MCP |
+| M2a | rn-dev/build refactored to use daemon's builder/build RPC (no longer blocks MCP for 10+ min on execSync); BuilderClient gains a 500-entry event ring; new `rn-dev/build-status` tool surfaces line/progress/done events to agents; `builder/*` added to MCP's events/subscribe kinds filter | macOS `/private/var` ↔ `/var` symlink trap in daemon's projectRoot validator (real users on iCloud/Documents would have hit this) |
+| M2a-probe | PROBE-gated `probe-real-build-mcp.spec.ts` mirrors the Electron probe — spawns MCP against kimoby, polls build-status every 10s for 12 min | not run yet — set `PROBE=1` to invoke |
+| M2b | Module-contributed tools proxy (`<moduleId>__<tool>`) round-trip via modules/host-call. Two new env-var test seams (`RN_DEV_DAEMON_TEST_EXTRA_MANIFEST`, `RN_DEV_TEST_BUILTIN_ALLOWLIST`) so subprocess daemons can register synthetic manifests without subprocess module loading | — |
+
+### Still open
+
+- **Real devtools network capture through MCP.** Requires real-boot mode + an installed `@rn-dev-modules/devtools-network` in the project + a running app emitting traffic. M2b's module-proxy test pins the wire shape; a separate real-boot probe (analog of `probe-real-build-mcp.spec.ts` but for devtools) is the next layer. Not blocking; flagged for follow-up.
+- **Long-tail tool e2e.** ~10 tools shell out (`run-lint`, `run-typecheck`, `clean`, `install-deps`, `select-device`, `boot-device`, etc.) and don't have dedicated probes. The patterns from M1a–M2b cover their wire shapes; per-tool tests would be over-engineering.
+- **TUI (T1).** Untouched. Spike + harness + wizard coverage remains.
