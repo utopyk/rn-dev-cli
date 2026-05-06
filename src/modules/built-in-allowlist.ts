@@ -65,7 +65,24 @@ export function assertBuiltInAllowed(id: string): void {
 
 /** Predicate form. Honors both the production list and active test extensions. */
 export function isBuiltInAllowed(id: string): boolean {
-  return PRODUCTION_ALLOWLIST.has(id) || testExtensions.has(id);
+  if (PRODUCTION_ALLOWLIST.has(id)) return true;
+  if (testExtensions.has(id)) return true;
+  // Cross-process test seam: when the daemon is spawned as a subprocess
+  // by an integration test, the in-process `__addBuiltInAllowedForTests`
+  // doesn't reach the child. RN_DEV_TEST_BUILTIN_ALLOWLIST is a
+  // comma-separated id list that the child reads on each predicate
+  // call; production never sets this. Same threat-model as the
+  // RN_DEV_DAEMON_TEST_EXTRA_MANIFEST env hook in fake-boot.ts —
+  // tests-only.
+  const envExt = process.env.RN_DEV_TEST_BUILTIN_ALLOWLIST;
+  if (envExt) {
+    return envExt
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .includes(id);
+  }
+  return false;
 }
 
 /**

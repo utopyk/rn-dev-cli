@@ -137,6 +137,28 @@ export async function fakeBootSessionServices(
   });
   registerMarketplaceBuiltIn({ moduleRegistry, capabilities });
 
+  // M2b — test-only hook: a fake-boot daemon spawned with
+  // `RN_DEV_DAEMON_TEST_EXTRA_MANIFEST` parses the env var as JSON and
+  // registers it as an additional built-in. Used by MCP module-proxy
+  // e2e tests to inject a manifest that contributes
+  // `contributes.mcp.tools` (none of the production built-ins do) so
+  // the MCP→daemon→module-proxy round-trip can be exercised without
+  // setting up a real 3p module. Production never reads this env var.
+  const extraManifestJson = process.env.RN_DEV_DAEMON_TEST_EXTRA_MANIFEST;
+  if (extraManifestJson) {
+    try {
+      const manifest = JSON.parse(extraManifestJson) as Parameters<
+        typeof moduleRegistry.registerBuiltIn
+      >[0];
+      moduleRegistry.registerBuiltIn(manifest);
+    } catch (err) {
+      opts.emit(
+        `[fake-boot] failed to register test manifest from ` +
+          `RN_DEV_DAEMON_TEST_EXTRA_MANIFEST: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   // Phase 13.4.1 — register the modules IPC dispatcher on the daemon's
   // shared socket so integration tests that exercise `modules/*` RPCs
   // (host-call, list-panels, resolve-panel, install/uninstall,
