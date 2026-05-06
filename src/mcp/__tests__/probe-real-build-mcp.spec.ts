@@ -68,6 +68,60 @@ describe("Probe — real build via MCP against kimoby + iPhone", () => {
 
   afterEach(async () => {
     for (const m of liveMcp.splice(0)) await m.stop();
+
+    // Same daemon-leak fix as tests/electron-real-e2e/probe-real-build:
+    // the daemon was spawned (detached) by connectToDaemonSession during
+    // MCP boot. Closing the SDK client drops the subscribe-socket
+    // refcount, but the daemon doesn't always exit promptly — we've
+    // observed it surviving the test and squatting on the metro port.
+    // Read the pid from .rn-dev/pid, SIGTERM with a 5s grace, SIGKILL
+    // backstop. ESRCH is the happy case.
+    const pidPath = join(KIMOBY, ".rn-dev", "pid");
+    let daemonPid: number | null = null;
+    try {
+      const raw = readFileSync(pidPath, "utf8").trim();
+      const parsed = Number.parseInt(raw, 10);
+      if (Number.isFinite(parsed) && parsed > 0) daemonPid = parsed;
+    } catch {
+      // pid file already gone — daemon exited cleanly.
+    }
+    if (daemonPid !== null) {
+      try {
+        process.kill(daemonPid, "SIGTERM");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+          console.warn(`SIGTERM to daemon pid ${daemonPid} failed:`, err);
+        }
+      }
+      const killDeadline = Date.now() + 5_000;
+      while (Date.now() < killDeadline) {
+        try {
+          process.kill(daemonPid, 0);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ESRCH") {
+            daemonPid = null;
+            break;
+          }
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      if (daemonPid !== null) {
+        try {
+          process.kill(daemonPid, "SIGKILL");
+          console.warn(`Daemon pid ${daemonPid} did not exit on SIGTERM within 5s; SIGKILLed.`);
+        } catch {
+          // Already gone — fine.
+        }
+      }
+    }
+
+    try {
+      rmSync(pidPath, { force: true });
+      rmSync(join(KIMOBY, ".rn-dev", "sock"), { force: true });
+    } catch {
+      // best-effort
+    }
+
     for (const c of cleanups.splice(0)) c();
   });
 
