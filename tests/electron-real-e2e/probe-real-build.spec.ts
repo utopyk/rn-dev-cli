@@ -215,6 +215,80 @@ test.describe("Probe — real build against kimoby + iPhone 15", () => {
     }
     await page.screenshot({ path: join(SCREENSHOT_DIR, "99-end.png") });
 
+    // ---- Electron M2d-equivalent: verify devtools + metro-logs panels ----
+    //
+    // Mirrors the MCP-side probe-real-build-mcp.spec.ts M2d phase: now
+    // that the build is done and the iPhone app is launched + attached
+    // to the CDP proxy, click through to the DevTools and Metro Logs
+    // tabs and assert the user sees real data — not just "tab mounts
+    // without crashing" (the smoke layer).
+    //
+    // Intentionally non-fatal: the panels' internal state depends on
+    // whether the iPhone has connected to the proxy in time and on
+    // whether the app emitted any traffic. Print findings + screenshot
+    // for diagnosis; only hard-fail if the panel reaches an explicit
+    // error state.
+    let devtoolsPanelState: "no-target" | "connected" | "connecting" | "error" | "unknown" = "unknown";
+    let metroLogLineCount = 0;
+    try {
+      const devtoolsBtn = page.getByRole("button", { name: /devtools/i }).first();
+      if (await devtoolsBtn.count()) {
+        await devtoolsBtn.click();
+        // Poll up to 90s for the panel to leave the `connecting`
+        // placeholder. Either `no-target` (waiting for app) or
+        // `connected` (target attached, webview rendered) is success.
+        const panelDeadline = Date.now() + 90_000;
+        while (Date.now() < panelDeadline) {
+          if (await page.locator(".devtools-toolbar").count()) {
+            devtoolsPanelState = "connected";
+            break;
+          }
+          if (await page.getByText(/waiting for app to connect/i).count()) {
+            devtoolsPanelState = "no-target";
+            break;
+          }
+          if (await page.getByText(/devtools unavailable|cannot start devtools/i).count()) {
+            devtoolsPanelState = "error";
+            break;
+          }
+          await page.waitForTimeout(2_000);
+        }
+        await page.screenshot({ path: join(SCREENSHOT_DIR, "98-devtools.png") });
+        console.log(`DevTools panel state: ${devtoolsPanelState}`);
+        if (devtoolsPanelState === "connected") {
+          // Webview rendered — proxy resolved a target, capture pipeline
+          // is wired. Sample the toolbar text so the log shows the
+          // panel's current target / port.
+          const toolbar = await page.locator(".devtools-toolbar").innerText().catch(() => "");
+          console.log(`DevTools toolbar: ${toolbar.replace(/\s+/g, " ").slice(0, 200)}`);
+        }
+      }
+
+      const metroBtn = page.getByRole("button", { name: /metro logs/i }).first();
+      if (await metroBtn.count()) {
+        await metroBtn.click();
+        // Wait briefly for the log panel to populate.
+        await page.waitForTimeout(3_000);
+        // Count `.log-line` elements inside the Metro Logs panel.
+        // LogPanel renders one div per line; non-zero proves Metro
+        // stdout flowed through the daemon → renderer → DOM.
+        metroLogLineCount = await page.locator(".log-line").count().catch(() => 0);
+        await page.screenshot({ path: join(SCREENSHOT_DIR, "97-metro-logs.png") });
+        console.log(`Metro Logs visible lines: ${metroLogLineCount}`);
+        if (metroLogLineCount > 0) {
+          // Sample the first few lines so the probe log shows the
+          // user-visible content matches expectation (RN banner / Metro
+          // output, not garbage).
+          const sample = await page.locator(".log-line").allInnerTexts().catch(() => [] as string[]);
+          for (const line of sample.slice(0, 3)) {
+            console.log(`  ${line.slice(0, 200)}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("DevTools/Metro Logs M2d block hit an error:", err);
+    }
+
     // Final summary.
     console.log(`\n===== FINAL =====`);
     console.log(`build event tally: ${buildEvents.length}`);
@@ -296,6 +370,22 @@ test.describe("Probe — real build against kimoby + iPhone 15", () => {
       errorEvents.filter((l) => /did not reach.*running/i.test(l)),
       "Watchdog regression: 30s timeout fired against a real build.",
     ).toEqual([]);
+
+    // M2d-equivalent: panels must NOT be in an explicit error state.
+    // `unknown` is acceptable (we never got that far if the click
+    // didn't surface). `no-target` is acceptable (app didn't connect
+    // in 90s — still proves the panel's wiring works). `error` is
+    // the Bug-5 regression fingerprint.
+    expect(
+      devtoolsPanelState,
+      "DevTools panel resolved into the explicit error state — Bug 5 / Bug 5b regression.",
+    ).not.toBe("error");
+
+    console.log(
+      `\n===== M2d-Electron =====` +
+        `\n  DevTools panel state: ${devtoolsPanelState}` +
+        `\n  Metro Logs lines visible: ${metroLogLineCount}`,
+    );
 
     // Final body sample for forensics.
     console.log(`\nFinal renderer body (last 800 chars):\n${finalText.slice(-800)}`);
