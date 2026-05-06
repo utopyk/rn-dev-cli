@@ -10,6 +10,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     globalSetup: ["./vitest.global-setup.ts"],
+    setupFiles: ["./vitest.setup.ts"],
     exclude: [
       "**/node_modules/**",
       "**/dist/**",

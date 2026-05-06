@@ -66,13 +66,19 @@ function defaultInvokeImpl(channel: string, ...args: unknown[]): unknown {
   }
 }
 
-async function advanceToStep3(bridge: FakeIpcBridge): Promise<void> {
-  // Step 1 — pick the root worktree.
-  await waitFor(() => screen.getByText('Default (root)'));
-  fireEvent.click(screen.getByText('Default (root)'));
-  // Step 2 — pick a branch.
-  await waitFor(() => screen.getByText('main'));
-  fireEvent.click(screen.getByText('main'));
+async function advanceToStep3(_bridge: FakeIpcBridge): Promise<void> {
+  // Step 1 — pick the root worktree. The SearchableList row label is
+  // `📁 Default (root)` in a single span, so exact-match selectors miss
+  // it; use regex so the emoji prefix is tolerated.
+  await waitFor(() => screen.getByText(/Default \(root\)/));
+  fireEvent.click(screen.getByText(/Default \(root\)/));
+  // Step 2 — pick a branch. Branch rows have no prefix, so exact match
+  // works. `getAllByText` because `main` may also appear elsewhere
+  // (header chips, summary lines).
+  await waitFor(() => screen.getAllByText('main').length > 0);
+  const branchRow = screen.getAllByText('main').find((el) => el.className.includes('sl-item-label'));
+  if (!branchRow) throw new Error('Branch row "main" not found in SearchableList.');
+  fireEvent.click(branchRow);
   // Step 3 — landed.
   await waitFor(() => screen.getByText('Platform'));
 }
