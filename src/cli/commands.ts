@@ -108,7 +108,7 @@ export function createProgram(): Command {
       const store = new ProfileStore(
         path.join(projectRoot, ".rn-dev", "profiles")
       );
-      const branch = getCurrentBranch(projectRoot) ?? "main";
+      const branch = (await getCurrentBranch(projectRoot)) ?? "main";
       store.setDefault(name, null, branch);
       console.log(`Profile "${name}" set as default for branch "${branch}"`);
     });
@@ -120,7 +120,7 @@ export function createProgram(): Command {
     .option("--platform <platform>", "ios, android, or both", "both")
     .action(async (options) => {
       const platform = (options.platform ?? "both") as Platform;
-      const devices = listDevices(platform);
+      const devices = await listDevices(platform);
 
       if (devices.length === 0) {
         console.log("No devices found.");
@@ -143,7 +143,7 @@ export function createProgram(): Command {
     .description("List git worktrees and their session status")
     .action(async () => {
       const projectRoot = requireProjectRoot();
-      const worktrees = getWorktrees(projectRoot);
+      const worktrees = await getWorktrees(projectRoot);
 
       if (worktrees.length === 0) {
         console.log("No worktrees found (or not a git repository).");

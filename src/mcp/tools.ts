@@ -522,7 +522,7 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
       },
       handler: async (args) => {
         const platform = (args.platform as "ios" | "android" | "both") ?? "both";
-        const devices = listDevices(platform);
+        const devices = await listDevices(platform);
         return { devices };
       },
     },
@@ -539,7 +539,7 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
       handler: async (args) => {
         const deviceId = args.deviceId as string;
         // Find the device in all available devices
-        const devices = listDevices("both");
+        const devices = await listDevices("both");
         const device = devices.find((d) => d.id === deviceId);
         if (!device) {
           return { error: `Device not found: ${deviceId}` };
@@ -559,12 +559,12 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
       },
       handler: async (args) => {
         const deviceId = args.deviceId as string;
-        const devices = listDevices("both");
+        const devices = await listDevices("both");
         const device = devices.find((d) => d.id === deviceId);
         if (!device) {
           return { error: `Device not found: ${deviceId}` };
         }
-        const success = bootDevice(device);
+        const success = await bootDevice(device);
         return { status: success ? "booted" : "failed", device };
       },
     },
@@ -612,7 +612,7 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
       description: "List git worktrees with session status",
       inputSchema: { type: "object", properties: {} },
       handler: async () => {
-        const worktrees = getWorktrees(ctx.projectRoot);
+        const worktrees = await getWorktrees(ctx.projectRoot);
         return { worktrees };
       },
     },
@@ -657,7 +657,7 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
       },
       handler: async (args) => {
         const worktree = args.worktree as string;
-        const worktrees = getWorktrees(ctx.projectRoot);
+        const worktrees = await getWorktrees(ctx.projectRoot);
         const target = worktrees.find(
           (w) => w.path === worktree || w.branch === worktree
         );
@@ -821,6 +821,13 @@ function okResult(structuredContent: Record<string, unknown>): ToolResult {
 // ---------------------------------------------------------------------------
 
 function buildModulesLifecycleTools(ctx: McpContext): ToolDefinition[] {
+  // Match createToolDefinitions' default — a context without flags is
+  // treated as the safe (non-destructive) posture.
+  const flags: McpFlags = ctx.flags ?? {
+    enabledModules: new Set<string>(),
+    disabledModules: new Set<string>(),
+    allowDestructiveTools: false,
+  };
   return [
     {
       name: "rn-dev/modules-list",
