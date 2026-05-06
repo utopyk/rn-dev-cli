@@ -11,6 +11,7 @@
 // services if we ever relax the 1:1 rule.
 
 import path from "node:path";
+import { realpathSync } from "node:fs";
 import type { IpcMessage, IpcMessageEvent } from "../core/ipc.js";
 import type { DaemonSupervisor } from "./supervisor.js";
 import type { SessionServices } from "../core/session/boot.js";
@@ -319,7 +320,26 @@ function parseBuildOptions(
   // Bound to the daemon's worktree. `path.relative` returns a string
   // starting with ".." when the second arg is above the first; an
   // exact match returns "". Absolute paths return themselves.
-  const rel = path.relative(worktree, projectRoot);
+  //
+  // realpath both sides BEFORE the relative check: macOS's
+  // `/private/var` ↔ `/var` symlink (and analogous setups on Linux)
+  // mean a caller computing projectRoot via process.cwd()/realpath can
+  // legitimately pass a symlink-resolved path while the daemon was
+  // spawned with the original. Without resolution the relative check
+  // returns `../../../private/var/…` and rejects the same physical
+  // directory the daemon is anchored to. realpathSync.native throws
+  // ENOENT for missing paths — fall back to the original input so the
+  // existing absolute-path check below still catches that case.
+  const resolveSafe = (input: string): string => {
+    try {
+      return realpathSync.native(input);
+    } catch {
+      return input;
+    }
+  };
+  const resolvedWorktree = resolveSafe(worktree);
+  const resolvedProjectRoot = resolveSafe(projectRoot);
+  const rel = path.relative(resolvedWorktree, resolvedProjectRoot);
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
     return fail(
       "E_BUILD_PROJECTROOT_OUTSIDE_WORKTREE",

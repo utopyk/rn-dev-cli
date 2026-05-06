@@ -420,34 +420,54 @@ export function createToolDefinitions(ctx: McpContext): ToolDefinition[] {
     },
     {
       name: "rn-dev/build",
-      description: "Build the app",
+      description:
+        "Trigger a build via the daemon's builder/build RPC. Returns immediately; observe progress + completion via rn-dev/session-logs (the daemon emits builder/line, builder/progress, and builder/done events as session/log lines). Defaults pull from MCP's loaded profile when `platform`, `variant`, etc. are omitted.",
       inputSchema: {
         type: "object",
         properties: {
           platform: { type: "string", enum: ["ios", "android"] },
           variant: { type: "string", enum: ["debug", "release"] },
+          deviceId: { type: "string", description: "iOS UDID or Android device id; defaults to the profile's selected device." },
+          scheme: { type: "string", description: "iOS scheme; falls back to the profile's value." },
+          configuration: { type: "string", description: "iOS configuration (e.g. Debug/Release); falls back to variant default." },
         },
-        required: ["platform"],
       },
       handler: async (args) => {
-        const platform = args.platform as string;
-        const variant = (args.variant as string) ?? "debug";
-        const cmd =
-          platform === "ios"
-            ? `npx react-native run-ios${variant === "release" ? " --configuration Release" : ""}`
-            : `npx react-native run-android${variant === "release" ? " --variant=release" : ""}`;
-        try {
-          const output = execSync(cmd, {
-            cwd: ctx.projectRoot,
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-            timeout: 600_000,
-          });
-          return { status: "success", output: output.slice(-2000) };
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return { status: "failed", error: msg.slice(-2000) };
+        if (!ctx.session) {
+          return { error: "No daemon connection." };
         }
+        if (!ctx.profile) {
+          return {
+            error:
+              "No profile available — rn-dev/build needs a default profile in .rn-dev/profiles to fall back on for projectRoot, port, etc.",
+          };
+        }
+        // Platform fallback: caller args win; otherwise pick from the
+        // profile (which can be "both" — default to ios since the
+        // daemon's builder/build only accepts ios|android, not both).
+        const platform: "ios" | "android" =
+          (args.platform as "ios" | "android" | undefined) ??
+          (ctx.profile.platform === "android" ? "android" : "ios");
+        const variant = (args.variant as "debug" | "release" | undefined) ?? ctx.profile.buildVariant ?? "debug";
+        const deviceId = (args.deviceId as string | undefined) ?? ctx.profile.devices?.[platform] ?? undefined;
+        const scheme = (args.scheme as string | undefined) ?? ctx.profile.scheme ?? undefined;
+        const configuration = (args.configuration as string | undefined) ?? ctx.profile.configuration ?? undefined;
+        const port = ctx.profile.metroPort;
+
+        const payload: Record<string, unknown> = {
+          projectRoot: ctx.projectRoot,
+          platform,
+          variant,
+          port,
+        };
+        if (deviceId) payload.deviceId = deviceId;
+        if (scheme) payload.scheme = scheme;
+        if (configuration) payload.configuration = configuration;
+
+        const resp = await ctx.session.client.send(
+          makeIpcMessage("builder/build", payload),
+        );
+        return resp.payload ?? { ok: true };
       },
     },
     {
