@@ -142,6 +142,7 @@ export async function startMcpServer(argv: readonly string[] = process.argv): Pr
     preflightEngine: createDefaultPreflightEngine(projectRoot),
     session,
     flags,
+    profile,
   };
 
   const builtInTools = createToolDefinitions(ctx);
