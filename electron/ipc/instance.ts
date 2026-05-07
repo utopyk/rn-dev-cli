@@ -195,34 +195,48 @@ export function registerInstanceHandlers() {
     const instance = instances.get(instanceId);
     if (!instance) return { ok: false, error: 'Instance not found' };
 
-    // User-reported (2026-05-06): closing a tab left Metro running in
-    // the background. Pre-fix, this handler only deleted the instance
-    // from Electron's bookkeeping Map and emitted `instance:removed` —
-    // by design ("teardown is the user's choice via app quit") but
-    // surprising for users who expected the close button to actually
-    // stop Metro and the daemon's session services.
+    // User-reported (2026-05-06): closing a tab left Metro running.
+    // First fix sent session/stop synchronously, but the daemon's
+    // supervisor.stop() AWAITS any in-flight boot before tearing down
+    // (src/daemon/supervisor.ts:378-385). Under ultra-clean mode the
+    // boot's clean step can take 5-10 minutes, so the synchronous wait
+    // froze the kill — second user report: "killing the tab still does
+    // nothing in the ultra clean profile".
     //
-    // Now: if the instance owned the active daemon session, send
-    // session/stop over the long-lived subscribe socket so the daemon
-    // tears down Metro + devtools + module-host + the whole session
-    // service tree before we drop the local bookkeeping. We DO NOT
-    // hard-fail the close on a daemon-side error — the user has asked
-    // for the tab to go away, and a hung daemon shouldn't trap them.
-    // We just log and proceed.
+    // Two-phase teardown now:
+    //   1. UI-side: remove the tab immediately so the user sees their
+    //      action take effect, no matter how long the daemon takes.
+    //   2. Daemon-side: fire session/stop without awaiting the response.
+    //      `supervisor.stop()` will run as soon as the current boot
+    //      finishes its in-flight phase (or immediately if it's already
+    //      `running`). Resources tear down in the background.
+    //
+    // Trade-off: if the daemon is mid-clean, Metro doesn't stop until
+    // that clean phase ends. That's better than freezing the UI for
+    // ten minutes — and far better than the pre-fix behavior of leaking
+    // Metro entirely. A future refactor can make clean cancelable
+    // (AbortSignal through CleanManager) so stop is truly immediate.
     if (state.daemonSession && state.activeInstanceId === instanceId) {
-      try {
-        await state.daemonSession.client.send({
+      const session = state.daemonSession;
+      // Clear the references first so a follow-up `instances:create`
+      // doesn't try to share a session that's tearing down.
+      state.daemonSession = null;
+      state.daemonSessionProfileName = null;
+      // Fire-and-forget. Errors land in the audit / daemon log but
+      // don't block the UI.
+      void session.client
+        .send({
           type: 'command',
           action: 'session/stop',
           id: `electron-close-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          // Best-effort log via send() — the instance might already be
+          // deleted from the renderer at this point, which is fine; the
+          // log line is for the daemon stderr trail.
+          send('instance:log', { instanceId, text: `⚠ Background session/stop failed: ${message}` });
         });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        appendLog(instance, 'service', `Daemon session/stop failed during tab close: ${message}`);
-        send('instance:log', { instanceId, text: `⚠ Failed to stop daemon session: ${message}` });
-      }
-      state.daemonSession = null;
-      state.daemonSessionProfileName = null;
     }
 
     instances.delete(instanceId);

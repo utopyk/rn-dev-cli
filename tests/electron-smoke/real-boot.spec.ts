@@ -353,6 +353,121 @@ test.describe("Electron real-boot smoke", () => {
     expect(errors, `renderer console errors:\n${errors.join("\n")}`).toEqual([]);
   });
 
+  test("closing a tab in ultra-clean mode also stops Metro (user-reported regression)", async () => {
+    // User-reported (2026-05-06, second pass): "killing the tab still
+    // does nothing in the ultra clean profile". The first kill-tab fix
+    // was tested only against quick mode — ultra-clean has different
+    // boot timing (full clean takes minutes; Metro spawn happens AFTER
+    // clean completes), and may surface a different failure mode.
+    //
+    // To run this test in a reasonable wall-clock window we override
+    // the smoke profile's mode to ultra-clean with a NO-OP clean
+    // (preflight already empty; nothing in node_modules to actually
+    // clean since we're targeting a fixture). The daemon's CleanManager
+    // skips steps that find nothing — so against the smoke fixture this
+    // is fast.
+    const branch = readBranch(PROJECT_ROOT);
+    const profilesDir = join(PROJECT_ROOT, ".rn-dev", "profiles");
+    const profilePath = join(profilesDir, `${SMOKE_PROFILE_NAME}.json`);
+    writeFileSync(
+      profilePath,
+      JSON.stringify(
+        {
+          name: SMOKE_PROFILE_NAME,
+          isDefault: true,
+          worktree: null,
+          branch,
+          platform: "ios",
+          mode: "ultra-clean",
+          packageManager:
+            (process.env.RN_DEV_REAL_BOOT_PACKAGE_MANAGER as
+              | "npm"
+              | "pnpm"
+              | "yarn"
+              | "bun"
+              | undefined) ?? "npm",
+          metroPort: 8099,
+          devices: {},
+          buildVariant: "debug",
+          preflight: { checks: [], frequency: "once" },
+          onSave: [],
+          env: {},
+          projectRoot: PROJECT_ROOT,
+        },
+        null,
+        2,
+      ),
+    );
+
+    // Same flip-existing-defaults dance.
+    const flippedProfiles: Array<{ path: string; original: string }> = [];
+    try {
+      const entries = readdirSync(profilesDir).filter(
+        (f) => f.endsWith(".json") && !f.startsWith(SMOKE_PROFILE_NAME),
+      );
+      for (const file of entries) {
+        const fp = join(profilesDir, file);
+        const original = readFileSync(fp, "utf8");
+        try {
+          const parsed = JSON.parse(original) as { isDefault?: boolean };
+          if (parsed.isDefault === true) {
+            parsed.isDefault = false;
+            writeFileSync(fp, JSON.stringify(parsed, null, 2));
+            flippedProfiles.push({ path: fp, original });
+          }
+        } catch {}
+      }
+    } catch {}
+
+    const ultraCleanRestoreFlipped = () => {
+      for (const { path, original } of flippedProfiles) {
+        try {
+          writeFileSync(path, original);
+        } catch {}
+      }
+    };
+
+    handle = await launchElectronRealBoot();
+    const errors: string[] = [];
+    handle.page.on("pageerror", (err) => errors.push(err.message));
+    handle.page.on("console", (msg) => {
+      if (msg.type() === "error") errors.push(msg.text());
+    });
+
+    // The user's actual scenario: ultra-clean's clean step takes
+    // minutes, so the user clicks close DURING the boot, while the
+    // session is still in "starting". Don't wait for "running" — that
+    // never happens for big projects in test-time. Just wait for the
+    // instance tab to surface (created on session attach) then drive
+    // the close click.
+    const tab = handle.page.locator(".instance-tab").first();
+    await expect(
+      tab,
+      "Instance tab should appear after the daemon attaches the ultra-clean session",
+    ).toBeVisible({ timeout: 60_000 });
+
+    await tab.locator(".instance-tab-close").click();
+    await expect(
+      handle.page.getByText(/click again to close/i),
+      "Confirm chip should arm after first click even during ultra-clean's clean phase",
+    ).toBeVisible({ timeout: 5_000 });
+    await tab.locator(".instance-tab-close").click({ force: true });
+
+    // The tab MUST disappear from the renderer immediately. Pre-fix
+    // (synchronous session/stop), this would block while the daemon
+    // awaited the in-flight boot — for ultra-clean that's 5-10 min.
+    // Now the IPC handler fires session/stop and immediately deletes
+    // local state, so the renderer drops the tab within milliseconds.
+    await expect(
+      tab,
+      "Tab must be removed from the strip even while the daemon is still in clean phase. " +
+        "If this hangs, the IPC handler is awaiting session/stop synchronously.",
+    ).not.toBeVisible({ timeout: 5_000 });
+
+    expect(errors, `renderer console errors:\n${errors.join("\n")}`).toEqual([]);
+    ultraCleanRestoreFlipped();
+  });
+
   test("closing a tab actually kills the daemon's Metro process (not just bookkeeping)", async () => {
     // Flip pre-existing isDefault profiles so the daemon picks our
     // smoke profile (port 8099) instead of the user's real default
