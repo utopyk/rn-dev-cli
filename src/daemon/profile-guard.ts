@@ -56,6 +56,7 @@ const VALID_MODES: ReadonlySet<RunMode> = new Set<RunMode>([
   "clean",
   "dirty",
   "quick",
+  "ultra-clean",
 ]);
 
 /**
@@ -121,7 +122,7 @@ export function validateProfile(input: unknown): ValidateProfileResult {
   if (!VALID_MODES.has(p.mode as RunMode)) {
     return fail(
       "E_PROFILE_MODE",
-      "profile.mode must be one of clean | dirty | quick",
+      "profile.mode must be one of clean | dirty | quick | ultra-clean",
     );
   }
 
