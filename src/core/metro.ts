@@ -20,6 +20,33 @@ function resolveRnBin(projectRoot: string): [string, ...string[]] {
   return ["npx", "react-native"];
 }
 
+/**
+ * Markers that indicate Metro has finished its startup phase and is ready
+ * to serve bundles. The list grows over time as RN versions ship new
+ * wording — RN 0.83 prints "Starting dev server on http://localhost:PORT"
+ * which the pre-2026-05-06 list missed, leaving `instance.status` stuck
+ * in "starting" forever and silently no-oping every code path that
+ * gates on "running" (`reload()`, `devMenu()`, MCP `metro/reload`,
+ * Electron's auto-build trigger). User-reported under quick mode as
+ * "I can't reload — connection to Metro fails."
+ *
+ * Exported for unit testing — keep this in sync with whatever Metro
+ * actually emits as its first ready-to-serve line.
+ */
+export const METRO_STARTUP_BANNERS = [
+  "Metro waiting on",
+  "Metro is running",
+  "Welcome to Metro",
+  "Dev server ready",
+  // RN 0.83+ — surfaced in 2026-05-06 user report.
+  "Starting dev server on",
+] as const;
+
+/** Predicate form. Pure — exported for unit testing. */
+export function isMetroStartupBanner(line: string): boolean {
+  return METRO_STARTUP_BANNERS.some((marker) => line.includes(marker));
+}
+
 // ---------------------------------------------------------------------------
 // MetroManager
 // ---------------------------------------------------------------------------
@@ -367,12 +394,9 @@ export class MetroManager extends EventEmitter {
         for (const line of lines) {
           if (line.trim()) {
             if (
-              streamName === "stdout" && (
-                line.includes("Metro waiting on") ||
-                line.includes("Metro is running") ||
-                line.includes("Welcome to Metro") ||
-                line.includes("Dev server ready")
-              )
+              streamName === "stdout" &&
+              isMetroStartupBanner(line) &&
+              instance.status === "starting"
             ) {
               instance.status = "running";
               this.emit("status", { worktreeKey, status: "running" });
@@ -385,6 +409,43 @@ export class MetroManager extends EventEmitter {
 
     attachStream(proc.stdout, "stdout");
     attachStream(proc.stderr, "stderr");
+
+    // HTTP fallback — if a future RN version drops/renames every
+    // recognized stdout banner, the stdout-pattern check would silently
+    // leave status in `starting`. Probe Metro's `/status` endpoint
+    // every 1s; the first 200 OK flips status to running. Capped at
+    // 60 attempts (≈60s) so a stuck startup doesn't poll forever.
+    // Idempotent — once `instance.status === "running"`, the probe
+    // is a cheap no-op until cleared by the polling guard.
+    let probeAttempts = 0;
+    const startupProbe = setInterval(() => {
+      probeAttempts++;
+      const current = this.instances.get(worktreeKey);
+      if (!current || current.status !== "starting" || probeAttempts > 60) {
+        clearInterval(startupProbe);
+        return;
+      }
+      try {
+        const http = require("http") as typeof import("http");
+        const req = http.request(
+          { hostname: "localhost", port, path: "/status", method: "GET", timeout: 800 },
+          (res) => {
+            if (res.statusCode === 200 && instance.status === "starting") {
+              instance.status = "running";
+              this.emit("status", { worktreeKey, status: "running" });
+              clearInterval(startupProbe);
+            }
+            res.resume();
+          },
+        );
+        req.on("error", () => undefined);
+        req.on("timeout", () => req.destroy());
+        req.end();
+      } catch {
+        // best-effort — if http isn't available, the stdout marker path is the only signal.
+      }
+    }, 1_000);
+    proc.on("exit", () => clearInterval(startupProbe));
 
     // Handle process exit
     proc.on("exit", (code) => {
