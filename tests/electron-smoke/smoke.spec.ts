@@ -267,94 +267,57 @@ test.describe("Electron smoke", () => {
     }
   });
 
-  test("close-tab confirm waits for the second click even after a long pause (>3s)", async () => {
-    // Direct regression for the user-reported bug: pre-fix, the
-    // confirming state auto-dismissed after 3s. If the user paused
-    // longer than that (reading the chip text, mouse repositioning,
-    // looking at the dialog), the second click would re-arm instead
-    // of confirming. Tab stayed open. With the fix the confirming
-    // state stays armed indefinitely until the second click or an
-    // outside click.
+  test("close-tab modal: clicking × surfaces a confirmation modal, Confirm removes the tab", async () => {
+    // 2026-05-07 — replaced the inline two-click confirm with a real
+    // modal at App.tsx after the inline pattern was reported as
+    // unusual UX. Single click on × opens the modal; clicking
+    // "Close tab" dispatches instances:remove and the tab disappears.
     handle = await launchElectron();
     await expect(handle.page.locator(".sidebar")).toBeVisible({ timeout: 30_000 });
     const tab = handle.page.locator(".instance-tab").first();
     await expect(tab).toBeVisible({ timeout: 15_000 });
 
     await tab.locator(".instance-tab-close").click();
-    await expect(handle.page.getByText(/click again to close/i)).toBeVisible({ timeout: 2_000 });
 
-    // Pause 5s — longer than the previous 3s auto-dismiss timeout. The
-    // armed state must stay armed: pre-fix it would auto-dismiss back
-    // to null at the 3s mark and the next click would re-arm.
-    await handle.page.waitForTimeout(5_000);
-    await expect(handle.page.getByText(/click again to close/i)).toBeVisible();
+    const modal = handle.page.locator(".prompt-modal");
+    await expect(modal).toBeVisible({ timeout: 2_000 });
+    await expect(modal.getByRole("heading", { name: /close /i })).toBeVisible();
 
-    // `force: true` bypasses Playwright's stability check — the
-    // confirming button has a CSS pulse animation that scales every
-    // 0.9s, which triggers "element is not stable" without force.
-    // Real users click without that gate.
-    await tab.locator(".instance-tab-close").click({ force: true });
-    await expect(tab).not.toBeVisible({ timeout: 5_000 });
-  });
-
-  test("shift-click on close button removes instance immediately (bypasses confirm)", async () => {
-    // Lower-level test for the kill-tab bug. Component test asserts
-    // shift-click bypass works in isolation; this asserts the same
-    // through the full IPC + main-process + event-roundtrip stack.
-    handle = await launchElectron();
-    const consoleErrs: string[] = [];
-    handle.page.on("pageerror", (err) => consoleErrs.push(err.message));
-    handle.page.on("console", (msg) => {
-      if (msg.type() === "error") consoleErrs.push(msg.text());
-    });
-
-    await expect(handle.page.locator(".sidebar")).toBeVisible({ timeout: 30_000 });
-    const tab = handle.page.locator(".instance-tab").first();
-    await expect(tab).toBeVisible({ timeout: 15_000 });
-
-    // Shift-click — should immediately fire onClose without confirm.
-    await tab.locator(".instance-tab-close").click({ modifiers: ["Shift"] });
-
-    await expect(tab, `\nConsole errors:\n${consoleErrs.join("\n")}`).not.toBeVisible({ timeout: 5_000 });
-  });
-
-  test("close-tab confirm flow actually removes the instance from the tab strip", async () => {
-    // User-reported bug (2026-05-06): "the kill tab doesn't work, it
-    // shows a red check and then it remains open". Component-level
-    // test asserts onClose IS called on the second click — so either
-    // the IPC drops the request, the instance:removed event never
-    // arrives, or the renderer's listener doesn't update state.
-    //
-    // This test boots the real renderer + IPC against the smoke
-    // fixture (which auto-creates an instance), clicks close → ✓ →
-    // and asserts the instance tab disappears within 5s. Pre-fix,
-    // the user would have seen the tab persist after the second click.
-    handle = await launchElectron();
-
-    await expect(handle.page.locator(".sidebar")).toBeVisible({ timeout: 30_000 });
-    // Wait for the instance tab to mount.
-    const tab = handle.page.locator(".instance-tab").first();
-    await expect(tab).toBeVisible({ timeout: 15_000 });
-
-    // First click — arms the confirm.
-    await tab.locator(".instance-tab-close").click();
-    await expect(
-      handle.page.getByText(/click again to close/i),
-      "Confirm chip should appear after first click",
-    ).toBeVisible({ timeout: 2_000 });
-
-    // Second click — should fire onClose → invoke('instances:remove')
-    // → main process deletes instance + sends 'instance:removed' →
-    // renderer drops the tab. force: true bypasses the stability
-    // check that the pulse animation would otherwise fail.
-    await tab.locator(".instance-tab-close").click({ force: true });
-
-    // The tab should disappear within a few seconds.
+    await modal.getByRole("button", { name: /close tab/i }).click();
+    await expect(modal).not.toBeVisible({ timeout: 2_000 });
     await expect(tab).not.toBeVisible({ timeout: 5_000 });
     await expect(
       handle.page.locator(".instance-tab"),
       "All instance tabs should be gone after closing the only one",
     ).toHaveCount(0);
+  });
+
+  test("close-tab modal: Cancel button leaves the tab open", async () => {
+    handle = await launchElectron();
+    await expect(handle.page.locator(".sidebar")).toBeVisible({ timeout: 30_000 });
+    const tab = handle.page.locator(".instance-tab").first();
+    await expect(tab).toBeVisible({ timeout: 15_000 });
+
+    await tab.locator(".instance-tab-close").click();
+    const modal = handle.page.locator(".prompt-modal");
+    await expect(modal).toBeVisible({ timeout: 2_000 });
+    await modal.getByRole("button", { name: /cancel/i }).click();
+    await expect(modal).not.toBeVisible({ timeout: 2_000 });
+    await expect(tab).toBeVisible();
+  });
+
+  test("close-tab modal: Escape dismisses the modal without closing the tab", async () => {
+    handle = await launchElectron();
+    await expect(handle.page.locator(".sidebar")).toBeVisible({ timeout: 30_000 });
+    const tab = handle.page.locator(".instance-tab").first();
+    await expect(tab).toBeVisible({ timeout: 15_000 });
+
+    await tab.locator(".instance-tab-close").click();
+    const modal = handle.page.locator(".prompt-modal");
+    await expect(modal).toBeVisible({ timeout: 2_000 });
+    await handle.page.keyboard.press("Escape");
+    await expect(modal).not.toBeVisible({ timeout: 2_000 });
+    await expect(tab).toBeVisible();
   });
 
   test("renderer mounts without uncaught console errors", async () => {

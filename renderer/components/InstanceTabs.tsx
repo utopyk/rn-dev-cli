@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React from 'react';
 import './InstanceTabs.css';
 
 export interface InstanceInfo {
@@ -22,7 +22,7 @@ interface InstanceTabsProps {
 
 function shortenName(name: string, max: number): string {
   if (name.length <= max) return name;
-  return name.slice(0, max - 1) + '\u2026';
+  return name.slice(0, max - 1) + '…';
 }
 
 function statusDotClass(status: string): string {
@@ -35,68 +35,29 @@ function statusDotClass(status: string): string {
 }
 
 export function InstanceTabs({ instances, activeId, onSelect, onClose, onAdd }: InstanceTabsProps) {
-  const [confirmClose, setConfirmClose] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  // Outside-click + Escape dismisses the confirm. Replaces the prior
-  // 3-second wall-clock auto-dismiss that was firing before users
-  // could complete the two-click confirm in slower flows (reading
-  // the chip text, mouse repositioning) — see the 2026-05-06 user
-  // report where the second click hit a re-set state and re-armed
-  // instead of confirming, leaving the tab open. No timer here on
-  // purpose: the previous fix tried 15s as a "safety net" but that
-  // recreates the same race for any user slower than the timeout.
-  // Outside click + Esc cover every legitimate cancellation; if the
-  // user truly walks away with the confirm armed, the next click
-  // anywhere drops it.
-  useEffect(() => {
-    if (!confirmClose) return;
-    const onDocClick = (ev: MouseEvent) => {
-      const target = ev.target as Node | null;
-      const root = containerRef.current;
-      if (!root || !target || !root.contains(target)) {
-        setConfirmClose(null);
-      }
-    };
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") setConfirmClose(null);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [confirmClose]);
-
-  const handleClose = (e: React.MouseEvent, id: string, _port: number) => {
+  // Single click fires onClose immediately. The "are you sure" gate
+  // lives at the parent (App.tsx) as a real modal — pre-2026-05-07 a
+  // two-click confirm with a pulsing red glyph lived inline in this
+  // component, but a series of user reports surfaced the affordance
+  // as confusing ("all it does is change an icon to red") and
+  // unusual ("if we want to make sure the user wants to kill the
+  // tab, we should pop up a modal not a second click"). The modal is
+  // the standard pattern; this component is back to a stateless tab
+  // strip.
+  const handleClose = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    // Shift-click: skip confirmation. Documented in the close button's
-    // `title` attribute so power users can discover it on hover.
-    if (e.shiftKey) {
-      onClose(id);
-      setConfirmClose(null);
-      return;
-    }
-    if (confirmClose === id) {
-      // Second click = confirmed
-      onClose(id);
-      setConfirmClose(null);
-    } else {
-      setConfirmClose(id);
-    }
+    onClose(id);
   };
 
   return (
-    <div className="instance-tabs" ref={containerRef}>
+    <div className="instance-tabs">
       <div className="instance-tabs-scroll">
         {instances.map((inst) => {
           const isActive = inst.id === activeId;
-          const isConfirming = confirmClose === inst.id;
           return (
             <div
               key={inst.id}
-              className={`instance-tab${isActive ? ' active' : ''}${isConfirming ? ' confirming' : ''}`}
+              className={`instance-tab${isActive ? ' active' : ''}`}
               onClick={() => onSelect(inst.id)}
             >
               <span className="instance-tab-icon">{inst.deviceIcon}</span>
@@ -108,20 +69,13 @@ export function InstanceTabs({ instances, activeId, onSelect, onClose, onAdd }: 
               </span>
               <span className={statusDotClass(inst.metroStatus)} />
               <button
-                className={`instance-tab-close${isConfirming ? ' confirming' : ''}`}
-                onClick={(e) => handleClose(e, inst.id, inst.port)}
-                aria-label={isConfirming ? `Click again to close instance on port ${inst.port}` : 'Close instance'}
-                title={isConfirming
-                  ? `Click again to close (Shift-click to skip confirm)`
-                  : 'Close instance (Shift-click to skip confirm)'}
+                className="instance-tab-close"
+                onClick={(e) => handleClose(e, inst.id)}
+                aria-label={`Close instance on port ${inst.port}`}
+                title="Close instance"
               >
-                {isConfirming ? '\u2713' : '\u00d7'}
+                {'×'}
               </button>
-              {isConfirming && (
-                <div className="instance-tab-confirm" role="status">
-                  Click again to close :{inst.port}
-                </div>
-              )}
             </div>
           );
         })}

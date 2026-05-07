@@ -83,9 +83,17 @@ export class NodeSpawner implements ModuleSpawner {
       command: "node",
       args: [entry],
     });
+    // cwd is the module's package root (where node_modules + dist
+    // live). Production passes a directory as modulePath; some tests
+    // (manager.integration.test.ts) pass the entry script directly.
+    // Resolve `cwd` from whichever shape we got — directory ↦ itself,
+    // file ↦ its dirname. spawn() throws ENOTDIR when cwd points at
+    // a non-directory, so feeding it a file would break the
+    // production case for fixtures.
+    const cwdDir = isDirectory(modulePath) ? modulePath : dirnameOf(modulePath);
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
-      cwd: modulePath,
+      cwd: cwdDir,
       // POSIX: start a new process group so we can kill the whole group and
       // reap stray grandchildren spawned by the module.
       // Windows: detached creates a new process group too, but we don't rely
@@ -96,6 +104,18 @@ export class NodeSpawner implements ModuleSpawner {
   }
 }
 
+function isDirectory(p: string): boolean {
+  try {
+    return require("node:fs").statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function dirnameOf(p: string): string {
+  return require("node:path").dirname(p);
+}
+
 /**
  * Resolve the module subprocess entry from `<modulePath>/package.json#main`.
  * Falls back to `dist/index.js` (the convention every shipped module
@@ -104,17 +124,24 @@ export class NodeSpawner implements ModuleSpawner {
  * full package.json.
  */
 function resolveModuleEntry(modulePath: string): string {
-  const fallback = join(modulePath, "dist", "index.js");
+  // If modulePath is a file (e.g. test fixtures pass the entry script
+  // directly), use it as-is. Production passes a directory containing
+  // package.json + dist/.
   let entry: string;
-  try {
-    const pkgPath = join(modulePath, "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { main?: string };
-    entry =
-      typeof pkg.main === "string" && pkg.main.length > 0
-        ? pathResolve(modulePath, pkg.main)
-        : fallback;
-  } catch {
-    entry = fallback;
+  if (!isDirectory(modulePath)) {
+    entry = modulePath;
+  } else {
+    const fallback = join(modulePath, "dist", "index.js");
+    try {
+      const pkgPath = join(modulePath, "package.json");
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { main?: string };
+      entry =
+        typeof pkg.main === "string" && pkg.main.length > 0
+          ? pathResolve(modulePath, pkg.main)
+          : fallback;
+    } catch {
+      entry = fallback;
+    }
   }
 
   // Realpath the entry so the spawn-time `argv[1]` matches the

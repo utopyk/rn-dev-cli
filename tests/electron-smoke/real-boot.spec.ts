@@ -447,11 +447,12 @@ test.describe("Electron real-boot smoke", () => {
     ).toBeVisible({ timeout: 60_000 });
 
     await tab.locator(".instance-tab-close").click();
+    const modal = handle.page.locator(".prompt-modal");
     await expect(
-      handle.page.getByText(/click again to close/i),
-      "Confirm chip should arm after first click even during ultra-clean's clean phase",
+      modal,
+      "Close-confirmation modal should surface even during ultra-clean's clean phase",
     ).toBeVisible({ timeout: 5_000 });
-    await tab.locator(".instance-tab-close").click({ force: true });
+    await modal.getByRole("button", { name: /close tab/i }).click();
 
     // The tab MUST disappear from the renderer immediately. Pre-fix
     // (synchronous session/stop), this would block while the daemon
@@ -594,16 +595,16 @@ test.describe("Electron real-boot smoke", () => {
       "Should have at least one Metro PID bound to port 8099 before close.",
     ).not.toBeNull();
 
-    // Click the tab's close button. CSS pulse animation needs `force`
-    // (covered separately in smoke.spec.ts).
+    // Click the tab's close button → confirmation modal → Confirm.
     const tab = handle.page.locator(".instance-tab").first();
     await expect(tab).toBeVisible({ timeout: 10_000 });
     await tab.locator(".instance-tab-close").click();
+    const modal = handle.page.locator(".prompt-modal");
     await expect(
-      handle.page.getByText(/click again to close/i),
-      "Confirm chip should arm after first click",
+      modal,
+      "Close-confirmation modal should surface after clicking ×",
     ).toBeVisible({ timeout: 2_000 });
-    await tab.locator(".instance-tab-close").click({ force: true });
+    await modal.getByRole("button", { name: /close tab/i }).click();
 
     // The tab should disappear from the renderer.
     await expect(tab, "Tab should be removed from the strip").not.toBeVisible({ timeout: 5_000 });

@@ -471,9 +471,45 @@ export function App() {
     invoke('instances:setActive', id);
   }, [invoke]);
 
+  // Confirmation state for the close-tab modal. Replaces the inline
+  // two-click confirm in InstanceTabs (2026-05-07 user UX feedback:
+  // "if we want to make sure the user wants to kill the tab, we
+  // should pop up a modal not a second click"). Null = no modal open.
+  const [closeConfirm, setCloseConfirm] = useState<{
+    instanceId: string;
+    label: string;
+  } | null>(null);
+
   const handleCloseInstance = useCallback((id: string) => {
-    invoke('instances:remove', id);
-  }, [invoke]);
+    const inst = instances.find((i) => i.id === id);
+    const label = inst ? `${inst.worktreeName}:${inst.port}` : id;
+    setCloseConfirm({ instanceId: id, label });
+  }, [instances]);
+
+  const confirmCloseInstance = useCallback(() => {
+    if (!closeConfirm) return;
+    invoke('instances:remove', closeConfirm.instanceId);
+    setCloseConfirm(null);
+  }, [invoke, closeConfirm]);
+
+  const cancelCloseInstance = useCallback(() => {
+    setCloseConfirm(null);
+  }, []);
+
+  // Keyboard shortcuts on the close-confirm modal: Esc cancels,
+  // Enter confirms. Standard "are you sure" affordance.
+  useEffect(() => {
+    if (!closeConfirm) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        cancelCloseInstance();
+      } else if (ev.key === 'Enter') {
+        confirmCloseInstance();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [closeConfirm, cancelCloseInstance, confirmCloseInstance]);
 
   const handleAddInstance = useCallback(() => {
     setShowNewInstanceDialog(true);
@@ -649,7 +685,37 @@ export function App() {
         />
         <ProfileBanner profile={activeProfile} />
         <div className="app-content">
-          {promptModal ? (
+          {closeConfirm ? (
+            <div
+              className="prompt-overlay"
+              onClick={(e) => {
+                // Click on the backdrop (not the modal itself) cancels.
+                if (e.target === e.currentTarget) cancelCloseInstance();
+              }}
+            >
+              <div className="prompt-modal" role="dialog" aria-modal="true" aria-label="Close instance confirmation">
+                <h3 className="prompt-title">Close {closeConfirm.label}?</h3>
+                <p className="prompt-message">
+                  This stops Metro and the daemon&rsquo;s session services for this tab.
+                </p>
+                <div className="prompt-options">
+                  <button
+                    className="prompt-option"
+                    onClick={cancelCloseInstance}
+                    autoFocus
+                  >
+                    <span className="prompt-option-label">Cancel</span>
+                  </button>
+                  <button
+                    className="prompt-option"
+                    onClick={confirmCloseInstance}
+                  >
+                    <span className="prompt-option-label">Close tab</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : promptModal ? (
             <div className="prompt-overlay">
               <div className="prompt-modal">
                 <h3 className="prompt-title">{promptModal.title}</h3>

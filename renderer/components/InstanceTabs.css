@@ -96,56 +96,9 @@
 .instance-tab.active .instance-tab-close { opacity: 1; }
 .instance-tab-close:hover { background: var(--error); color: #fff; }
 
-.instance-tab-close.confirming {
-  opacity: 1;
-  background: var(--error);
-  color: #fff;
-  font-weight: 700;
-  font-size: 13px;
-  animation: pulse-confirm-btn 0.9s ease-in-out infinite;
-}
-
-/* Bug E — pre-fix the only signal that the close button needed a second
- * click was the small `?` glyph + tooltip-style chip below the tab. Users
- * reported "the close didn't work" because they clicked once, didn't notice
- * the change, then clicked elsewhere. Make the entire tab light up in the
- * warning colour so the affordance can't be missed. Keep the chip too;
- * the wording was changed to imperative ("Click again to close") since the
- * question form ("Stop Metro on :PORT?") read as informational. */
-.instance-tab.confirming {
-  border-color: var(--error);
-  background: color-mix(in srgb, var(--error) 6%, var(--surface-hi));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--error) 22%, transparent);
-}
-
-@keyframes pulse-confirm-btn {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.12); }
-}
-
-.instance-tab-confirm {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--surface);
-  color: var(--ink);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 6px 12px;
-  border-radius: var(--radius-pill);
-  box-shadow: var(--neu-raised-xs), var(--glow-medium);
-  border: 1px solid var(--accent-border);
-  white-space: nowrap;
-  z-index: 10;
-  pointer-events: none;
-  animation: fade-in-confirm 0.15s ease;
-}
-
-@keyframes fade-in-confirm {
-  from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
+/* Two-click confirm + .confirming animation + .instance-tab-confirm chip
+ * removed 2026-05-07. The "are you sure" gate moved to a real modal in
+ * renderer/App.tsx after the inline confirm was reported as unusual UX. */
 
 .instance-tab-add {
   display: flex;
