@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './InstanceTabs.css';
 
 export interface InstanceInfo {
@@ -36,6 +36,38 @@ function statusDotClass(status: string): string {
 
 export function InstanceTabs({ instances, activeId, onSelect, onClose, onAdd }: InstanceTabsProps) {
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Outside-click + Escape dismisses the confirm. Replaces the prior
+  // 3-second wall-clock auto-dismiss that was firing before users
+  // could complete the two-click confirm in slower flows (reading
+  // the chip text, mouse repositioning) — see the 2026-05-06 user
+  // report where the second click hit a re-set state and re-armed
+  // instead of confirming, leaving the tab open. No timer here on
+  // purpose: the previous fix tried 15s as a "safety net" but that
+  // recreates the same race for any user slower than the timeout.
+  // Outside click + Esc cover every legitimate cancellation; if the
+  // user truly walks away with the confirm armed, the next click
+  // anywhere drops it.
+  useEffect(() => {
+    if (!confirmClose) return;
+    const onDocClick = (ev: MouseEvent) => {
+      const target = ev.target as Node | null;
+      const root = containerRef.current;
+      if (!root || !target || !root.contains(target)) {
+        setConfirmClose(null);
+      }
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setConfirmClose(null);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [confirmClose]);
 
   const handleClose = (e: React.MouseEvent, id: string, _port: number) => {
     e.stopPropagation();
@@ -52,13 +84,11 @@ export function InstanceTabs({ instances, activeId, onSelect, onClose, onAdd }: 
       setConfirmClose(null);
     } else {
       setConfirmClose(id);
-      // Auto-dismiss confirmation after 3 seconds
-      setTimeout(() => setConfirmClose((prev) => (prev === id ? null : prev)), 3000);
     }
   };
 
   return (
-    <div className="instance-tabs">
+    <div className="instance-tabs" ref={containerRef}>
       <div className="instance-tabs-scroll">
         {instances.map((inst) => {
           const isActive = inst.id === activeId;
