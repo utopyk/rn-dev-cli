@@ -195,12 +195,36 @@ export function registerInstanceHandlers() {
     const instance = instances.get(instanceId);
     if (!instance) return { ok: false, error: 'Instance not found' };
 
-    // The daemon owns every runtime service; this map only carries
-    // Electron's per-instance bookkeeping. If the instance being
-    // removed was the active one that opened a daemon session, the
-    // session stays alive — teardown is the user's choice via app
-    // quit (Phase 13.5 grows ref-counted `DaemonSession.release()`
-    // for the multi-instance story).
+    // User-reported (2026-05-06): closing a tab left Metro running in
+    // the background. Pre-fix, this handler only deleted the instance
+    // from Electron's bookkeeping Map and emitted `instance:removed` —
+    // by design ("teardown is the user's choice via app quit") but
+    // surprising for users who expected the close button to actually
+    // stop Metro and the daemon's session services.
+    //
+    // Now: if the instance owned the active daemon session, send
+    // session/stop over the long-lived subscribe socket so the daemon
+    // tears down Metro + devtools + module-host + the whole session
+    // service tree before we drop the local bookkeeping. We DO NOT
+    // hard-fail the close on a daemon-side error — the user has asked
+    // for the tab to go away, and a hung daemon shouldn't trap them.
+    // We just log and proceed.
+    if (state.daemonSession && state.activeInstanceId === instanceId) {
+      try {
+        await state.daemonSession.client.send({
+          type: 'command',
+          action: 'session/stop',
+          id: `electron-close-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        appendLog(instance, 'service', `Daemon session/stop failed during tab close: ${message}`);
+        send('instance:log', { instanceId, text: `⚠ Failed to stop daemon session: ${message}` });
+      }
+      state.daemonSession = null;
+      state.daemonSessionProfileName = null;
+    }
+
     instances.delete(instanceId);
 
     if (state.activeInstanceId === instanceId) {

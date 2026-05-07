@@ -1,6 +1,6 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -351,5 +351,175 @@ test.describe("Electron real-boot smoke", () => {
     }
 
     expect(errors, `renderer console errors:\n${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("closing a tab actually kills the daemon's Metro process (not just bookkeeping)", async () => {
+    // Flip pre-existing isDefault profiles so the daemon picks our
+    // smoke profile (port 8099) instead of the user's real default
+    // (which lives at e.g. port 8081). Without this the precondition
+    // below fails because the daemon attached to the wrong profile
+    // and Metro is bound to a port we don't know to check.
+    const profilesDir = join(PROJECT_ROOT, ".rn-dev", "profiles");
+    const flippedProfiles: Array<{ path: string; original: string }> = [];
+    try {
+      const entries = readdirSync(profilesDir).filter(
+        (f) => f.endsWith(".json") && !f.startsWith(SMOKE_PROFILE_NAME),
+      );
+      for (const file of entries) {
+        const fp = join(profilesDir, file);
+        const original = readFileSync(fp, "utf8");
+        try {
+          const parsed = JSON.parse(original) as { isDefault?: boolean };
+          if (parsed.isDefault === true) {
+            parsed.isDefault = false;
+            writeFileSync(fp, JSON.stringify(parsed, null, 2));
+            flippedProfiles.push({ path: fp, original });
+          }
+        } catch {
+          // Malformed profile — skip.
+        }
+      }
+    } catch {
+      // No profiles dir contents — fine.
+    }
+    // Restore on test exit so subsequent runs / dev-mode don't see a
+    // mutated environment.
+    test.info().annotations.push({ type: "smoke-cleanup", description: "restore flipped profiles" });
+    const restoreFlipped = () => {
+      for (const { path, original } of flippedProfiles) {
+        try {
+          writeFileSync(path, original);
+        } catch {
+          // best-effort
+        }
+      }
+    };
+
+    // User-reported (2026-05-06): "I tried killing a tab, all it does is
+    // change an icon to red." Pre-fix the close path only deleted the
+    // tab from Electron's instance Map; Metro kept running in the
+    // background. The fake-boot smoke missed this because there's no
+    // real Metro process to leak.
+    //
+    // This test boots a REAL daemon → real Metro on port 8099 → clicks
+    // the close button (×, then ✓) → asserts no process is bound to
+    // port 8099 within 10s. lsof -i is the trustworthy oracle: if the
+    // daemon's session/stop tore down Metro, the port is free; if not,
+    // Metro is still listening and the assertion fails.
+    handle = await launchElectronRealBoot();
+    const errors: string[] = [];
+    handle.page.on("pageerror", (err) => errors.push(err.message));
+    handle.page.on("console", (msg) => {
+      if (msg.type() === "error") errors.push(msg.text());
+    });
+
+    // Wait until the session is running (same gate as Bug 1's test).
+    await handle.page.getByRole("button", { name: /settings/i }).click();
+    await expect(
+      handle.page.getByRole("combobox", { name: /theme/i }),
+      "Wait for the daemon session to reach running before exercising kill-tab",
+    ).toBeVisible({ timeout: 90_000 });
+
+    // Sanity: Metro is actually bound to its port. Pre-condition for
+    // the assertion below — if Metro never came up, the kill-tab test
+    // would pass for the wrong reason. lsof -P -i :PORT lists processes
+    // bound to that port; macOS lsof gotcha (`-a` to AND filters) is
+    // not in play here because we use a single -i predicate.
+    function isPortBound(port: number): boolean {
+      try {
+        const out = execFileSync("lsof", ["-P", "-i", `:${port}`, "-t"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+        return out.length > 0;
+      } catch {
+        // lsof exits non-zero when nothing matches — that's the "port
+        // free" branch and we want false here.
+        return false;
+      }
+    }
+    function pidOnPort(port: number): string | null {
+      try {
+        const out = execFileSync("lsof", ["-P", "-i", `:${port}`, "-t"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+        return out.length > 0 ? out : null;
+      } catch {
+        return null;
+      }
+    }
+    // Metro spawn is async — bootSessionServices kicks the spawn but
+    // Metro takes 10-30s to actually bind the port. Poll for up to
+    // 60s so we don't false-positive on a still-warming-up Metro.
+    const bindStart = Date.now();
+    const bindDeadline = bindStart + 60_000;
+    let bound = false;
+    while (Date.now() < bindDeadline) {
+      if (isPortBound(8099)) {
+        bound = true;
+        break;
+      }
+      await handle.page.waitForTimeout(1_000);
+    }
+    const bindElapsed = Date.now() - bindStart;
+    const metroPidPreClose = pidOnPort(8099);
+    test.info().attach("metro-pre-close", {
+      body: `Metro bound after ${bindElapsed}ms; PIDs on :8099 = ${metroPidPreClose ?? "(none)"}`,
+      contentType: "text/plain",
+    });
+    expect(
+      bound,
+      "Pre-condition: Metro must be bound to port 8099 within 60s of the session reaching running. " +
+        "If this fails, the daemon's bootSessionServices did not spawn Metro, OR it spawned but failed silently. " +
+        "Run `lsof -P -i :8099` outside the test to see what's there.",
+    ).toBe(true);
+    expect(
+      metroPidPreClose,
+      "Should have at least one Metro PID bound to port 8099 before close.",
+    ).not.toBeNull();
+
+    // Click the tab's close button. CSS pulse animation needs `force`
+    // (covered separately in smoke.spec.ts).
+    const tab = handle.page.locator(".instance-tab").first();
+    await expect(tab).toBeVisible({ timeout: 10_000 });
+    await tab.locator(".instance-tab-close").click();
+    await expect(
+      handle.page.getByText(/click again to close/i),
+      "Confirm chip should arm after first click",
+    ).toBeVisible({ timeout: 2_000 });
+    await tab.locator(".instance-tab-close").click({ force: true });
+
+    // The tab should disappear from the renderer.
+    await expect(tab, "Tab should be removed from the strip").not.toBeVisible({ timeout: 5_000 });
+
+    // The actual user-facing contract: poll for Metro's port to free
+    // up. Daemon's session/stop tears down the supervisor (which calls
+    // metroManager.stop), then SIGKILLs Metro's process group. 10s of
+    // grace is generous; pre-fix this would never come true.
+    const portFreeDeadline = Date.now() + 10_000;
+    let portFree = false;
+    while (Date.now() < portFreeDeadline) {
+      if (!isPortBound(8099)) {
+        portFree = true;
+        break;
+      }
+      await handle.page.waitForTimeout(500);
+    }
+    const metroPidPostClose = pidOnPort(8099);
+    test.info().attach("metro-post-close", {
+      body: `Post-close PIDs on :8099 = ${metroPidPostClose ?? "(none)"}; port free: ${portFree}`,
+      contentType: "text/plain",
+    });
+    expect(
+      portFree,
+      `Closing the tab should stop Metro and free its port within 10s. ` +
+        `Pre-close PIDs: ${metroPidPreClose}. Post-close PIDs: ${metroPidPostClose}. ` +
+        `If port stayed bound, the daemon's session/stop did not tear down Metro.`,
+    ).toBe(true);
+
+    expect(errors, `renderer console errors:\n${errors.join("\n")}`).toEqual([]);
+
+    restoreFlipped();
   });
 });
