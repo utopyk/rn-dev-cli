@@ -479,10 +479,24 @@ export function App() {
     setShowNewInstanceDialog(true);
   }, []);
 
-  const handleDialogSelectProfile = useCallback((profileName: string) => {
+  const handleDialogSelectProfile = useCallback(async (profileName: string) => {
     setShowNewInstanceDialog(false);
-    invoke('instances:create', profileName);
-    // instance:created event will add the new tab
+    const result = await invoke<{ ok: boolean; code?: string; error?: string }>(
+      'instances:create',
+      profileName,
+    );
+    // The handler returns { ok: false, code: 'PROFILE_MISMATCH', ... } when
+    // the daemon already has a session for a different profile and the
+    // single-Electron-process multi-profile story isn't wired (Phase 13.6+).
+    // Pre-fix this surfaced only as a buried line in the service log;
+    // surface it as a visible alert so the user knows why the new tab
+    // didn't bring up its session.
+    if (!result?.ok && result?.code === 'PROFILE_MISMATCH') {
+      window.alert(
+        result.error ??
+          'Cross-profile multi-attach in one Electron app is not yet supported. Restart the app to switch profiles.',
+      );
+    }
   }, [invoke]);
 
   const handleDialogCreateNew = useCallback(() => {
@@ -494,10 +508,20 @@ export function App() {
     setShowNewInstanceDialog(false);
   }, []);
 
-  const handleWizardComplete = useCallback((profileName: string) => {
+  const handleWizardComplete = useCallback(async (profileName: string) => {
     setShowWizard(false);
-    // Create an instance from the newly saved profile
-    invoke('instances:create', profileName);
+    // Same handling as handleDialogSelectProfile — surface
+    // PROFILE_MISMATCH as a visible alert.
+    const result = await invoke<{ ok: boolean; code?: string; error?: string }>(
+      'instances:create',
+      profileName,
+    );
+    if (!result?.ok && result?.code === 'PROFILE_MISMATCH') {
+      window.alert(
+        result.error ??
+          'Cross-profile multi-attach in one Electron app is not yet supported. Restart the app to switch profiles.',
+      );
+    }
   }, [invoke]);
 
   const handleWizardCancel = useCallback(() => {
