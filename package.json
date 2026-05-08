@@ -24,6 +24,7 @@
     "build:electron": "npx electron-builder",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:tui": "node scripts/run-tui-tests.mjs",
     "test:smoke": "playwright test --config playwright.config.ts",
     "test:real-e2e": "playwright test --config tests/electron-real-e2e/playwright.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p electron/tsconfig.json && tsc --noEmit -p modules/device-control/tsconfig.json && tsc --noEmit -p modules/devtools-network/tsconfig.json && tsc --noEmit -p modules/metro-logs/tsconfig.json",

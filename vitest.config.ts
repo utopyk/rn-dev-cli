@@ -24,6 +24,10 @@ export default defineConfig({
       // @playwright/test which assumes its own runner.
       "tests/electron-smoke/**",
       "tests/electron-real-e2e/**",
+      // TUI tests use OpenTUI which requires `bun:ffi` native bindings.
+      // They run under `npm run test:tui` (bun test) — vitest can't load
+      // them.
+      "tests/tui/**",
     ],
   },
 });
